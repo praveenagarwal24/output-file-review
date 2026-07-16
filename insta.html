@@ -187,14 +187,14 @@
     <!-- Classification footer -->
     <div class="bg-white border-t border-slate-200 px-4 py-2.5 flex-shrink-0">
         <div class="flex items-center flex-wrap gap-2">
-            <span class="text-[10px] font-bold uppercase tracking-wider text-slate-400 mr-1">Vehicle Type:</span>
+            <span class="text-[10px] font-bold uppercase tracking-wider text-slate-400 mr-1">Issue:</span>
             <div id="type-bar" class="flex items-center flex-wrap gap-1.5"></div>
             <div class="flex-1"></div>
             <input id="comment" type="text" placeholder="Comment (optional)…" class="w-64 p-1.5 border border-slate-200 rounded-lg text-xs outline-none focus:border-blue-400 focus:ring-1 focus:ring-blue-400 transition">
             <span id="status" class="text-[11px] font-semibold min-w-[70px] text-right"></span>
         </div>
         <div class="mt-1.5 text-[10px] text-slate-400 flex items-center gap-3 flex-wrap">
-            <span><kbd class="hint">1</kbd>–<kbd class="hint">7</kbd> vehicle type</span>
+            <span><kbd class="hint">1</kbd> issue</span>
             <span><kbd class="hint">&larr;</kbd> <kbd class="hint">&rarr;</kbd> prev / next</span>
             <span><kbd class="hint">Enter</kbd> save &amp; next (OK if none picked)</span>
             <span>click an image to zoom</span>
@@ -220,7 +220,7 @@
                 <div class="bg-amber-50 rounded-lg p-2.5"><div class="text-[10px] font-bold text-amber-600 uppercase tracking-wider">Pending</div><div id="sum-pending" class="text-lg font-bold text-amber-700">0</div></div>
             </div>
             <div class="border-t border-slate-100 pt-3">
-                <p class="text-[11px] font-semibold text-slate-500 uppercase tracking-wider mb-2">By vehicle type</p>
+                <p class="text-[11px] font-semibold text-slate-500 uppercase tracking-wider mb-2">By issue</p>
                 <div id="sum-types" class="grid grid-cols-2 gap-x-6 gap-y-1"></div>
             </div>
             <div class="mt-4 text-[12px] text-slate-500">Time taken: <span id="sum-time" class="font-mono font-semibold text-slate-700">00:00</span></div>
@@ -247,13 +247,7 @@
 <script>
 // Config
 const TYPES = [
-    { key:'1', code:'car',             label:'Car' },
-    { key:'2', code:'pickup_loader',   label:'Pickup - Loader' },
-    { key:'3', code:'pickup_noloader', label:'Pickup - w/o Loader' },
-    { key:'4', code:'truck_loader',    label:'Truck - Loader' },
-    { key:'5', code:'truck_noloader',  label:'Truck - w/o Loader' },
-    { key:'6', code:'van_loader',      label:'Van - Loader' },
-    { key:'7', code:'van_noloader',    label:'Van - w/o Loader' },
+    { key:'1', code:'issue', label:'Issue' },
 ];
 const LABEL_BY_CODE = Object.fromEntries(TYPES.map(t => [t.code, t.label]));
 LABEL_BY_CODE.ok = 'OK';
@@ -261,15 +255,13 @@ LABEL_BY_CODE.ok = 'OK';
 // Status colors + compact labels for the top-bar summary
 const STAT_COLOR = {
     pending:'#f59e0b', ok:'#10b981',
-    car:'#3b82f6', pickup_loader:'#f97316', pickup_noloader:'#fb923c',
-    truck_loader:'#8b5cf6', truck_noloader:'#a78bfa', van_loader:'#0891b2', van_noloader:'#22d3ee'
+    issue:'#ef4444'
 };
 const SHORT = {
     pending:'Pending', ok:'OK',
-    car:'Car', pickup_loader:'PU · Loader', pickup_noloader:'PU · no Loader',
-    truck_loader:'Truck · Loader', truck_noloader:'Truck · no Loader', van_loader:'Van · Loader', van_noloader:'Van · no Loader'
+    issue:'Issue'
 };
-const SUMMARY_ORDER = ['pending','ok','car','pickup_loader','pickup_noloader','truck_loader','truck_noloader','van_loader','van_noloader'];
+const SUMMARY_ORDER = ['pending','ok','issue'];
 
 // Image sizing — request small resized webp for display, larger for zoom
 const DISPLAY_W = 900,  DISPLAY_Q = 72;
@@ -483,7 +475,7 @@ function updateProgress() {
 }
 
 function computeCounts() {
-    const counts = { pending:0, ok:0, car:0, pickup_loader:0, pickup_noloader:0, truck_loader:0, truck_noloader:0, van_loader:0, van_noloader:0 };
+    const counts = { pending:0, ok:0, issue:0 };
     rows.forEach((_, i) => {
         const t = reviews[i] && reviews[i].type;
         if (t && counts.hasOwnProperty(t)) counts[t]++;
@@ -648,7 +640,7 @@ document.getElementById('lightbox').addEventListener('click', closeLightbox);
 // Export
 function csvCell(v) { const s = String(v == null ? '' : v); return /[",\n\r]/.test(s) ? '"' + s.replace(/"/g,'""') + '"' : s; }
 function exportCSV() {
-    const header = ['#','VIN','Rooftop','Vehicle Type','Comment','Input URL','AI URL','Output URL','Reviewed At'];
+    const header = ['#','VIN','Rooftop','Issue','Comment','Input URL','AI URL','Output URL','Reviewed At'];
     const lines = [header.join(',')];
     rows.forEach((r, i) => {
         const rev = reviews[i] || {};
