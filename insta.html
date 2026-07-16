@@ -119,12 +119,30 @@
     </div>
 </div>
 
+<!-- Rooftop selection view -->
+<div id="rooftop-view" class="view flex-1 flex-col min-h-0 overflow-auto p-6">
+    <div class="w-full max-w-5xl mx-auto">
+        <div class="flex items-end justify-between mb-1 flex-wrap gap-2">
+            <div>
+                <h1 class="text-xl font-bold text-slate-800">Select a rooftop</h1>
+                <p id="rooftop-sub" class="text-slate-500 text-[13px] mt-0.5"></p>
+            </div>
+            <div id="rooftop-overall" class="text-[12px] font-semibold text-slate-500"></div>
+        </div>
+        <div id="rooftop-grid" class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 mt-5"></div>
+    </div>
+</div>
+
 <!-- Review view -->
 <div id="review-view" class="view flex-1 flex-col min-h-0">
 
     <!-- Toolbar -->
     <div class="bg-white border-b px-4 py-2 flex items-center justify-between flex-shrink-0 shadow-sm">
         <div class="flex items-center space-x-3 flex-wrap gap-y-1">
+            <button id="back-to-rooftops" class="flex items-center gap-1 text-[11px] font-semibold text-slate-500 hover:text-blue-600 border border-slate-200 rounded-lg px-2.5 py-1 transition" title="Back to rooftops">
+                <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M15 19l-7-7 7-7"/></svg>
+                <span>Rooftops</span>
+            </button>
             <div class="flex items-center space-x-1.5 bg-slate-50 border border-slate-200 rounded-lg pl-2.5 pr-1 py-1">
                 <span class="text-[9px] font-bold text-slate-400 uppercase tracking-wider">VIN</span>
                 <span id="cur-vin" class="text-slate-800 font-bold text-[13px] font-mono tracking-tight leading-none">—</span>
@@ -269,8 +287,11 @@ const ZOOM_W    = 1600, ZOOM_Q    = 85;
 const STORAGE_PREFIX = 'spyne_io_review_';
 
 // State
-let rows       = [];     // [{ vin, rooftop, inputUrl, outputUrl }]
-let reviews    = {};     // { idx: { type, comment, at } }
+let allRows        = [];     // every parsed row across all rooftops
+let groups         = [];     // [{ name, rows:[...] }] grouped by rooftop
+let currentRooftop = null;   // name of the rooftop currently under review
+let rows       = [];     // rows for the current rooftop [{ vin, rooftop, inputUrl, outputUrl }]
+let reviews    = {};     // { idx: { type, comment, at } } for the current rooftop
 let idx        = 0;
 let fileName   = '';
 let storageKey = '';
@@ -338,18 +359,103 @@ function loadCsvText(text, name) {
     document.getElementById('ai-pane').style.display  = aiC  !== -1 ? '' : 'none';
     document.getElementById('out-pane').style.display = outC !== -1 ? '' : 'none';
 
-    rows       = parsed;
-    fileName   = name;
-    storageKey = STORAGE_PREFIX + name + '_' + rows.length;
-    restoreReviews();
+    allRows  = parsed;
+    fileName = name;
+    groups   = buildGroups(allRows);
 
-    document.getElementById('file-name').textContent = name + ' · ' + rows.length + ' VINs';
+    document.getElementById('file-name').textContent =
+        name + ' · ' + allRows.length + ' VINs · ' + groups.length + ' rooftop' + (groups.length === 1 ? '' : 's');
     document.getElementById('header-actions').classList.replace('hidden','flex');
     renderTypeBar();
+    renderRooftopView();
+    setHeaderMode('rooftop');
+    show('rooftop-view');
+}
+
+// Group parsed rows by rooftop, preserving first-seen order
+function buildGroups(list) {
+    const map = new Map();
+    list.forEach(r => {
+        const key = (r.rooftop || '').trim() || 'All VINs';
+        if (!map.has(key)) map.set(key, []);
+        map.get(key).push(r);
+    });
+    return [...map.entries()].map(([name, rws]) => ({ name, rows: rws }));
+}
+
+function rooftopStorageKey(name, count) { return STORAGE_PREFIX + fileName + '::' + name + '_' + count; }
+
+function readRooftopReviews(g) {
+    if (g.name === currentRooftop) return reviews;
+    try { return JSON.parse(localStorage.getItem(rooftopStorageKey(g.name, g.rows.length)) || '{}'); }
+    catch(e) { return {}; }
+}
+
+function setHeaderMode(mode) {
+    // Submit opens the per-rooftop summary, so it only applies inside review
+    document.getElementById('submit-btn').style.display = (mode === 'review') ? '' : 'none';
+}
+
+function renderRooftopView() {
+    document.getElementById('rooftop-sub').textContent =
+        fileName + ' · ' + allRows.length + ' VINs across ' + groups.length + ' rooftop' + (groups.length === 1 ? '' : 's');
+    const grid = document.getElementById('rooftop-grid');
+    grid.innerHTML = '';
+    let totalDone = 0;
+    groups.forEach(g => {
+        const rev = readRooftopReviews(g);
+        const done = Math.min(Object.values(rev).filter(x => x && x.type).length, g.rows.length);
+        totalDone += done;
+        const pct = g.rows.length ? Math.round(done / g.rows.length * 100) : 0;
+        const complete = g.rows.length > 0 && done >= g.rows.length;
+
+        const card = document.createElement('button');
+        card.className = 'text-left bg-white border border-slate-200 rounded-xl p-4 hover:border-blue-400 hover:shadow-md transition';
+        card.innerHTML =
+            '<div class="flex items-start justify-between gap-2">' +
+                '<span class="font-bold text-slate-800 text-[14px] leading-snug break-words">' + escapeHtml(g.name) + '</span>' +
+                (complete
+                    ? '<span class="text-[10px] font-bold text-emerald-700 bg-emerald-50 border border-emerald-200 px-2 py-0.5 rounded-full flex-shrink-0">Done</span>'
+                    : '<span class="text-[10px] font-bold text-slate-500 bg-slate-100 px-2 py-0.5 rounded-full flex-shrink-0">' + (g.rows.length - done) + ' left</span>') +
+            '</div>' +
+            '<div class="mt-3 flex items-center justify-between text-[11px] text-slate-500">' +
+                '<span><span class="font-bold text-slate-700">' + g.rows.length + '</span> VINs</span>' +
+                '<span>' + done + ' / ' + g.rows.length + ' reviewed</span>' +
+            '</div>' +
+            '<div class="mt-2 h-1.5 bg-slate-100 rounded-full overflow-hidden">' +
+                '<div class="h-full rounded-full" style="width:' + pct + '%;background:' + (complete ? '#10b981' : 'var(--spyne)') + '"></div>' +
+            '</div>';
+        card.addEventListener('click', () => openRooftop(g.name));
+        grid.appendChild(card);
+    });
+    document.getElementById('rooftop-overall').textContent = totalDone + ' / ' + allRows.length + ' VINs reviewed';
+}
+
+function openRooftop(name) {
+    const g = groups.find(x => x.name === name);
+    if (!g) return;
+    currentRooftop = name;
+    rows       = g.rows;
+    storageKey = rooftopStorageKey(name, rows.length);
+    restoreReviews();
+    setHeaderMode('review');
     show('review-view');
     idx = firstUnreviewed();
     render();
     startTimer();
+}
+
+function backToRooftops() {
+    persist();
+    stopTimer();
+    currentRooftop = null;
+    renderRooftopView();          // refresh progress from what was just reviewed
+    setHeaderMode('rooftop');
+    show('rooftop-view');
+}
+
+function escapeHtml(s) {
+    return String(s).replace(/[&<>"']/g, c => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[c]));
 }
 
 function uploadError(msg) {
@@ -583,7 +689,7 @@ function openSummary() {
     if (!rows.length) return;
     const counts = computeCounts();
     const total = rows.length;
-    document.getElementById('sum-sub').textContent = fileName;
+    document.getElementById('sum-sub').textContent = fileName + (currentRooftop ? ' · ' + currentRooftop : '');
     document.getElementById('sum-total').textContent    = total;
     document.getElementById('sum-reviewed').textContent = total - counts.pending;
     document.getElementById('sum-ok').textContent       = counts.ok;
@@ -619,6 +725,9 @@ document.getElementById('copy-vin').addEventListener('click', async () => {
     fb.style.opacity = '1'; setTimeout(() => fb.style.opacity = '0', 1200);
 });
 
+// Back to rooftop selection
+document.getElementById('back-to-rooftops').addEventListener('click', backToRooftops);
+
 // Nav buttons
 document.getElementById('prev-btn').addEventListener('click', () => nav(-1));
 document.getElementById('next-btn').addEventListener('click', () => nav(1));
@@ -640,21 +749,27 @@ document.getElementById('lightbox').addEventListener('click', closeLightbox);
 // Export
 function csvCell(v) { const s = String(v == null ? '' : v); return /[",\n\r]/.test(s) ? '"' + s.replace(/"/g,'""') + '"' : s; }
 function exportCSV() {
+    if (!groups.length) return;
     const header = ['#','VIN','Rooftop','Issue','Comment','Input URL','AI URL','Output URL','Reviewed At'];
     const lines = [header.join(',')];
-    rows.forEach((r, i) => {
-        const rev = reviews[i] || {};
-        lines.push([
-            i + 1,
-            csvCell(r.vin),
-            csvCell(r.rooftop),
-            csvCell(rev.type ? LABEL_BY_CODE[rev.type] : ''),
-            csvCell(rev.comment || ''),
-            csvCell(r.inputUrl),
-            csvCell(r.aiUrl),
-            csvCell(r.outputUrl),
-            csvCell(rev.at || ''),
-        ].join(','));
+    let n = 0;
+    groups.forEach(g => {
+        const rev = readRooftopReviews(g);
+        g.rows.forEach((r, i) => {
+            const rv = rev[i] || {};
+            n++;
+            lines.push([
+                n,
+                csvCell(r.vin),
+                csvCell(r.rooftop),
+                csvCell(rv.type ? LABEL_BY_CODE[rv.type] : ''),
+                csvCell(rv.comment || ''),
+                csvCell(r.inputUrl),
+                csvCell(r.aiUrl),
+                csvCell(r.outputUrl),
+                csvCell(rv.at || ''),
+            ].join(','));
+        });
     });
     const blob = new Blob([lines.join('\n')], { type:'text/csv;charset=utf-8' });
     const a = document.createElement('a');
@@ -669,6 +784,7 @@ document.getElementById('export-btn').addEventListener('click', exportCSV);
 // New CSV
 document.getElementById('new-btn').addEventListener('click', () => {
     rows = []; reviews = {}; idx = 0;
+    allRows = []; groups = []; currentRooftop = null;
     stopTimer();
     closeSummary();
     document.getElementById('file-input').value = '';
@@ -680,7 +796,11 @@ document.getElementById('new-btn').addEventListener('click', () => {
 // Keyboard
 document.addEventListener('keydown', e => {
     if (!document.getElementById('review-view').classList.contains('active')) return;
-    if (e.key === 'Escape') { if (summaryOpen()) closeSummary(); else closeLightbox(); return; }
+    if (e.key === 'Escape') {
+        if (summaryOpen()) { closeSummary(); return; }
+        if (document.getElementById('lightbox').style.display === 'flex') { closeLightbox(); return; }
+        backToRooftops(); return;
+    }
     const typing = ['INPUT','TEXTAREA'].includes(document.activeElement && document.activeElement.tagName);
     if (typing) { if (e.key === 'Enter') { e.preventDefault(); document.activeElement.blur(); submitAdvance(); } return; }
 
