@@ -1,0 +1,733 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Spyne — Input vs Output Review</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<style>
+    :root { --spyne:#2b6cb0; }
+    body { font-family:'Inter',sans-serif; background:#f0f7ff; }
+    ::-webkit-scrollbar { width:8px; height:8px; }
+    ::-webkit-scrollbar-thumb { background:#cbd5e0; border-radius:10px; }
+
+    .spinner {
+        border:2px solid rgba(43,108,176,0.2); border-top:2px solid var(--spyne);
+        border-radius:50%; width:26px; height:26px; animation:spin .8s linear infinite;
+    }
+    @keyframes spin { to { transform:rotate(360deg); } }
+
+    /* Vehicle-type chips */
+    .type-chip {
+        display:inline-flex; align-items:center; gap:6px;
+        padding:5px 11px 5px 6px; border:1px solid #e2e8f0; border-radius:8px;
+        background:#fff; cursor:pointer; user-select:none;
+        font-size:12px; font-weight:600; color:#475569; transition:all .12s; white-space:nowrap;
+    }
+    .type-chip:hover { border-color:#93c5fd; background:#f8fafc; }
+    .type-chip .kbd {
+        display:inline-flex; align-items:center; justify-content:center;
+        width:18px; height:18px; background:#f1f5f9; color:#64748b;
+        font-family:ui-monospace,monospace; font-size:10px; font-weight:700; border-radius:4px;
+    }
+    .type-chip.active { background:#eff6ff; border-color:var(--spyne); color:#1d4ed8; box-shadow:0 0 0 1px var(--spyne); }
+    .type-chip.active .kbd { background:var(--spyne); color:#fff; }
+    .type-chip.ok.active { background:#ecfdf5; border-color:#10b981; color:#047857; box-shadow:0 0 0 1px #10b981; }
+    .type-chip.ok.active .kbd { background:#10b981; color:#fff; }
+
+    /* Top-bar summary pills */
+    .sum-pill {
+        display:inline-flex; align-items:center; gap:5px;
+        font-size:11px; font-weight:700; color:#334155;
+        background:#f8fafc; border:1px solid #e2e8f0; border-radius:9999px;
+        padding:2px 9px 2px 7px; white-space:nowrap;
+    }
+    .sum-pill .dot { width:7px; height:7px; border-radius:50%; flex-shrink:0; }
+    .sum-pill .n { color:#0f172a; }
+
+    .nav-btn {
+        width:40px; height:40px; border-radius:50%;
+        display:flex; align-items:center; justify-content:center;
+        background:rgba(255,255,255,0.14); color:#fff; cursor:pointer; transition:background .12s; flex-shrink:0;
+    }
+    .nav-btn:hover { background:rgba(255,255,255,0.28); }
+
+    .pane-label {
+        position:absolute; top:10px; left:10px; z-index:3;
+        font-size:10px; font-weight:800; letter-spacing:.08em;
+        padding:3px 9px; border-radius:6px; color:#fff;
+    }
+    .view { display:none; }
+    .view.active { display:flex; }
+
+    input[type=file] { display:none; }
+    kbd.hint { background:#e2e8f0; color:#475569; font-size:10px; padding:1px 6px; border-radius:4px; font-family:ui-monospace,monospace; }
+
+    @media (prefers-reduced-motion: reduce) { * { transition:none !important; animation-duration:.01ms !important; } }
+</style>
+</head>
+<body class="text-slate-800 h-screen flex flex-col overflow-hidden">
+
+<!-- Header -->
+<header class="text-white px-5 flex items-center justify-between flex-shrink-0 shadow-md" style="background:var(--spyne); height:54px;">
+    <div class="flex items-center space-x-3">
+        <span class="font-extrabold text-[18px] tracking-tight">spyne</span>
+        <span class="text-white/50">/</span>
+        <span class="text-[13px] font-semibold text-white/90">Input vs Output Review</span>
+    </div>
+    <div id="header-actions" class="hidden items-center space-x-2">
+        <span id="file-name" class="text-[11px] text-white/70 max-w-[220px] truncate hidden sm:inline"></span>
+        <button id="submit-btn" class="bg-white text-blue-700 hover:bg-blue-50 px-3 py-1.5 rounded-md text-[11px] font-bold transition flex items-center space-x-1.5">
+            <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+            <span>Submit</span>
+        </button>
+        <button id="export-btn" class="bg-white/15 hover:bg-white/25 border border-white/20 px-3 py-1.5 rounded-md text-[11px] font-bold transition flex items-center space-x-1.5">
+            <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"/></svg>
+            <span>Export CSV</span>
+        </button>
+        <button id="new-btn" class="bg-white/10 hover:bg-white/20 border border-white/20 px-3 py-1.5 rounded-md text-[11px] font-bold transition">New CSV</button>
+    </div>
+</header>
+
+<!-- Upload view -->
+<div id="upload-view" class="view active flex-1 items-center justify-center p-6">
+    <div class="bg-white rounded-2xl shadow-xl border border-slate-100 w-full max-w-lg p-8">
+        <h1 class="text-xl font-bold text-slate-800 mb-1">Load a review file</h1>
+        <p class="text-slate-500 text-[13px] mb-6 leading-relaxed">
+            Upload a CSV with one row per VIN. Each row shows its input, AI, and output images side by side for classification.
+        </p>
+
+        <div id="drop-zone" class="border-2 border-dashed border-slate-300 rounded-xl p-8 text-center cursor-pointer hover:border-blue-400 hover:bg-blue-50/50 transition">
+            <svg class="mx-auto mb-3 w-9 h-9 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M9 13h6m-3-3v6m5 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/></svg>
+            <p class="text-[13px] text-slate-600 font-medium">Drop CSV here or <span class="text-blue-600 font-semibold">browse</span></p>
+        </div>
+        <input id="file-input" type="file" accept=".csv">
+
+        <div id="upload-error" class="hidden mt-4 text-[12px] text-rose-600 bg-rose-50 border border-rose-200 rounded-lg px-3 py-2"></div>
+
+        <div class="mt-6 border-t border-slate-100 pt-4">
+            <p class="text-[11px] font-semibold text-slate-500 uppercase tracking-wider mb-2">Expected columns</p>
+            <div class="flex flex-wrap gap-1.5 text-[11px]">
+                <span class="bg-slate-100 text-slate-700 font-mono px-2 py-1 rounded">VIN</span>
+                <span class="bg-slate-100 text-slate-500 font-mono px-2 py-1 rounded">rooftop <span class="text-slate-400">(optional)</span></span>
+                <span class="bg-slate-100 text-slate-700 font-mono px-2 py-1 rounded">input_url</span>
+                <span class="bg-slate-100 text-slate-700 font-mono px-2 py-1 rounded">ai_url</span>
+                <span class="bg-slate-100 text-slate-700 font-mono px-2 py-1 rounded">output_url</span>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Review view -->
+<div id="review-view" class="view flex-1 flex-col min-h-0">
+
+    <!-- Toolbar -->
+    <div class="bg-white border-b px-4 py-2 flex items-center justify-between flex-shrink-0 shadow-sm">
+        <div class="flex items-center space-x-3 flex-wrap gap-y-1">
+            <div class="flex items-center space-x-1.5 bg-slate-50 border border-slate-200 rounded-lg pl-2.5 pr-1 py-1">
+                <span class="text-[9px] font-bold text-slate-400 uppercase tracking-wider">VIN</span>
+                <span id="cur-vin" class="text-slate-800 font-bold text-[13px] font-mono tracking-tight leading-none">—</span>
+                <button id="copy-vin" class="text-slate-400 hover:text-blue-600 transition p-1 rounded hover:bg-white" title="Copy VIN">
+                    <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"/></svg>
+                </button>
+                <span id="copy-fb" class="text-[10px] font-semibold text-emerald-600 opacity-0 transition-opacity pr-1">Copied</span>
+            </div>
+            <span id="cur-rooftop" class="hidden text-[11px] font-semibold text-slate-600 bg-slate-100 px-2 py-1 rounded-lg"></span>
+            <span id="cur-counter" class="text-[12px] font-mono text-slate-500"></span>
+        </div>
+        <div class="flex items-center space-x-3">
+            <div id="timer-wrap" style="display:none" class="items-center space-x-1.5 bg-slate-100 hover:bg-slate-200 rounded-lg px-2.5 py-1 cursor-pointer select-none transition" onclick="toggleTimer()" title="Click to pause / resume">
+                <svg id="timer-icon" class="w-3.5 h-3.5 text-slate-500 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+                <span id="timer-display" class="text-[12px] font-mono font-bold text-slate-700">00:00</span>
+                <span id="timer-pause" class="text-[9px] font-semibold text-amber-500 hidden">PAUSED</span>
+            </div>
+            <span id="progress-pill" class="bg-blue-50 text-blue-700 px-2.5 py-1 rounded-full text-[11px] font-semibold"></span>
+            <button id="next-unrev" class="text-[11px] font-semibold text-slate-500 hover:text-blue-600 border border-slate-200 rounded-lg px-2.5 py-1 transition">Next pending</button>
+        </div>
+    </div>
+
+    <!-- Count summary -->
+    <div id="summary-bar" class="bg-white border-b border-slate-100 px-4 py-1.5 flex items-center flex-wrap gap-1.5 flex-shrink-0"></div>
+
+    <!-- Image stage: INPUT | AI | OUTPUT -->
+    <div class="flex-1 min-h-0 relative bg-slate-900 flex flex-col md:flex-row">
+        <div class="nav-btn absolute left-3 top-1/2 -translate-y-1/2 z-10" id="prev-btn" title="Previous (left arrow)">
+            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M15 19l-7-7 7-7"/></svg>
+        </div>
+        <div class="nav-btn absolute right-3 top-1/2 -translate-y-1/2 z-10" id="next-btn" title="Next (right arrow / Enter)">
+            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M9 5l7 7-7 7"/></svg>
+        </div>
+
+        <!-- INPUT pane -->
+        <div id="in-pane" class="relative flex-1 min-h-0 flex items-center justify-center overflow-hidden md:border-r border-slate-700">
+            <span class="pane-label" style="background:#475569;">INPUT</span>
+            <div id="in-skel" class="absolute inset-0 flex items-center justify-center"><div class="spinner"></div></div>
+            <div id="in-none" class="absolute inset-0 hidden flex-col items-center justify-center text-slate-500 text-[13px]">No input image</div>
+            <img id="in-img" src="" referrerpolicy="no-referrer" decoding="async" class="max-w-full max-h-full object-contain cursor-zoom-in" style="opacity:0; transition:opacity .15s;">
+        </div>
+
+        <!-- AI pane -->
+        <div id="ai-pane" class="relative flex-1 min-h-0 flex items-center justify-center overflow-hidden border-t md:border-t-0 md:border-r border-slate-700">
+            <span class="pane-label" style="background:#7c3aed;">AI</span>
+            <div id="ai-skel" class="absolute inset-0 flex items-center justify-center"><div class="spinner"></div></div>
+            <div id="ai-none" class="absolute inset-0 hidden flex-col items-center justify-center text-slate-500 text-[13px]">No AI image</div>
+            <img id="ai-img" src="" referrerpolicy="no-referrer" decoding="async" class="max-w-full max-h-full object-contain cursor-zoom-in" style="opacity:0; transition:opacity .15s;">
+        </div>
+
+        <!-- OUTPUT pane -->
+        <div id="out-pane" class="relative flex-1 min-h-0 flex items-center justify-center overflow-hidden border-t md:border-t-0 border-slate-700">
+            <span class="pane-label" style="background:var(--spyne);">OUTPUT</span>
+            <div id="out-skel" class="absolute inset-0 flex items-center justify-center"><div class="spinner"></div></div>
+            <div id="out-none" class="absolute inset-0 hidden flex-col items-center justify-center text-slate-500 text-[13px]">No output image</div>
+            <img id="out-img" src="" referrerpolicy="no-referrer" decoding="async" class="max-w-full max-h-full object-contain cursor-zoom-in" style="opacity:0; transition:opacity .15s;">
+        </div>
+    </div>
+
+    <!-- Classification footer -->
+    <div class="bg-white border-t border-slate-200 px-4 py-2.5 flex-shrink-0">
+        <div class="flex items-center flex-wrap gap-2">
+            <span class="text-[10px] font-bold uppercase tracking-wider text-slate-400 mr-1">Vehicle Type:</span>
+            <div id="type-bar" class="flex items-center flex-wrap gap-1.5"></div>
+            <div class="flex-1"></div>
+            <input id="comment" type="text" placeholder="Comment (optional)…" class="w-64 p-1.5 border border-slate-200 rounded-lg text-xs outline-none focus:border-blue-400 focus:ring-1 focus:ring-blue-400 transition">
+            <span id="status" class="text-[11px] font-semibold min-w-[70px] text-right"></span>
+        </div>
+        <div class="mt-1.5 text-[10px] text-slate-400 flex items-center gap-3 flex-wrap">
+            <span><kbd class="hint">1</kbd>–<kbd class="hint">7</kbd> vehicle type</span>
+            <span><kbd class="hint">&larr;</kbd> <kbd class="hint">&rarr;</kbd> prev / next</span>
+            <span><kbd class="hint">Enter</kbd> save &amp; next (OK if none picked)</span>
+            <span>click an image to zoom</span>
+        </div>
+    </div>
+</div>
+
+<!-- Summary modal -->
+<div id="summary-modal" class="fixed inset-0 z-50 bg-slate-900/50 items-center justify-center hidden p-4">
+    <div class="bg-white rounded-2xl shadow-2xl w-full max-w-lg">
+        <div class="px-6 py-4 border-b border-slate-100 flex items-center justify-between">
+            <div>
+                <h3 class="font-bold text-slate-800 text-[17px]">Review summary</h3>
+                <p id="sum-sub" class="text-[12px] text-slate-500 mt-0.5"></p>
+            </div>
+            <button id="sum-close" class="text-slate-400 hover:text-slate-600 text-xl leading-none">&times;</button>
+        </div>
+        <div class="p-6">
+            <div class="grid grid-cols-4 gap-2 mb-4 text-center">
+                <div class="bg-slate-50 rounded-lg p-2.5"><div class="text-[10px] font-bold text-slate-500 uppercase tracking-wider">Total</div><div id="sum-total" class="text-lg font-bold text-slate-800">0</div></div>
+                <div class="bg-blue-50 rounded-lg p-2.5"><div class="text-[10px] font-bold text-blue-600 uppercase tracking-wider">Reviewed</div><div id="sum-reviewed" class="text-lg font-bold text-blue-700">0</div></div>
+                <div class="bg-emerald-50 rounded-lg p-2.5"><div class="text-[10px] font-bold text-emerald-600 uppercase tracking-wider">OK</div><div id="sum-ok" class="text-lg font-bold text-emerald-700">0</div></div>
+                <div class="bg-amber-50 rounded-lg p-2.5"><div class="text-[10px] font-bold text-amber-600 uppercase tracking-wider">Pending</div><div id="sum-pending" class="text-lg font-bold text-amber-700">0</div></div>
+            </div>
+            <div class="border-t border-slate-100 pt-3">
+                <p class="text-[11px] font-semibold text-slate-500 uppercase tracking-wider mb-2">By vehicle type</p>
+                <div id="sum-types" class="grid grid-cols-2 gap-x-6 gap-y-1"></div>
+            </div>
+            <div class="mt-4 text-[12px] text-slate-500">Time taken: <span id="sum-time" class="font-mono font-semibold text-slate-700">00:00</span></div>
+            <div class="mt-5 flex gap-2">
+                <button id="sum-keep" class="flex-1 border border-slate-200 text-slate-600 font-semibold py-2.5 rounded-lg hover:bg-slate-50 transition">Keep reviewing</button>
+                <button id="sum-download" class="flex-1 bg-blue-600 hover:bg-blue-700 text-white font-bold py-2.5 rounded-lg flex items-center justify-center space-x-2 transition">
+                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"/></svg>
+                    <span>Download CSV</span>
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Lightbox -->
+<div id="lightbox" class="fixed inset-0 z-50 bg-black/90 items-center justify-center hidden" style="cursor:zoom-out;">
+    <img id="lb-img" src="" referrerpolicy="no-referrer" style="max-width:94vw; max-height:94vh; object-fit:contain;">
+    <div class="absolute top-4 right-6 text-white text-3xl cursor-pointer">&times;</div>
+</div>
+
+<!-- Toast -->
+<div id="toast" class="fixed bottom-4 right-4 bg-slate-800 text-white px-4 py-2.5 rounded-lg shadow-xl text-[13px] font-medium translate-y-20 transition-transform duration-300 z-50"></div>
+
+<script>
+// Config
+const TYPES = [
+    { key:'1', code:'car',             label:'Car' },
+    { key:'2', code:'pickup_loader',   label:'Pickup - Loader' },
+    { key:'3', code:'pickup_noloader', label:'Pickup - w/o Loader' },
+    { key:'4', code:'truck_loader',    label:'Truck - Loader' },
+    { key:'5', code:'truck_noloader',  label:'Truck - w/o Loader' },
+    { key:'6', code:'van_loader',      label:'Van - Loader' },
+    { key:'7', code:'van_noloader',    label:'Van - w/o Loader' },
+];
+const LABEL_BY_CODE = Object.fromEntries(TYPES.map(t => [t.code, t.label]));
+LABEL_BY_CODE.ok = 'OK';
+
+// Status colors + compact labels for the top-bar summary
+const STAT_COLOR = {
+    pending:'#f59e0b', ok:'#10b981',
+    car:'#3b82f6', pickup_loader:'#f97316', pickup_noloader:'#fb923c',
+    truck_loader:'#8b5cf6', truck_noloader:'#a78bfa', van_loader:'#0891b2', van_noloader:'#22d3ee'
+};
+const SHORT = {
+    pending:'Pending', ok:'OK',
+    car:'Car', pickup_loader:'PU · Loader', pickup_noloader:'PU · no Loader',
+    truck_loader:'Truck · Loader', truck_noloader:'Truck · no Loader', van_loader:'Van · Loader', van_noloader:'Van · no Loader'
+};
+const SUMMARY_ORDER = ['pending','ok','car','pickup_loader','pickup_noloader','truck_loader','truck_noloader','van_loader','van_noloader'];
+
+// Image sizing — request small resized webp for display, larger for zoom
+const DISPLAY_W = 900,  DISPLAY_Q = 72;
+const ZOOM_W    = 1600, ZOOM_Q    = 85;
+const STORAGE_PREFIX = 'spyne_io_review_';
+
+// State
+let rows       = [];     // [{ vin, rooftop, inputUrl, outputUrl }]
+let reviews    = {};     // { idx: { type, comment, at } }
+let idx        = 0;
+let fileName   = '';
+let storageKey = '';
+
+// CSV parsing (RFC 4180)
+function parseCSV(text) {
+    const s = text.replace(/\r\n/g,'\n').replace(/\r/g,'\n');
+    const out = []; let row = [], field = '', inQ = false;
+    for (let i=0; i<s.length; i++) {
+        const c = s[i];
+        if (inQ) {
+            if (c === '"') { if (s[i+1] === '"') { field+='"'; i++; } else inQ=false; }
+            else field += c;
+        } else {
+            if      (c === '"')  inQ = true;
+            else if (c === ',')  { row.push(field); field=''; }
+            else if (c === '\n') { row.push(field); if (row.some(v=>v.trim())) out.push(row); row=[]; field=''; }
+            else field += c;
+        }
+    }
+    row.push(field);
+    if (row.some(v=>v.trim())) out.push(row);
+    if (!out.length) return { headers:[], rows:[] };
+    return { headers: out[0].map(h=>h.trim()), rows: out.slice(1) };
+}
+
+function findCol(headers, names) {
+    const low = headers.map(h => h.trim().toLowerCase());
+    for (const n of names) { const i = low.indexOf(n); if (i !== -1) return i; }
+    for (const n of names) { const i = low.findIndex(h => h.includes(n)); if (i !== -1) return i; }
+    return -1;
+}
+
+// Load
+function loadCsvText(text, name) {
+    const { headers, rows: raw } = parseCSV(text);
+    if (!headers.length) { return uploadError('That file looks empty.'); }
+
+    const vinC = findCol(headers, ['vin','vin_number','vehicle_vin']);
+    const rtC  = findCol(headers, ['rooftop','rooftop_name','dealer','dealership','dealer_name','store','location']);
+    const inC  = findCol(headers, ['input_url','input','input_image','input_image_url','raw_url','raw','source_url','before_url','before']);
+    const aiC  = findCol(headers, ['ai_url','ai','ai_image','ai_image_url','ai_output','ai_output_url','ai_generated','generated_url','generated']);
+    const outC = findCol(headers, ['output_url','output','output_image','output_image_url','result_url','processed_url','processed','after_url','after','final_url','final']);
+
+    if (vinC === -1) return uploadError('No VIN column found. Add a column named "VIN".');
+    if (inC === -1 && aiC === -1 && outC === -1)
+        return uploadError('No image column found. Add at least one of: input_url, ai_url, output_url.');
+
+    const parsed = [];
+    for (const r of raw) {
+        const vin = (r[vinC] || '').trim();
+        if (!vin || vin.toLowerCase() === 'vin') continue;
+        parsed.push({
+            vin,
+            rooftop:   rtC  !== -1 ? (r[rtC] || '').trim() : '',
+            inputUrl:  inC  !== -1 ? (r[inC]  || '').trim() : '',
+            aiUrl:     aiC  !== -1 ? (r[aiC]  || '').trim() : '',
+            outputUrl: outC !== -1 ? (r[outC] || '').trim() : '',
+        });
+    }
+    if (!parsed.length) return uploadError('No VIN rows found in that file.');
+
+    // Only show panes for URL columns that exist in the file
+    document.getElementById('in-pane').style.display  = inC  !== -1 ? '' : 'none';
+    document.getElementById('ai-pane').style.display  = aiC  !== -1 ? '' : 'none';
+    document.getElementById('out-pane').style.display = outC !== -1 ? '' : 'none';
+
+    rows       = parsed;
+    fileName   = name;
+    storageKey = STORAGE_PREFIX + name + '_' + rows.length;
+    restoreReviews();
+
+    document.getElementById('file-name').textContent = name + ' · ' + rows.length + ' VINs';
+    document.getElementById('header-actions').classList.replace('hidden','flex');
+    renderTypeBar();
+    show('review-view');
+    idx = firstUnreviewed();
+    render();
+    startTimer();
+}
+
+function uploadError(msg) {
+    const el = document.getElementById('upload-error');
+    el.textContent = msg;
+    el.classList.remove('hidden');
+}
+
+function firstUnreviewed() {
+    const i = rows.findIndex((_, j) => !reviews[j] || !reviews[j].type);
+    return i === -1 ? 0 : i;
+}
+
+// Persistence
+function persist() { try { localStorage.setItem(storageKey, JSON.stringify(reviews)); } catch(e){} }
+function restoreReviews() { try { reviews = JSON.parse(localStorage.getItem(storageKey) || '{}'); } catch(e){ reviews = {}; } }
+
+// Image loading with proxy fallback
+// Image loading — request a small resized WebP first so big dealer photos load fast.
+//  • Spyne / S3 / CloudFront  → Thumbor (media.spyneai.com) resize+webp, then wsrv, then direct
+//  • Anything else            → wsrv.nl resize+webp, then direct
+function isSpyneHosted(url) {
+    try { const h = new URL(url).hostname.toLowerCase();
+        return h.includes('spyne') || h.includes('amazonaws.com') || h.includes('cloudfront.net'); }
+    catch(e){ return false; }
+}
+function thumborUrl(u, w, q) { return 'https://media.spyneai.com/unsafe/' + w + 'x0/filters:format(webp):quality(' + q + ')/' + u; }
+function wsrvUrl(u, w, q)    { return 'https://wsrv.nl/?url=' + encodeURIComponent(u.replace(/^https?:\/\//,'')) + '&w=' + w + '&q=' + q + '&output=webp'; }
+
+function getFallbacks(url, w, q) {
+    if (!url) return [];
+    const seen = new Set(), chain = [];
+    const add = u => { if (u && !seen.has(u)) { seen.add(u); chain.push(u); } };
+    if (isSpyneHosted(url)) { add(thumborUrl(url, w, q)); add(wsrvUrl(url, w, q)); add(url); }
+    else                    { add(wsrvUrl(url, w, q));    add(url); }
+    return chain;
+}
+
+const _preloadCache = new Set();
+function preload(url) {
+    if (!url) return;
+    const first = getFallbacks(url, DISPLAY_W, DISPLAY_Q)[0];
+    if (!first || _preloadCache.has(first)) return;
+    _preloadCache.add(first);
+    const i = new Image(); i.referrerPolicy = 'no-referrer'; i.decoding = 'async'; i.src = first;
+}
+
+function loadImage(imgEl, skelEl, noneEl, url) {
+    imgEl.onload = imgEl.onerror = null;
+    imgEl.src = ''; imgEl.style.opacity = '0';
+    noneEl.style.display = 'none';
+    if (!url) { skelEl.style.display = 'none'; noneEl.style.display = 'flex'; return; }
+    const fb = getFallbacks(url, DISPLAY_W, DISPLAY_Q); let step = 0;
+    skelEl.style.display = 'flex';
+    imgEl.decoding = 'async';
+    imgEl.onload  = () => { imgEl.style.opacity = '1'; skelEl.style.display = 'none'; };
+    imgEl.onerror = () => { step++; if (step < fb.length) { imgEl.src = fb[step]; } else { skelEl.style.display = 'none'; noneEl.style.display = 'flex'; } };
+    imgEl.src = fb[0];
+}
+
+// Render
+function renderTypeBar() {
+    const bar = document.getElementById('type-bar');
+    bar.innerHTML = '';
+    TYPES.forEach(t => {
+        const chip = document.createElement('button');
+        chip.className = 'type-chip';
+        chip.dataset.code = t.code;
+        chip.innerHTML = '<span class="kbd">' + t.key + '</span><span>' + t.label + '</span>';
+        chip.addEventListener('click', () => selectType(t.code));
+        bar.appendChild(chip);
+    });
+}
+
+function render() {
+    if (!rows.length) return;
+    idx = Math.max(0, Math.min(rows.length - 1, idx));
+    const r   = rows[idx];
+    const rev = reviews[idx] || {};
+
+    document.getElementById('cur-vin').textContent = r.vin;
+    document.getElementById('cur-counter').textContent = (idx + 1) + ' / ' + rows.length;
+
+    const rt = document.getElementById('cur-rooftop');
+    if (r.rooftop) { rt.textContent = r.rooftop; rt.classList.remove('hidden'); }
+    else rt.classList.add('hidden');
+
+    // Images
+    loadImage(document.getElementById('in-img'),  document.getElementById('in-skel'),  document.getElementById('in-none'),  r.inputUrl);
+    loadImage(document.getElementById('ai-img'),  document.getElementById('ai-skel'),  document.getElementById('ai-none'),  r.aiUrl);
+    loadImage(document.getElementById('out-img'), document.getElementById('out-skel'), document.getElementById('out-none'), r.outputUrl);
+    document.getElementById('in-img').onclick  = () => openLightbox(r.inputUrl);
+    document.getElementById('ai-img').onclick  = () => openLightbox(r.aiUrl);
+    document.getElementById('out-img').onclick = () => openLightbox(r.outputUrl);
+
+    // Type chips
+    document.querySelectorAll('.type-chip').forEach(c =>
+        c.classList.toggle('active', c.dataset.code === rev.type));
+
+    // Comment
+    document.getElementById('comment').value = rev.comment || '';
+
+    // Status
+    const st = document.getElementById('status');
+    if (rev.type) { st.textContent = '✓ ' + LABEL_BY_CODE[rev.type]; st.style.color = (rev.type === 'ok') ? '#047857' : '#059669'; }
+    else          { st.textContent = 'Pending';                      st.style.color = '#f59e0b'; }
+
+    updateProgress();
+    renderSummary();
+
+    // Preload neighbours (more ahead than behind) for snappy navigation
+    for (let d=1; d<=4; d++) {
+        const nx = rows[idx+d]; if (nx) { preload(nx.inputUrl); preload(nx.aiUrl); preload(nx.outputUrl); }
+    }
+    for (let d=1; d<=2; d++) {
+        const pv = rows[idx-d]; if (pv) { preload(pv.inputUrl); preload(pv.aiUrl); preload(pv.outputUrl); }
+    }
+}
+
+function updateProgress() {
+    const done = Object.values(reviews).filter(x => x && x.type).length;
+    document.getElementById('progress-pill').textContent = done + ' / ' + rows.length + ' reviewed';
+}
+
+function computeCounts() {
+    const counts = { pending:0, ok:0, car:0, pickup_loader:0, pickup_noloader:0, truck_loader:0, truck_noloader:0, van_loader:0, van_noloader:0 };
+    rows.forEach((_, i) => {
+        const t = reviews[i] && reviews[i].type;
+        if (t && counts.hasOwnProperty(t)) counts[t]++;
+        else counts.pending++;
+    });
+    return counts;
+}
+
+function renderSummary() {
+    const counts = computeCounts();
+    const bar = document.getElementById('summary-bar');
+    bar.innerHTML = '';
+    const lbl = document.createElement('span');
+    lbl.className = 'text-[10px] font-bold text-slate-400 uppercase tracking-wider mr-1';
+    lbl.textContent = 'Summary';
+    bar.appendChild(lbl);
+    SUMMARY_ORDER.forEach(code => {
+        const n = counts[code];
+        if (n === 0 && code !== 'pending' && code !== 'ok') return;   // always show Pending + OK
+        const pill = document.createElement('span');
+        pill.className = 'sum-pill';
+        pill.title = LABEL_BY_CODE[code] || SHORT[code];
+        pill.innerHTML = '<span class="dot" style="background:' + STAT_COLOR[code] + '"></span>' +
+                         '<span>' + SHORT[code] + '</span><span class="n">' + n + '</span>';
+        bar.appendChild(pill);
+    });
+}
+
+// Actions
+function selectType(code) {
+    if (!reviews[idx]) reviews[idx] = {};
+    reviews[idx].type = (reviews[idx].type === code) ? null : code;   // toggle off if same
+    reviews[idx].at   = new Date().toISOString();
+    persist();
+    render();
+}
+
+let commentTimer = null;
+document.getElementById('comment').addEventListener('input', e => {
+    const val = e.target.value;
+    if (!reviews[idx]) reviews[idx] = {};
+    reviews[idx].comment = val;
+    reviews[idx].at = new Date().toISOString();
+    clearTimeout(commentTimer);
+    commentTimer = setTimeout(persist, 400);
+});
+
+function nav(dir) { idx += dir; render(); }
+
+function gotoNextUnreviewed() {
+    for (let step=1; step<=rows.length; step++) {
+        const j = (idx + step) % rows.length;
+        if (!reviews[j] || !reviews[j].type) { idx = j; render(); return; }
+    }
+    toast('Nothing pending — all VINs reviewed');
+}
+
+// Enter = accept & advance. If nothing is selected on the current VIN, mark it OK.
+function submitAdvance() {
+    if (!reviews[idx] || !reviews[idx].type) {
+        reviews[idx] = reviews[idx] || {};
+        reviews[idx].type = 'ok';
+        reviews[idx].at = new Date().toISOString();
+        persist();
+    }
+    if (idx >= rows.length - 1) { render(); openSummary(); }   // last VIN → show summary
+    else nav(1);
+}
+
+// ── Timer ────────────────────────────────────────────────────────────────────
+let timerStart = null, timerAccum = 0, timerInt = null, timerPaused = false;
+function elapsedMs() { return timerAccum + (timerStart ? Date.now() - timerStart : 0); }
+function fmtDur(ms) {
+    const s = Math.floor(ms/1000), h = Math.floor(s/3600), m = Math.floor(s%3600/60), ss = s%60;
+    const p = n => String(n).padStart(2,'0');
+    return (h > 0 ? p(h) + ':' : '') + p(m) + ':' + p(ss);
+}
+function tickTimer() { const d = document.getElementById('timer-display'); if (d) d.textContent = fmtDur(elapsedMs()); }
+function startTimer() {
+    timerAccum = 0; timerPaused = false; timerStart = Date.now();
+    document.getElementById('timer-wrap').style.display = 'flex';
+    document.getElementById('timer-pause').classList.add('hidden');
+    clearInterval(timerInt); timerInt = setInterval(tickTimer, 1000); tickTimer();
+}
+function stopTimer() {
+    clearInterval(timerInt); timerInt = null; timerStart = null; timerAccum = 0; timerPaused = false;
+    const w = document.getElementById('timer-wrap'); if (w) w.style.display = 'none';
+}
+function toggleTimer() {
+    if (timerPaused) {
+        timerPaused = false; timerStart = Date.now();
+        timerInt = setInterval(tickTimer, 1000);
+        document.getElementById('timer-pause').classList.add('hidden');
+        document.getElementById('timer-icon').style.color = '';
+    } else {
+        timerAccum = elapsedMs(); timerStart = null; timerPaused = true;
+        clearInterval(timerInt);
+        document.getElementById('timer-pause').classList.remove('hidden');
+        document.getElementById('timer-icon').style.color = '#f59e0b';
+    }
+}
+
+// ── Summary modal ────────────────────────────────────────────────────────────
+function openSummary() {
+    if (!rows.length) return;
+    const counts = computeCounts();
+    const total = rows.length;
+    document.getElementById('sum-sub').textContent = fileName;
+    document.getElementById('sum-total').textContent    = total;
+    document.getElementById('sum-reviewed').textContent = total - counts.pending;
+    document.getElementById('sum-ok').textContent       = counts.ok;
+    document.getElementById('sum-pending').textContent  = counts.pending;
+    document.getElementById('sum-time').textContent     = fmtDur(elapsedMs());
+
+    const list = document.getElementById('sum-types');
+    list.innerHTML = '';
+    TYPES.forEach(t => {
+        const row = document.createElement('div');
+        row.className = 'flex items-center justify-between text-[12px]';
+        row.innerHTML = '<span class="flex items-center gap-2 text-slate-600">' +
+            '<span style="width:8px;height:8px;border-radius:50%;background:' + STAT_COLOR[t.code] + '"></span>' +
+            t.label + '</span><span class="font-bold text-slate-800">' + counts[t.code] + '</span>';
+        list.appendChild(row);
+    });
+    document.getElementById('summary-modal').style.display = 'flex';
+}
+function closeSummary() { document.getElementById('summary-modal').style.display = 'none'; }
+function summaryOpen() { return document.getElementById('summary-modal').style.display === 'flex'; }
+
+document.getElementById('submit-btn').addEventListener('click', openSummary);
+document.getElementById('sum-close').addEventListener('click', closeSummary);
+document.getElementById('sum-keep').addEventListener('click', closeSummary);
+document.getElementById('sum-download').addEventListener('click', () => { exportCSV(); closeSummary(); });
+
+// Copy VIN
+document.getElementById('copy-vin').addEventListener('click', async () => {
+    const vin = rows[idx] && rows[idx].vin; if (!vin) return;
+    try { await navigator.clipboard.writeText(vin); }
+    catch(e){ const ta=document.createElement('textarea'); ta.value=vin; document.body.appendChild(ta); ta.select(); try{document.execCommand('copy');}catch(_){} document.body.removeChild(ta); }
+    const fb = document.getElementById('copy-fb');
+    fb.style.opacity = '1'; setTimeout(() => fb.style.opacity = '0', 1200);
+});
+
+// Nav buttons
+document.getElementById('prev-btn').addEventListener('click', () => nav(-1));
+document.getElementById('next-btn').addEventListener('click', () => nav(1));
+document.getElementById('next-unrev').addEventListener('click', gotoNextUnreviewed);
+
+// Lightbox
+function openLightbox(url) {
+    if (!url) return;
+    const box = document.getElementById('lightbox');
+    const img = document.getElementById('lb-img');
+    const fb = getFallbacks(url, ZOOM_W, ZOOM_Q); let step = 0;
+    img.onerror = () => { step++; if (step < fb.length) img.src = fb[step]; };
+    img.src = fb[0];
+    box.style.display = 'flex';
+}
+function closeLightbox() { document.getElementById('lightbox').style.display = 'none'; }
+document.getElementById('lightbox').addEventListener('click', closeLightbox);
+
+// Export
+function csvCell(v) { const s = String(v == null ? '' : v); return /[",\n\r]/.test(s) ? '"' + s.replace(/"/g,'""') + '"' : s; }
+function exportCSV() {
+    const header = ['#','VIN','Rooftop','Vehicle Type','Comment','Input URL','AI URL','Output URL','Reviewed At'];
+    const lines = [header.join(',')];
+    rows.forEach((r, i) => {
+        const rev = reviews[i] || {};
+        lines.push([
+            i + 1,
+            csvCell(r.vin),
+            csvCell(r.rooftop),
+            csvCell(rev.type ? LABEL_BY_CODE[rev.type] : ''),
+            csvCell(rev.comment || ''),
+            csvCell(r.inputUrl),
+            csvCell(r.aiUrl),
+            csvCell(r.outputUrl),
+            csvCell(rev.at || ''),
+        ].join(','));
+    });
+    const blob = new Blob([lines.join('\n')], { type:'text/csv;charset=utf-8' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    const safe = (fileName.replace(/\.csv$/i,'') || 'review').replace(/[^a-z0-9_-]/gi,'_');
+    a.download = safe + '_reviewed_' + new Date().toISOString().slice(0,10) + '.csv';
+    document.body.appendChild(a); a.click(); document.body.removeChild(a);
+    URL.revokeObjectURL(a.href);
+}
+document.getElementById('export-btn').addEventListener('click', exportCSV);
+
+// New CSV
+document.getElementById('new-btn').addEventListener('click', () => {
+    rows = []; reviews = {}; idx = 0;
+    stopTimer();
+    closeSummary();
+    document.getElementById('file-input').value = '';
+    document.getElementById('upload-error').classList.add('hidden');
+    document.getElementById('header-actions').classList.replace('flex','hidden');
+    show('upload-view');
+});
+
+// Keyboard
+document.addEventListener('keydown', e => {
+    if (!document.getElementById('review-view').classList.contains('active')) return;
+    if (e.key === 'Escape') { if (summaryOpen()) closeSummary(); else closeLightbox(); return; }
+    const typing = ['INPUT','TEXTAREA'].includes(document.activeElement && document.activeElement.tagName);
+    if (typing) { if (e.key === 'Enter') { e.preventDefault(); document.activeElement.blur(); submitAdvance(); } return; }
+
+    if (['ArrowLeft','ArrowUp'].includes(e.key))    { e.preventDefault(); nav(-1); return; }
+    if (['ArrowRight','ArrowDown'].includes(e.key)) { e.preventDefault(); nav(1);  return; }
+    if (e.key === 'Enter') { e.preventDefault(); submitAdvance(); return; }
+    const t = TYPES.find(x => x.key === e.key);
+    if (t) { e.preventDefault(); selectType(t.code); }
+});
+
+// Upload wiring
+function readFile(file) {
+    if (!file) return;
+    if (!file.name.toLowerCase().endsWith('.csv')) { uploadError('Please choose a .csv file.'); return; }
+    document.getElementById('upload-error').classList.add('hidden');
+    const reader = new FileReader();
+    reader.onload = ev => { try { loadCsvText(ev.target.result, file.name); } catch(err){ uploadError('Could not parse CSV: ' + err.message); } };
+    reader.readAsText(file);
+}
+const dz = document.getElementById('drop-zone');
+dz.addEventListener('click', () => document.getElementById('file-input').click());
+dz.addEventListener('dragover', e => { e.preventDefault(); dz.classList.add('border-blue-400','bg-blue-50/50'); });
+dz.addEventListener('dragleave', () => dz.classList.remove('border-blue-400','bg-blue-50/50'));
+dz.addEventListener('drop', e => { e.preventDefault(); dz.classList.remove('border-blue-400','bg-blue-50/50'); readFile(e.dataTransfer.files[0]); });
+document.getElementById('file-input').addEventListener('change', e => readFile(e.target.files[0]));
+
+// Helpers
+function show(id) {
+    document.querySelectorAll('.view').forEach(v => v.classList.remove('active'));
+    document.getElementById(id).classList.add('active');
+}
+let toastTimer = null;
+function toast(msg) {
+    const el = document.getElementById('toast');
+    el.textContent = msg;
+    el.classList.remove('translate-y-20');
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => el.classList.add('translate-y-20'), 2200);
+}
+</script>
+</body>
+</html>
