@@ -5,6 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Spyne — Input vs Output Review</title>
 <script src="https://cdn.tailwindcss.com"></script>
+<script src="https://accounts.google.com/gsi/client" async defer></script>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
 <style>
     :root { --spyne:#2b6cb0; }
@@ -99,25 +100,19 @@
 
 <!-- Login view -->
 <div id="login-view" class="view active flex-1 items-center justify-center p-6">
-    <div class="bg-white rounded-2xl shadow-xl border border-slate-100 w-full max-w-sm p-8">
-        <div class="flex items-center gap-2 mb-4">
+    <div class="bg-white rounded-2xl shadow-xl border border-slate-100 w-full max-w-sm p-8 text-center">
+        <div class="flex items-center justify-center gap-2 mb-4">
             <span class="font-extrabold text-[20px] tracking-tight" style="color:var(--spyne)">spyne</span>
             <span class="text-slate-300">/</span>
             <span class="text-[13px] font-semibold text-slate-500">Review</span>
         </div>
         <h1 class="text-xl font-bold text-slate-800 mb-1">Sign in</h1>
-        <p class="text-slate-500 text-[13px] mb-6">Use your Spyne email and password to continue.</p>
+        <p class="text-slate-500 text-[13px] mb-6">Sign in with your Spyne Google account to continue.</p>
 
-        <label class="block text-[11px] font-semibold text-slate-500 uppercase tracking-wider mb-1">Email</label>
-        <input id="login-email" type="email" autocomplete="username" placeholder="you@spyne.ai"
-            class="w-full p-2.5 border border-slate-200 rounded-lg text-[13px] outline-none focus:border-blue-400 focus:ring-1 focus:ring-blue-400 transition mb-3">
+        <div id="gsi-button" class="flex justify-center min-h-[44px]"></div>
 
-        <label class="block text-[11px] font-semibold text-slate-500 uppercase tracking-wider mb-1">Password</label>
-        <input id="login-password" type="password" autocomplete="current-password" placeholder="••••••••"
-            class="w-full p-2.5 border border-slate-200 rounded-lg text-[13px] outline-none focus:border-blue-400 focus:ring-1 focus:ring-blue-400 transition mb-4">
-
-        <button id="login-btn" class="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-2.5 rounded-lg transition">Sign in</button>
-        <div id="login-error" class="hidden mt-3 text-[12px] text-rose-600 bg-rose-50 border border-rose-200 rounded-lg px-3 py-2"></div>
+        <div id="login-hint" class="hidden mt-4 text-[12px] text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2 text-left leading-relaxed"></div>
+        <div id="login-error" class="hidden mt-4 text-[12px] text-rose-600 bg-rose-50 border border-rose-200 rounded-lg px-3 py-2"></div>
     </div>
 </div>
 
@@ -317,22 +312,27 @@ const DISPLAY_W = 900,  DISPLAY_Q = 72;
 const ZOOM_W    = 1600, ZOOM_Q    = 85;
 const STORAGE_PREFIX = 'spyne_io_review_';
 
-// ── Auth ───────────────────────────────────────────────────────────────────────
+// ── Auth (Google Sign-In) ──────────────────────────────────────────────────────
+// 1) Create a Google OAuth 2.0 "Web application" client ID (Google Cloud Console →
+//    APIs & Services → Credentials). 2) Under "Authorized JavaScript origins" add the
+//    site origin, e.g. https://nandmodi.github.io  (no path). 3) Paste the client ID below.
+const GOOGLE_CLIENT_ID = '108193022090-pqojr6seugmdmth5jrah9rgisjgn2q28.apps.googleusercontent.com';
 const AUTH_STORAGE_KEY = 'spyne_io_review_user';
-const AUTH_USER_PASSWORDS = {
-    'praveen@spyne.ai':          '70dd70adc813b91a0671d09587d23594509aaff54286ac865203545bfc88546e',
-    'kishor@spyne.ai':           '11135d32763e29c722e5a67de28b995c8184b26568937072f4e74e1f72c66d1f',
-    'ajay.devrani@spyne.co.in':  'b00ca705240bae3e13fff0254248b6f7c320020e188cc6347ccaa0e9fa0c9278',
-    'raj.tripathi@spyne.ai':     'fdd90f6ba06bf72cdc63b5257878dea7ef74662ba14534d6854dc5a38a737134',
-    'ranbir.manoranjan@spyne.ai':'70dd70adc813b91a0671d09587d23594509aaff54286ac865203545bfc88546e',
-    'khushi.gautam@spyne.co.in': 'b2424df1d7c7ed5c66a6123f9e70e14ea765c890cbfef4ea304de3d30def6e9e',
-    'shweta.gupta@spyne.co.in':  'e385c383fe98fbe65a050d6b83470942dbc67685509263b2edadeea2dbdf0da4',
-    'tannu.singh@spyne.co.in':   'b8e53242c1be067e02e1bfc75b49b9d3c040413b34f5599fd8f66ea0db4247e5',
-    'vijay.gautam@spyne.co.in':  '158332fbacc47f60b3adab66013930e56550f5b86bc5de59443fccfedbc071cd',
-    // Add more users here — same format:
-    // 'newuser@spyne.ai': 'sha256_hash_of_their_password',
-};
-let currentUser = '';
+const AUTH_ALLOWED_EMAILS = [
+    'praveen@spyne.ai',
+    'kishor@spyne.ai',
+    'ajay.devrani@spyne.co.in',
+    'raj.tripathi@spyne.ai',
+    'ranbir.manoranjan@spyne.ai',
+    'khushi.gautam@spyne.co.in',
+    'shweta.gupta@spyne.co.in',
+    'tannu.singh@spyne.co.in',
+    'vijay.gautam@spyne.co.in',
+    // Add more authorized emails here
+];
+const ALLOWED = new Set(AUTH_ALLOWED_EMAILS.map(e => e.trim().toLowerCase()));
+let currentUser     = '';   // authorized email
+let currentUserName = '';   // Google display name
 
 // State
 let allRows        = [];     // every parsed row across all rooftops
@@ -816,7 +816,7 @@ function exportCSV() {
                 csvCell(r.aiUrl),
                 csvCell(r.outputUrl),
                 csvCell(rv.at || ''),
-                csvCell(currentUser),
+                csvCell(currentUserName || currentUser),
             ].join(','));
         });
     });
@@ -890,41 +890,40 @@ function toast(msg) {
     toastTimer = setTimeout(() => el.classList.add('translate-y-20'), 2200);
 }
 
-// ── Auth logic ─────────────────────────────────────────────────────────────────
-async function sha256Hex(str) {
-    const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(str));
-    return [...new Uint8Array(buf)].map(b => b.toString(16).padStart(2,'0')).join('');
-}
+// ── Auth logic (Google Identity Services) ──────────────────────────────────────
 function showLoginError(msg) {
     const e = document.getElementById('login-error');
     e.textContent = msg; e.classList.remove('hidden');
 }
-function setLoggedIn(email) {
-    currentUser = email;
-    try { localStorage.setItem(AUTH_STORAGE_KEY, email); } catch(e){}
-    document.getElementById('user-email').textContent = email;
+function decodeJwt(token) {
+    try {
+        const b = token.split('.')[1].replace(/-/g,'+').replace(/_/g,'/');
+        const json = decodeURIComponent(atob(b).split('').map(c => '%' + ('00' + c.charCodeAt(0).toString(16)).slice(-2)).join(''));
+        return JSON.parse(json);
+    } catch(e) { return null; }
+}
+function setLoggedIn(email, name) {
+    currentUser = email; currentUserName = name || '';
+    try { localStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify({ email, name: currentUserName })); } catch(e){}
+    document.getElementById('user-email').textContent = currentUserName ? (currentUserName + ' · ' + email) : email;
     const chip = document.getElementById('user-chip');
     chip.classList.remove('hidden'); chip.classList.add('flex');
     document.getElementById('logout-btn').classList.remove('hidden');
 }
-async function attemptLogin() {
-    const email = document.getElementById('login-email').value.trim().toLowerCase();
-    const pass  = document.getElementById('login-password').value;
-    if (!email || !pass) { showLoginError('Enter your email and password.'); return; }
-    const expected = AUTH_USER_PASSWORDS[email];
-    if (!expected) { showLoginError('This email is not authorized.'); return; }
-    let hash;
-    try { hash = await sha256Hex(pass); }
-    catch(e) { showLoginError('Secure login is unavailable in this browser context.'); return; }
-    if (hash !== expected) { showLoginError('Incorrect password.'); return; }
+function handleCredentialResponse(resp) {
+    const payload = resp && resp.credential ? decodeJwt(resp.credential) : null;
+    if (!payload || !payload.email) { showLoginError('Could not read your Google sign-in. Try again.'); return; }
+    if (payload.email_verified === false) { showLoginError('Your Google email is not verified.'); return; }
+    const email = String(payload.email).trim().toLowerCase();
+    if (!ALLOWED.has(email)) { showLoginError('This Google account (' + email + ') is not authorized for this tool.'); return; }
     document.getElementById('login-error').classList.add('hidden');
-    document.getElementById('login-password').value = '';
-    setLoggedIn(email);
+    setLoggedIn(email, payload.name || '');
     show('upload-view');
 }
 function logout() {
-    currentUser = '';
+    currentUser = ''; currentUserName = '';
     try { localStorage.removeItem(AUTH_STORAGE_KEY); } catch(e){}
+    try { if (window.google && google.accounts && google.accounts.id) google.accounts.id.disableAutoSelect(); } catch(e){}
     const chip = document.getElementById('user-chip');
     chip.classList.add('hidden'); chip.classList.remove('flex');
     document.getElementById('logout-btn').classList.add('hidden');
@@ -933,26 +932,45 @@ function logout() {
     allRows = []; groups = []; currentRooftop = null;
     stopTimer(); closeSummary();
     document.getElementById('header-actions').classList.replace('flex','hidden');
-    document.getElementById('login-email').value = '';
-    document.getElementById('login-password').value = '';
     show('login-view');
 }
-
-document.getElementById('login-btn').addEventListener('click', attemptLogin);
-document.getElementById('login-email').addEventListener('keydown', e => {
-    if (e.key === 'Enter') { e.preventDefault(); document.getElementById('login-password').focus(); }
-});
-document.getElementById('login-password').addEventListener('keydown', e => {
-    if (e.key === 'Enter') { e.preventDefault(); attemptLogin(); }
-});
 document.getElementById('logout-btn').addEventListener('click', logout);
+
+// Wait for the async-loaded GSI library, then render the button
+function whenGsiReady(cb, tries) {
+    tries = tries || 0;
+    if (window.google && google.accounts && google.accounts.id) { cb(); return; }
+    if (tries > 100) { showLoginError('Google sign-in failed to load. Check your connection and refresh.'); return; }
+    setTimeout(() => whenGsiReady(cb, tries + 1), 100);
+}
+function initGoogleSignIn() {
+    if (!GOOGLE_CLIENT_ID || GOOGLE_CLIENT_ID.indexOf('YOUR_GOOGLE_CLIENT_ID') === 0) {
+        const h = document.getElementById('login-hint');
+        h.innerHTML = 'Setup needed: add your Google OAuth <b>Client ID</b> to <code>GOOGLE_CLIENT_ID</code> in this file, and add this site to the client\u2019s <b>Authorized JavaScript origins</b>.';
+        h.classList.remove('hidden');
+        return;
+    }
+    whenGsiReady(() => {
+        google.accounts.id.initialize({ client_id: GOOGLE_CLIENT_ID, callback: handleCredentialResponse, auto_select: false });
+        google.accounts.id.renderButton(
+            document.getElementById('gsi-button'),
+            { theme:'outline', size:'large', type:'standard', shape:'pill', text:'signin_with', logo_alignment:'left', width: 260 }
+        );
+    });
+}
 
 // Restore session on load
 (function initAuth() {
-    let saved = '';
-    try { saved = (localStorage.getItem(AUTH_STORAGE_KEY) || '').toLowerCase(); } catch(e){}
-    if (saved && AUTH_USER_PASSWORDS[saved]) { setLoggedIn(saved); show('upload-view'); }
-    else { show('login-view'); }
+    let saved = null;
+    try { saved = JSON.parse(localStorage.getItem(AUTH_STORAGE_KEY) || 'null'); } catch(e) { saved = null; }
+    if (typeof saved === 'string') saved = { email: saved, name: '' };   // migrate old format
+    if (saved && saved.email && ALLOWED.has(String(saved.email).toLowerCase())) {
+        setLoggedIn(String(saved.email).toLowerCase(), saved.name || '');
+        show('upload-view');
+    } else {
+        show('login-view');
+    }
+    initGoogleSignIn();
 })();
 </script>
 </body>
