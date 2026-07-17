@@ -119,12 +119,29 @@
     </div>
 </div>
 
+<!-- Rooftop selection view -->
+<div id="rooftop-view" class="view flex-1 flex-col min-h-0 overflow-y-auto p-6 bg-[#f8fbff]">
+    <div class="max-w-6xl mx-auto w-full">
+        <div class="mb-4">
+            <h1 class="text-lg font-bold text-slate-800">Select a rooftop</h1>
+            <p id="rooftop-sub" class="text-[12px] text-slate-500 mt-0.5"></p>
+        </div>
+        <div id="rooftop-grid" class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3"></div>
+    </div>
+</div>
+
 <!-- Review view -->
 <div id="review-view" class="view flex-1 flex-col min-h-0">
 
     <!-- Toolbar -->
     <div class="bg-white border-b px-4 py-2 flex items-center justify-between flex-shrink-0 shadow-sm">
         <div class="flex items-center space-x-3 flex-wrap gap-y-1">
+            <button id="rooftops-btn" onclick="backToRooftops()" class="text-slate-400 hover:text-slate-600 transition flex items-center space-x-1" title="Back to rooftops (Esc)">
+                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7"/></svg>
+                <span class="text-[13px]">Rooftops</span>
+            </button>
+            <span id="cur-rooftop-label" class="text-[12px] font-semibold text-slate-700 max-w-[200px] truncate"></span>
+            <div class="border-l border-slate-200 h-5"></div>
             <div class="flex items-center space-x-1.5 bg-slate-50 border border-slate-200 rounded-lg pl-2.5 pr-1 py-1">
                 <span class="text-[9px] font-bold text-slate-400 uppercase tracking-wider">VIN</span>
                 <span id="cur-vin" class="text-slate-800 font-bold text-[13px] font-mono tracking-tight leading-none">—</span>
@@ -133,7 +150,7 @@
                 </button>
                 <span id="copy-fb" class="text-[10px] font-semibold text-emerald-600 opacity-0 transition-opacity pr-1">Copied</span>
             </div>
-            <span id="cur-rooftop" class="hidden text-[11px] font-semibold text-slate-600 bg-slate-100 px-2 py-1 rounded-lg"></span>
+            <span id="cur-rooftop" class="hidden"></span>
             <span id="cur-counter" class="text-[12px] font-mono text-slate-500"></span>
         </div>
         <div class="flex items-center space-x-3">
@@ -277,11 +294,15 @@ const ZOOM_W    = 1600, ZOOM_Q    = 85;
 const STORAGE_PREFIX = 'spyne_io_review_';
 
 // State
-let rows       = [];     // [{ vin, rooftop, inputUrl, outputUrl }]
-let reviews    = {};     // { idx: { type, comment, at } }
+let rows       = [];     // current rooftop's rows [{ vin, rooftop, inputUrl, aiUrl, outputUrl }]
+let reviews    = {};     // current rooftop's reviews { idx: { type, comment, at } }
 let idx        = 0;
 let fileName   = '';
 let storageKey = '';
+let allRows    = [];     // every parsed row across all rooftops
+let groups     = {};     // rooftop name -> array of rows
+let groupNames = [];     // rooftop names, first-seen order
+let currentRooftop = ''; // rooftop currently open in the review view
 
 // CSV parsing (RFC 4180)
 function parseCSV(text) {
@@ -346,18 +367,18 @@ function loadCsvText(text, name) {
     document.getElementById('ai-pane').style.display  = aiC  !== -1 ? '' : 'none';
     document.getElementById('out-pane').style.display = outC !== -1 ? '' : 'none';
 
-    rows       = parsed;
-    fileName   = name;
-    storageKey = STORAGE_PREFIX + name + '_' + rows.length;
-    restoreReviews();
-
-    document.getElementById('file-name').textContent = name + ' · ' + rows.length + ' VINs';
-    document.getElementById('header-actions').classList.replace('hidden','flex');
+    allRows  = parsed;
+    fileName = name;
+    buildGroups();
     renderTypeBar();
-    show('review-view');
-    idx = firstUnreviewed();
-    render();
-    startTimer();
+
+    document.getElementById('file-name').textContent =
+        name + ' · ' + allRows.length + ' VINs · ' + groupNames.length + ' rooftop' + (groupNames.length === 1 ? '' : 's');
+    document.getElementById('header-actions').classList.replace('hidden','flex');
+
+    // Single group (e.g. no rooftop column) → open it directly; otherwise show the rooftop picker
+    if (groupNames.length === 1) openRooftop(groupNames[0]);
+    else { setHeaderMode('rooftop'); renderRooftopView(); show('rooftop-view'); }
 }
 
 function uploadError(msg) {
@@ -374,6 +395,75 @@ function firstUnreviewed() {
 // Persistence
 function persist() { try { localStorage.setItem(storageKey, JSON.stringify(reviews)); } catch(e){} }
 function restoreReviews() { try { reviews = JSON.parse(localStorage.getItem(storageKey) || '{}'); } catch(e){ reviews = {}; } }
+
+// ── Rooftop grouping / routing ───────────────────────────────────────────────
+function rooftopKey(name) { return STORAGE_PREFIX + fileName + '::' + name; }
+function reviewsFor(name) {
+    if (name === currentRooftop) return reviews;                     // current, in-memory
+    try { return JSON.parse(localStorage.getItem(rooftopKey(name)) || '{}'); } catch(e){ return {}; }
+}
+function buildGroups() {
+    groups = {}; groupNames = [];
+    for (const r of allRows) {
+        const key = r.rooftop || 'All VINs';                         // rooftop optional
+        if (!groups[key]) { groups[key] = []; groupNames.push(key); }
+        groups[key].push(r);
+    }
+}
+function setHeaderMode(mode) {
+    // Submit only applies inside a rooftop review; Export stays available in both
+    document.getElementById('submit-btn').style.display = (mode === 'review') ? 'flex' : 'none';
+}
+function renderRooftopView() {
+    document.getElementById('rooftop-sub').textContent =
+        fileName + ' · ' + groupNames.length + ' rooftop' + (groupNames.length === 1 ? '' : 's') + ' · ' + allRows.length + ' VINs';
+    const grid = document.getElementById('rooftop-grid');
+    grid.innerHTML = '';
+    groupNames.forEach(name => {
+        const list = groups[name], total = list.length;
+        const rv = reviewsFor(name);
+        let done = 0; list.forEach((_, i) => { if (rv[i] && rv[i].type) done++; });
+        const pending = total - done, pct = total ? Math.round(done/total*100) : 0;
+        const card = document.createElement('button');
+        card.className = 'text-left bg-white border border-slate-200 rounded-xl p-4 hover:shadow-md transition flex flex-col';
+        card.innerHTML =
+            '<div class="flex items-start justify-between gap-2">' +
+              '<h3 class="font-bold text-slate-800 text-[14px] leading-tight truncate" title="' + escapeHtml(name) + '">' + escapeHtml(name) + '</h3>' +
+              (pct === 100 ? '<span class="text-[10px] font-bold text-emerald-600 bg-emerald-50 px-1.5 py-0.5 rounded flex-shrink-0">Done</span>' : '') +
+            '</div>' +
+            '<div class="flex items-center gap-3 mt-2 text-[11px]">' +
+              '<span class="font-semibold text-slate-600">' + total + ' VIN' + (total === 1 ? '' : 's') + '</span>' +
+              '<span class="text-emerald-600">' + done + ' done</span>' +
+              '<span class="text-amber-600">' + pending + ' pending</span>' +
+            '</div>' +
+            '<div class="mt-2 h-1.5 bg-slate-100 rounded overflow-hidden">' +
+              '<div style="width:' + pct + '%;height:100%;background:' + (pct === 100 ? '#10b981' : '#3b82f6') + ';transition:width .3s"></div>' +
+            '</div>';
+        card.addEventListener('click', () => openRooftop(name));
+        grid.appendChild(card);
+    });
+}
+function openRooftop(name) {
+    currentRooftop = name;
+    rows = groups[name] || [];
+    storageKey = rooftopKey(name);
+    restoreReviews();
+    setHeaderMode('review');
+    document.getElementById('cur-rooftop-label').textContent = (name === 'All VINs') ? '' : name;
+    show('review-view');
+    idx = firstUnreviewed();
+    render();
+    startTimer();
+}
+function backToRooftops() {
+    persist();
+    stopTimer();
+    closeSummary();
+    currentRooftop = '';
+    setHeaderMode('rooftop');
+    renderRooftopView();
+    show('rooftop-view');
+}
 
 // Image loading with proxy fallback
 // Image loading — request a small resized WebP first so big dealer photos load fast.
@@ -441,9 +531,8 @@ function render() {
     document.getElementById('cur-vin').textContent = r.vin;
     document.getElementById('cur-counter').textContent = (idx + 1) + ' / ' + rows.length;
 
-    const rt = document.getElementById('cur-rooftop');
-    if (r.rooftop) { rt.textContent = r.rooftop; rt.classList.remove('hidden'); }
-    else rt.classList.add('hidden');
+    // rooftop is shown next to the Rooftops back button, not per-VIN
+    document.getElementById('cur-rooftop').classList.add('hidden');
 
     // Images
     loadImage(document.getElementById('in-img'),  document.getElementById('in-skel'),  document.getElementById('in-none'),  r.inputUrl);
@@ -643,26 +732,33 @@ function openLightbox(url) {
     box.style.display = 'flex';
 }
 function closeLightbox() { document.getElementById('lightbox').style.display = 'none'; }
+function lightboxOpen() { return document.getElementById('lightbox').style.display === 'flex'; }
 document.getElementById('lightbox').addEventListener('click', closeLightbox);
 
-// Export
+// Export — all rooftops, comprehensive
 function csvCell(v) { const s = String(v == null ? '' : v); return /[",\n\r]/.test(s) ? '"' + s.replace(/"/g,'""') + '"' : s; }
 function exportCSV() {
     const header = ['#','VIN','Rooftop','Vehicle Type','Comment','Input URL','AI URL','Output URL','Reviewed At'];
     const lines = [header.join(',')];
-    rows.forEach((r, i) => {
-        const rev = reviews[i] || {};
-        lines.push([
-            i + 1,
-            csvCell(r.vin),
-            csvCell(r.rooftop),
-            csvCell(rev.type ? LABEL_BY_CODE[rev.type] : ''),
-            csvCell(rev.comment || ''),
-            csvCell(r.inputUrl),
-            csvCell(r.aiUrl),
-            csvCell(r.outputUrl),
-            csvCell(rev.at || ''),
-        ].join(','));
+    let n = 0;
+    groupNames.forEach(name => {
+        const list = groups[name];
+        const rv = reviewsFor(name);
+        list.forEach((r, i) => {
+            const rev = rv[i] || {};
+            n++;
+            lines.push([
+                n,
+                csvCell(r.vin),
+                csvCell(r.rooftop || (name === 'All VINs' ? '' : name)),
+                csvCell(rev.type ? LABEL_BY_CODE[rev.type] : ''),
+                csvCell(rev.comment || ''),
+                csvCell(r.inputUrl),
+                csvCell(r.aiUrl),
+                csvCell(r.outputUrl),
+                csvCell(rev.at || ''),
+            ].join(','));
+        });
     });
     const blob = new Blob([lines.join('\n')], { type:'text/csv;charset=utf-8' });
     const a = document.createElement('a');
@@ -677,6 +773,7 @@ document.getElementById('export-btn').addEventListener('click', exportCSV);
 // New CSV
 document.getElementById('new-btn').addEventListener('click', () => {
     rows = []; reviews = {}; idx = 0;
+    allRows = []; groups = {}; groupNames = []; currentRooftop = '';
     stopTimer();
     closeSummary();
     document.getElementById('file-input').value = '';
@@ -688,7 +785,11 @@ document.getElementById('new-btn').addEventListener('click', () => {
 // Keyboard
 document.addEventListener('keydown', e => {
     if (!document.getElementById('review-view').classList.contains('active')) return;
-    if (e.key === 'Escape') { if (summaryOpen()) closeSummary(); else closeLightbox(); return; }
+    if (e.key === 'Escape') {
+        if (lightboxOpen()) { closeLightbox(); return; }
+        if (summaryOpen())  { closeSummary();  return; }
+        backToRooftops();   return;
+    }
     const typing = ['INPUT','TEXTAREA'].includes(document.activeElement && document.activeElement.tagName);
     if (typing) { if (e.key === 'Enter') { e.preventDefault(); document.activeElement.blur(); submitAdvance(); } return; }
 
@@ -716,6 +817,9 @@ dz.addEventListener('drop', e => { e.preventDefault(); dz.classList.remove('bord
 document.getElementById('file-input').addEventListener('change', e => readFile(e.target.files[0]));
 
 // Helpers
+function escapeHtml(s) {
+    return String(s == null ? '' : s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
 function show(id) {
     document.querySelectorAll('.view').forEach(v => v.classList.remove('active'));
     document.getElementById(id).classList.add('active');
