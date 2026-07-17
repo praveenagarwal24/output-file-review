@@ -267,7 +267,11 @@
                 <div id="sum-types" class="grid grid-cols-2 gap-x-6 gap-y-1"></div>
             </div>
             <div class="mt-4 text-[12px] text-slate-500">Time taken: <span id="sum-time" class="font-mono font-semibold text-slate-700">00:00</span></div>
-            <div class="mt-5 flex gap-2">
+            <label id="mark-ok-wrap" class="flex items-start gap-2 mt-4 p-2.5 rounded-lg bg-amber-50 border border-amber-200 cursor-pointer select-none">
+                <input id="mark-pending-ok" type="checkbox" class="mt-0.5 w-4 h-4 accent-emerald-600 cursor-pointer">
+                <span class="text-[12px] text-amber-800 leading-snug">Mark all <b id="mark-ok-count">0</b> pending as <b>OK</b> before downloading</span>
+            </label>
+            <div class="mt-3 flex gap-2">
                 <button id="sum-keep" class="flex-1 border border-slate-200 text-slate-600 font-semibold py-2.5 rounded-lg hover:bg-slate-50 transition">Keep reviewing</button>
                 <button id="sum-download" class="flex-1 bg-blue-600 hover:bg-blue-700 text-white font-bold py-2.5 rounded-lg flex items-center justify-center space-x-2 transition">
                     <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"/></svg>
@@ -760,6 +764,27 @@ function openSummary() {
         list.appendChild(row);
     });
     document.getElementById('summary-modal').style.display = 'flex';
+
+    // Reset the "mark pending as OK" checkbox each time; hide it if nothing is pending
+    const wrap = document.getElementById('mark-ok-wrap');
+    const cb   = document.getElementById('mark-pending-ok');
+    cb.checked = false;
+    document.getElementById('mark-ok-count').textContent = counts.pending;
+    wrap.style.display = counts.pending > 0 ? 'flex' : 'none';
+}
+function markCurrentPendingAsOk() {
+    const now = new Date().toISOString();
+    let changed = 0;
+    for (let i = 0; i < rows.length; i++) {
+        if (!reviews[i] || !reviews[i].type) {
+            reviews[i] = reviews[i] || {};
+            reviews[i].type = 'ok';
+            reviews[i].at = now;
+            changed++;
+        }
+    }
+    if (changed) { persist(); render(); }
+    return changed;
 }
 function closeSummary() { document.getElementById('summary-modal').style.display = 'none'; }
 function summaryOpen() { return document.getElementById('summary-modal').style.display === 'flex'; }
@@ -767,7 +792,11 @@ function summaryOpen() { return document.getElementById('summary-modal').style.d
 document.getElementById('submit-btn').addEventListener('click', openSummary);
 document.getElementById('sum-close').addEventListener('click', closeSummary);
 document.getElementById('sum-keep').addEventListener('click', closeSummary);
-document.getElementById('sum-download').addEventListener('click', () => { exportCSV(); closeSummary(); });
+document.getElementById('sum-download').addEventListener('click', () => {
+    if (document.getElementById('mark-pending-ok').checked) markCurrentPendingAsOk();
+    exportCSV();
+    closeSummary();
+});
 
 // Copy VIN
 document.getElementById('copy-vin').addEventListener('click', async () => {
