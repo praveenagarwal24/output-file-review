@@ -152,7 +152,13 @@
                 <h1 class="text-xl font-bold text-slate-800">Select a rooftop</h1>
                 <p id="rooftop-sub" class="text-slate-500 text-[13px] mt-0.5"></p>
             </div>
-            <div id="rooftop-overall" class="text-[12px] font-semibold text-slate-500"></div>
+            <div class="flex items-center gap-3">
+                <span id="rooftop-overall" class="text-[12px] font-semibold text-slate-500"></span>
+                <button id="clear-reviews-btn" class="flex items-center gap-1 text-[11px] font-semibold text-rose-600 hover:text-white hover:bg-rose-600 border border-rose-200 hover:border-rose-600 rounded-lg px-2.5 py-1 transition">
+                    <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg>
+                    <span>Clear reviews</span>
+                </button>
+            </div>
         </div>
         <div id="rooftop-grid" class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 mt-5"></div>
     </div>
@@ -187,6 +193,7 @@
             </div>
             <span id="progress-pill" class="bg-blue-50 text-blue-700 px-2.5 py-1 rounded-full text-[11px] font-semibold"></span>
             <button id="next-unrev" class="text-[11px] font-semibold text-slate-500 hover:text-blue-600 border border-slate-200 rounded-lg px-2.5 py-1 transition">Next pending</button>
+            <button id="clear-current-btn" class="text-[11px] font-semibold text-rose-600 hover:text-white hover:bg-rose-600 border border-rose-200 hover:border-rose-600 rounded-lg px-2.5 py-1 transition">Clear</button>
         </div>
     </div>
 
@@ -278,6 +285,42 @@
                     <span>Download CSV</span>
                 </button>
             </div>
+        </div>
+    </div>
+</div>
+
+<!-- Clear reviews modal (multi-select, rooftop page) -->
+<div id="clear-modal" class="fixed inset-0 z-50 bg-slate-900/50 items-center justify-center hidden p-4">
+    <div class="bg-white rounded-2xl shadow-2xl w-full max-w-md flex flex-col max-h-[85vh]">
+        <div class="px-6 py-4 border-b border-slate-100 flex items-start justify-between">
+            <div>
+                <h3 class="font-bold text-slate-800 text-[17px]">Clear reviews</h3>
+                <p class="text-[12px] text-slate-500 mt-0.5">Select which rooftops to reset. This can't be undone.</p>
+            </div>
+            <button id="clear-close" class="text-slate-400 hover:text-slate-600 text-xl leading-none">&times;</button>
+        </div>
+        <div class="px-6 py-2.5 border-b border-slate-100 flex items-center justify-between">
+            <label class="flex items-center gap-2 text-[12px] font-semibold text-slate-600 cursor-pointer select-none">
+                <input id="clear-all-toggle" type="checkbox" class="w-4 h-4 accent-rose-600 cursor-pointer"> Select all
+            </label>
+            <span id="clear-count" class="text-[11px] text-slate-400"></span>
+        </div>
+        <div id="clear-list" class="overflow-auto px-3 py-2"></div>
+        <div class="px-6 py-4 border-t border-slate-100 flex gap-2">
+            <button id="clear-cancel" class="flex-1 border border-slate-200 text-slate-600 font-semibold py-2.5 rounded-lg hover:bg-slate-50 transition">Cancel</button>
+            <button id="clear-confirm" class="flex-1 bg-rose-600 hover:bg-rose-700 text-white font-bold py-2.5 rounded-lg transition disabled:opacity-40 disabled:cursor-not-allowed">Clear selected</button>
+        </div>
+    </div>
+</div>
+
+<!-- Generic confirm modal -->
+<div id="confirm-modal" class="fixed inset-0 z-50 bg-slate-900/50 items-center justify-center hidden p-4">
+    <div class="bg-white rounded-2xl shadow-2xl w-full max-w-sm p-6">
+        <h3 id="confirm-title" class="font-bold text-slate-800 text-[16px] mb-1">Are you sure?</h3>
+        <p id="confirm-msg" class="text-[13px] text-slate-500 leading-relaxed mb-5"></p>
+        <div class="flex gap-2">
+            <button id="confirm-cancel" class="flex-1 border border-slate-200 text-slate-600 font-semibold py-2.5 rounded-lg hover:bg-slate-50 transition">Cancel</button>
+            <button id="confirm-ok" class="flex-1 bg-rose-600 hover:bg-rose-700 text-white font-bold py-2.5 rounded-lg transition">Clear</button>
         </div>
     </div>
 </div>
@@ -868,6 +911,94 @@ function exportCSV() {
 }
 document.getElementById('export-btn').addEventListener('click', exportCSV);
 
+// ── Clear reviews ────────────────────────────────────────────────────────────
+function groupReviewedCount(g) {
+    const rev = readRooftopReviews(g);
+    return Math.min(Object.values(rev).filter(x => x && x.type).length, g.rows.length);
+}
+function clearGroup(g) {
+    try { localStorage.removeItem(rooftopStorageKey(g.name, g.rows.length)); } catch(e){}
+    if (g.name === currentRooftop) { reviews = {}; idx = 0; render(); }
+}
+
+// Generic confirm dialog
+let _confirmCb = null;
+function openConfirm(title, msg, okLabel, onOk) {
+    document.getElementById('confirm-title').textContent = title;
+    document.getElementById('confirm-msg').textContent = msg;
+    document.getElementById('confirm-ok').textContent = okLabel || 'Clear';
+    _confirmCb = onOk;
+    document.getElementById('confirm-modal').style.display = 'flex';
+}
+function closeConfirm() { document.getElementById('confirm-modal').style.display = 'none'; _confirmCb = null; }
+function confirmOpen() { return document.getElementById('confirm-modal').style.display === 'flex'; }
+document.getElementById('confirm-cancel').addEventListener('click', closeConfirm);
+document.getElementById('confirm-modal').addEventListener('click', e => { if (e.target.id === 'confirm-modal') closeConfirm(); });
+document.getElementById('confirm-ok').addEventListener('click', () => { const cb = _confirmCb; closeConfirm(); if (cb) cb(); });
+
+// Single rooftop → confirmation popup
+document.getElementById('clear-current-btn').addEventListener('click', () => {
+    const g = groups.find(x => x.name === currentRooftop);
+    if (!g) return;
+    const done = groupReviewedCount(g);
+    if (!done) { toast('Nothing to clear in this rooftop'); return; }
+    openConfirm('Clear reviews?', 'This resets all ' + done + ' reviewed VIN' + (done===1?'':'s') + ' in "' + g.name + '" back to pending. This can\u2019t be undone.', 'Clear rooftop', () => {
+        clearGroup(g);
+        toast('Cleared ' + done + ' review' + (done===1?'':'s') + ' in ' + g.name);
+    });
+});
+
+// Rooftop page → multi-select modal
+function openClearModal() {
+    if (!groups.length) return;
+    const list = document.getElementById('clear-list');
+    list.innerHTML = '';
+    groups.forEach((g, gi) => {
+        const done = groupReviewedCount(g);
+        const row = document.createElement('label');
+        row.className = 'flex items-center justify-between gap-2 px-3 py-2 rounded-lg cursor-pointer hover:bg-slate-50' + (done ? '' : ' opacity-50');
+        row.innerHTML =
+            '<span class="flex items-center gap-2.5 min-w-0">' +
+                '<input type="checkbox" class="clear-cb w-4 h-4 accent-rose-600 cursor-pointer flex-shrink-0" data-gi="' + gi + '"' + (done ? '' : ' disabled') + '>' +
+                '<span class="text-[13px] font-semibold text-slate-700 truncate">' + escapeHtml(g.name) + '</span>' +
+            '</span>' +
+            '<span class="text-[11px] text-slate-400 flex-shrink-0">' + done + ' / ' + g.rows.length + ' reviewed</span>';
+        list.appendChild(row);
+    });
+    list.querySelectorAll('.clear-cb').forEach(cb => cb.addEventListener('change', updateClearState));
+    document.getElementById('clear-all-toggle').checked = false;
+    updateClearState();
+    document.getElementById('clear-modal').style.display = 'flex';
+}
+function closeClearModal() { document.getElementById('clear-modal').style.display = 'none'; }
+function clearModalOpen() { return document.getElementById('clear-modal').style.display === 'flex'; }
+function selectedClearBoxes() { return [...document.querySelectorAll('#clear-list .clear-cb')].filter(cb => cb.checked && !cb.disabled); }
+function updateClearState() {
+    const sel = selectedClearBoxes();
+    document.getElementById('clear-confirm').disabled = sel.length === 0;
+    document.getElementById('clear-count').textContent = sel.length + ' selected';
+}
+document.getElementById('clear-reviews-btn').addEventListener('click', openClearModal);
+document.getElementById('clear-close').addEventListener('click', closeClearModal);
+document.getElementById('clear-cancel').addEventListener('click', closeClearModal);
+document.getElementById('clear-modal').addEventListener('click', e => { if (e.target.id === 'clear-modal') closeClearModal(); });
+document.getElementById('clear-all-toggle').addEventListener('change', e => {
+    document.querySelectorAll('#clear-list .clear-cb').forEach(cb => { if (!cb.disabled) cb.checked = e.target.checked; });
+    updateClearState();
+});
+document.getElementById('clear-confirm').addEventListener('click', () => {
+    const boxes = selectedClearBoxes();
+    if (!boxes.length) return;
+    const names = boxes.map(cb => groups[+cb.dataset.gi].name);
+    openConfirm('Clear ' + names.length + ' rooftop' + (names.length===1?'':'s') + '?',
+        'This resets all reviews in: ' + names.join(', ') + '. This can\u2019t be undone.', 'Clear selected', () => {
+        boxes.forEach(cb => clearGroup(groups[+cb.dataset.gi]));
+        closeClearModal();
+        renderRooftopView();
+        toast('Cleared reviews in ' + names.length + ' rooftop' + (names.length===1?'':'s'));
+    });
+});
+
 // New CSV
 document.getElementById('new-btn').addEventListener('click', () => {
     rows = []; reviews = {}; idx = 0;
@@ -882,6 +1013,11 @@ document.getElementById('new-btn').addEventListener('click', () => {
 
 // Keyboard
 document.addEventListener('keydown', e => {
+    // Confirm/clear dialogs take priority: Escape closes them, other keys are swallowed
+    if (confirmOpen() || clearModalOpen()) {
+        if (e.key === 'Escape') { e.preventDefault(); if (confirmOpen()) closeConfirm(); else closeClearModal(); }
+        return;
+    }
     if (!document.getElementById('review-view').classList.contains('active')) return;
     if (e.key === 'Escape') {
         if (summaryOpen()) { closeSummary(); return; }
