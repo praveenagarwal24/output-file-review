@@ -5,6 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Spyne Image Review Dashboard</title>
     <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://accounts.google.com/gsi/client" async defer></script>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
     <style>
         body { font-family: 'Inter', sans-serif; background-color: #f0f7ff; }
@@ -406,28 +407,11 @@
                 <img alt="spyne" src="data:image/jpeg;base64,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" style="height: 40px;">
             </div>
             <h1 class="text-xl font-bold text-slate-800 mb-1 text-center">Sign in</h1>
-            <p class="text-slate-500 text-[13px] mb-6 text-center">Enter your Spyne credentials to continue</p>
-
-            <form id="auth-form" class="space-y-3" autocomplete="on">
-                <div>
-                    <label class="block text-[11px] font-semibold text-slate-500 uppercase tracking-wider mb-1">Email</label>
-                    <input id="auth-email" type="email" autocomplete="username" required placeholder="you@spyne.ai"
-                        class="w-full p-2.5 border border-slate-300 rounded-lg text-[14px] outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500 transition">
-                </div>
-                <div>
-                    <label class="block text-[11px] font-semibold text-slate-500 uppercase tracking-wider mb-1">Password</label>
-                    <input id="auth-password" type="password" autocomplete="current-password" required
-                        class="w-full p-2.5 border border-slate-300 rounded-lg text-[14px] outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500 transition">
-                </div>
-                <button type="submit" id="auth-submit-btn" class="w-full spyne-blue text-white font-semibold py-2.5 rounded-lg hover:bg-blue-700 transition flex items-center justify-center space-x-2 disabled:opacity-70 mt-2">
-                    <span id="auth-submit-text">Sign in →</span>
-                    <div id="auth-submit-loader" class="loading-spinner hidden"></div>
-                </button>
-                <p id="auth-error" class="text-[12px] text-rose-600 text-center hidden font-medium"></p>
-            </form>
+            <p class="text-slate-500 text-[13px] mb-6 text-center">Use your Spyne Google account to continue</p>
+            <div id="g_signin_btn" class="flex justify-center mb-3"></div>
+            <p id="auth-error" class="text-[12px] text-rose-600 text-center hidden font-medium mt-2"></p>
         </div>
     </div>
-
     <!-- Page 1: Enterprise Selection -->
     <div id="page-login" class="page-view items-center justify-center p-4">
         <div class="bg-white p-8 rounded-2xl shadow-xl w-full max-w-md border border-slate-100">
@@ -1029,20 +1013,19 @@
     // localStorage key AND tagged with their email in Google Sheet rows,
     // so reviewers never overwrite each other's data.
     // ──────────────────────────────────────────────────────────────────────────
-    const AUTH_USER_PASSWORDS = {
-        'praveen@spyne.ai': '70dd70adc813b91a0671d09587d23594509aaff54286ac865203545bfc88546e',
-        'kishor@spyne.ai':  '11135d32763e29c722e5a67de28b995c8184b26568937072f4e74e1f72c66d1f',
-        'ajay.devrani@spyne.co.in': 'b00ca705240bae3e13fff0254248b6f7c320020e188cc6347ccaa0e9fa0c9278',
-        'raj.tripathi@spyne.ai': 'fdd90f6ba06bf72cdc63b5257878dea7ef74662ba14534d6854dc5a38a737134',
-        'ranbir.manoranjan@spyne.ai': '70dd70adc813b91a0671d09587d23594509aaff54286ac865203545bfc88546e',
-        'khushi.gautam@spyne.co.in': '1db634dc43290f04d87d7b56bfd8e57958262df851544034b9f1cf802258ade2',
-        'shweta.gupta@spyne.co.in': 'e385c383fe98fbe65a050d6b83470942dbc67685509263b2edadeea2dbdf0da4',
-        'tannu.singh@spyne.co.in': 'b8e53242c1be067e02e1bfc75b49b9d3c040413b34f5599fd8f66ea0db4247e5',
-        'vijay.gautam@spyne.co.in': '158332fbacc47f60b3adab66013930e56550f5b86bc5de59443fccfedbc071cd',
-        // Add more users here — same format:
-        // 'newuser@spyne.ai': 'sha256_hash_of_their_password',
-    };
-    const AUTH_USERS    = Object.keys(AUTH_USER_PASSWORDS);
+    // Google Sign-In — OAuth Client ID for nandmodi.github.io
+    const GOOGLE_CLIENT_ID = '108193022090-pqojr6seugmdmth5jrah9rgisjgn2q28.apps.googleusercontent.com';
+    const AUTH_ALLOWED_EMAILS = new Set([
+        'praveen@spyne.ai',
+        'kishor@spyne.ai',
+        'ajay.devrani@spyne.co.in',
+        'raj.tripathi@spyne.ai',
+        'ranbir.manoranjan@spyne.ai',
+        'khushi.gautam@spyne.co.in',
+        'shweta.gupta@spyne.co.in',
+        'tannu.singh@spyne.co.in',
+        'vijay.gautam@spyne.co.in',
+    ]);
     const AUTH_SESSION_KEY = 'spyne_auth_user_v1';
 
     // Per-user localStorage keys — reviews are isolated per reviewer
@@ -1050,65 +1033,6 @@
     function storageKey1Img() { return 'spyne_1img_v2_'   + (getCurrentUser() || 'anon'); }
 
     // Pure-JS SHA-256 — works on file:// (crypto.subtle requires HTTPS/localhost)
-    async function sha256Hex(input) {
-        // Try the native API first (works on https:// and localhost)
-        if (typeof crypto !== 'undefined' && crypto.subtle) {
-            try {
-                const buf  = new TextEncoder().encode(input);
-                const hash = await crypto.subtle.digest('SHA-256', buf);
-                return Array.from(new Uint8Array(hash))
-                    .map(b => b.toString(16).padStart(2, '0')).join('');
-            } catch (e) { /* fall through to pure-JS */ }
-        }
-        // Pure-JS fallback (RFC 6234) — safe for file:// origins
-        return pureJsSha256(input);
-    }
-
-    function pureJsSha256(str) {
-        function rr(v, n){ return (v >>> n) | (v << (32 - n)); }
-        const K = [
-            0x428a2f98,0x71374491,0xb5c0fbcf,0xe9b5dba5,0x3956c25b,0x59f111f1,0x923f82a4,0xab1c5ed5,
-            0xd807aa98,0x12835b01,0x243185be,0x550c7dc3,0x72be5d74,0x80deb1fe,0x9bdc06a7,0xc19bf174,
-            0xe49b69c1,0xefbe4786,0x0fc19dc6,0x240ca1cc,0x2de92c6f,0x4a7484aa,0x5cb0a9dc,0x76f988da,
-            0x983e5152,0xa831c66d,0xb00327c8,0xbf597fc7,0xc6e00bf3,0xd5a79147,0x06ca6351,0x14292967,
-            0x27b70a85,0x2e1b2138,0x4d2c6dfc,0x53380d13,0x650a7354,0x766a0abb,0x81c2c92e,0x92722c85,
-            0xa2bfe8a1,0xa81a664b,0xc24b8b70,0xc76c51a3,0xd192e819,0xd6990624,0xf40e3585,0x106aa070,
-            0x19a4c116,0x1e376c08,0x2748774c,0x34b0bcb5,0x391c0cb3,0x4ed8aa4a,0x5b9cca4f,0x682e6ff3,
-            0x748f82ee,0x78a5636f,0x84c87814,0x8cc70208,0x90befffa,0xa4506ceb,0xbef9a3f7,0xc67178f2
-        ];
-        let h0=0x6a09e667,h1=0xbb67ae85,h2=0x3c6ef372,h3=0xa54ff53a,
-            h4=0x510e527f,h5=0x9b05688c,h6=0x1f83d9ab,h7=0x5be0cd19;
-        const msg = unescape(encodeURIComponent(str));
-        const bytes = [];
-        for (let i=0;i<msg.length;i++) bytes.push(msg.charCodeAt(i));
-        bytes.push(0x80);
-        while (bytes.length % 64 !== 56) bytes.push(0);
-        const len = (str.length * 8);
-        bytes.push(0,0,0,0);
-        for (let i=3;i>=0;i--) bytes.push((len >> (i*8)) & 0xff);
-        for (let chunk=0;chunk<bytes.length;chunk+=64) {
-            const w = [];
-            for (let i=0;i<16;i++) w.push((bytes[chunk+i*4]<<24)|(bytes[chunk+i*4+1]<<16)|(bytes[chunk+i*4+2]<<8)|bytes[chunk+i*4+3]);
-            for (let i=16;i<64;i++) {
-                const s0=rr(w[i-15],7)^rr(w[i-15],18)^(w[i-15]>>>3);
-                const s1=rr(w[i-2],17)^rr(w[i-2],19)^(w[i-2]>>>10);
-                w.push((w[i-16]+s0+w[i-7]+s1)>>>0);
-            }
-            let [a,b,c,d,e,f,g,h]=[h0,h1,h2,h3,h4,h5,h6,h7];
-            for (let i=0;i<64;i++) {
-                const S1=(rr(e,6)^rr(e,11)^rr(e,25))>>>0;
-                const ch=((e&f)^(~e&g))>>>0;
-                const t1=(h+S1+ch+K[i]+w[i])>>>0;
-                const S0=(rr(a,2)^rr(a,13)^rr(a,22))>>>0;
-                const maj=((a&b)^(a&c)^(b&c))>>>0;
-                const t2=(S0+maj)>>>0;
-                h=g;g=f;f=e;e=(d+t1)>>>0;d=c;c=b;b=a;a=(t1+t2)>>>0;
-            }
-            h0=(h0+a)>>>0;h1=(h1+b)>>>0;h2=(h2+c)>>>0;h3=(h3+d)>>>0;
-            h4=(h4+e)>>>0;h5=(h5+f)>>>0;h6=(h6+g)>>>0;h7=(h7+h)>>>0;
-        }
-        return [h0,h1,h2,h3,h4,h5,h6,h7].map(n=>n.toString(16).padStart(8,'0')).join('');
-    }
 
     function getCurrentUser() {
         try { return sessionStorage.getItem(AUTH_SESSION_KEY) || ''; }
@@ -2119,7 +2043,7 @@
             img.decoding = 'async';
             img.alt = '';
             img.style.cssText = 'width:100%;height:100%;object-fit:contain;display:block;background:#f8fafc;';
-            const fallbacks = getFallbacks(url, 600, 78);
+            const fallbacks = getFallbacks(url, 400, 72);
             let step = 0;
             img.addEventListener('load', () => skel.remove());
             img.addEventListener('error', () => {
@@ -2132,7 +2056,7 @@
             tile.appendChild(img);
 
             // Click to enlarge — request a higher-quality version for the lightbox
-            tile.addEventListener('click', () => openImg1Lightbox(getFallbacks(url, 1600, 90)));
+            tile.addEventListener('click', () => openImg1Lightbox(getFallbacks(url, 900, 85)));
             frag.appendChild(tile);
         });
         grid.appendChild(frag);
@@ -2713,52 +2637,45 @@
     }
 
     // Auth form submit
-    document.getElementById('auth-form').addEventListener('submit', async (e) => {
-        e.preventDefault();
-        const emailEl = document.getElementById('auth-email');
-        const passEl  = document.getElementById('auth-password');
-        const errEl   = document.getElementById('auth-error');
-        const btn     = document.getElementById('auth-submit-btn');
-        const btnText = document.getElementById('auth-submit-text');
-        const btnLoad = document.getElementById('auth-submit-loader');
-
-        errEl.classList.add('hidden');
-        btn.disabled = true;
-        btnText.innerText = 'Checking…';
-        btnLoad.classList.remove('hidden');
-
-        const email = (emailEl.value || '').trim().toLowerCase();
-        const pass  = passEl.value || '';
-
-        // Tiny artificial delay so brute-force feel is discouraged + UX feels real
-        await new Promise(r => setTimeout(r, 350));
-
+    // ── Google Sign-In setup ──────────────────────────────────────────────────
+    function onGoogleSignIn(response) {
+        const errEl = document.getElementById('auth-error');
         try {
-            if (!AUTH_USER_PASSWORDS[email]) throw new Error('Invalid email or password');
-            const hash = await sha256Hex(pass);
-            if (hash !== AUTH_USER_PASSWORDS[email]) throw new Error('Invalid email or password');
-            // Success — load THIS user's saved progress from localStorage
+            // Decode JWT payload
+            const payload = JSON.parse(atob(response.credential.split('.')[1]));
+            const email   = (payload.email || '').trim().toLowerCase();
+            if (!AUTH_ALLOWED_EMAILS.has(email)) {
+                errEl.textContent = 'Not authorised: ' + email;
+                errEl.classList.remove('hidden');
+                return;
+            }
             setCurrentUser(email);
             updateUserBadge();
-            loadReviews();   // reload with per-user storage key
-            passEl.value = '';
+            loadReviews();
             showPage('page-login');
         } catch (err) {
-            let msg = err.message || 'Sign-in failed';
-            if (msg.toLowerCase().includes('subtle') || msg.toLowerCase().includes('crypto')) {
-                msg = 'Login unavailable on file:// — open via a web server or Chrome with --allow-file-access-from-files';
-            }
-            errEl.textContent = msg;
+            errEl.textContent = 'Sign-in failed: ' + (err.message || err);
             errEl.classList.remove('hidden');
-            passEl.focus();
-            passEl.select();
-        } finally {
-            btn.disabled = false;
-            btnText.innerText = 'Sign in →';
-            btnLoad.classList.add('hidden');
         }
-    });
+    }
 
+    function initGoogleSignIn() {
+        if (typeof google === 'undefined' || !google.accounts) return;
+        google.accounts.id.initialize({
+            client_id: GOOGLE_CLIENT_ID,
+            callback:  onGoogleSignIn,
+        });
+        google.accounts.id.renderButton(
+            document.getElementById('g_signin_btn'),
+            { theme: 'outline', size: 'large', width: 280, text: 'sign_in_with' }
+        );
+    }
+    // Init once GIS library is ready
+    if (typeof google !== 'undefined' && google.accounts) {
+        initGoogleSignIn();
+    } else {
+        window.addEventListener('load', initGoogleSignIn);
+    }
     document.getElementById('logout-btn').addEventListener('click', () => {
         if (confirm('Sign out?')) logout();
     });
@@ -3291,10 +3208,10 @@
                 add(wsrvThumbUrl(srcUrl, widthPx, quality));
             }
         } else if (isSpyneHostedUrl(originalUrl)) {
-            // Spyne thumb → original full URL → raw source
-            add(spyneThumbUrl(srcUrl, widthPx, quality));
-            add(originalUrl);
+            // Direct S3/CloudFront first (fastest) — Thumbor as fallback
             add(srcUrl);
+            add(originalUrl);
+            add(spyneThumbUrl(srcUrl, widthPx, quality));
             add(wsrvThumbUrl(srcUrl, widthPx, quality));
         } else {
             // Unknown: direct → wsrv
@@ -3351,7 +3268,7 @@
             img.alt = '';
 
             // Use smart fallback chain (same as 1st-image gallery)
-            const vinFallbacks = getFallbacks(url, 500, 75);
+            const vinFallbacks = getFallbacks(url, 400, 72);
             let vinFbStep = 0;
             img.addEventListener('load', () => { skel.remove(); });
             img.addEventListener('error', () => {
@@ -3377,7 +3294,7 @@
     }
 
     function prefetchNextVINs() {
-        for (let offset = 1; offset <= 3; offset++) {
+        for (let offset = 1; offset <= 4; offset++) {
             const nxt = currentTeamVINs[currentVINIndex + offset];
             if (!nxt) break;
             const limit = offset === 1 ? nxt.urls.length : Math.min(nxt.urls.length, 6);
@@ -4871,7 +4788,7 @@
         const list = document.getElementById('admin-users-list');
         if (!list) return;
         list.innerHTML = '';
-        const users = Object.keys(AUTH_USER_PASSWORDS);
+        const users = [...AUTH_ALLOWED_EMAILS];
         if (!users.length) {
             list.innerHTML = '<p class="text-[12px] text-slate-400">No users configured.</p>';
             return;
