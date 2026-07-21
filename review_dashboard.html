@@ -6,441 +6,496 @@
 <title>Spyne · Review Dashboard</title>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
 <style>
-  :root {
-    --bg:       #0f172a;
-    --card:     #1e293b;
-    --border:   #334155;
-    --text:     #f8fafc;
-    --muted:    #94a3b8;
-    --ok:       #10b981;
-    --issue:    #f97316;
-    --pending:  #8b5cf6;
-    --blue:     #3b82f6;
-    --red:      #ef4444;
-    --yellow:   #eab308;
-  }
-  * { box-sizing: border-box; margin: 0; padding: 0; }
-  body { font-family: 'Inter', sans-serif; background: var(--bg); color: var(--text); min-height: 100vh; }
+:root{--bg:#0f172a;--card:#1e293b;--border:#334155;--text:#f8fafc;--muted:#94a3b8;--ok:#10b981;--issue:#f97316;--blue:#3b82f6;--violet:#8b5cf6}
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);min-height:100vh}
 
-  /* ── Header ── */
-  header {
-    display: flex; align-items: center; justify-content: space-between;
-    padding: 16px 32px; border-bottom: 1px solid var(--border);
-    background: rgba(15,23,42,.95); backdrop-filter: blur(10px);
-    position: sticky; top: 0; z-index: 100;
-  }
-  .logo { display: flex; align-items: center; gap: 10px; }
-  .logo-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--ok); animation: pulse 2s infinite; }
-  @keyframes pulse { 0%,100%{opacity:1;transform:scale(1)} 50%{opacity:.5;transform:scale(1.3)} }
-  .logo-text { font-size: 15px; font-weight: 700; letter-spacing: .5px; }
-  .logo-sub { font-size: 11px; color: var(--muted); font-weight: 500; }
-  .header-right { display: flex; align-items: center; gap: 12px; }
-  #last-updated { font-size: 11px; color: var(--muted); }
-  .refresh-btn {
-    display: flex; align-items: center; gap: 6px;
-    background: var(--border); border: none; color: var(--text);
-    padding: 6px 14px; border-radius: 8px; font-size: 12px; font-weight: 600;
-    cursor: pointer; transition: background .15s;
-  }
-  .refresh-btn:hover { background: #475569; }
-  .refresh-btn.loading svg { animation: spin 1s linear infinite; }
-  @keyframes spin { to { transform: rotate(360deg); } }
+/* header */
+header{display:flex;align-items:center;justify-content:space-between;padding:14px 28px;border-bottom:1px solid var(--border);background:rgba(15,23,42,.97);position:sticky;top:0;z-index:200}
+.logo-dot{width:8px;height:8px;border-radius:50%;background:var(--ok);animation:pulse 2s infinite;display:inline-block;margin-right:8px}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.4}}
+.logo-text{font-size:15px;font-weight:700}
+.logo-sub{font-size:10px;color:var(--muted);margin-left:16px}
+.hdr-right{display:flex;align-items:center;gap:10px}
+#last-updated{font-size:10px;color:var(--muted)}
+.btn{display:inline-flex;align-items:center;gap:5px;background:var(--border);border:none;color:var(--text);padding:6px 14px;border-radius:8px;font-size:11px;font-weight:600;cursor:pointer;transition:background .15s}
+.btn:hover{background:#475569}
+.btn.loading svg{animation:spin 1s linear infinite}
+@keyframes spin{to{transform:rotate(360deg)}}
 
-  /* ── Layout ── */
-  main { padding: 28px 32px; max-width: 1400px; margin: 0 auto; }
-  .section-label { font-size: 10px; font-weight: 700; letter-spacing: 1.5px; color: var(--muted); text-transform: uppercase; margin-bottom: 14px; }
+/* filter bar */
+#filter-bar{padding:10px 28px;background:rgba(30,41,59,.9);border-bottom:1px solid var(--border);display:flex;align-items:center;gap:10px;flex-wrap:wrap;position:sticky;top:53px;z-index:150}
+.filter-label{font-size:10px;font-weight:700;letter-spacing:.8px;color:var(--muted);text-transform:uppercase;white-space:nowrap}
+.filter-sep{width:1px;height:22px;background:var(--border)}
+.filter-select{background:var(--card);border:1px solid var(--border);color:var(--text);padding:5px 10px;border-radius:8px;font-size:11px;font-family:'Inter',sans-serif;min-width:140px;cursor:pointer}
+.filter-select:focus{outline:none;border-color:var(--blue)}
 
-  /* ── KPI Cards ── */
-  .kpi-grid { display: grid; grid-template-columns: repeat(5, 1fr); gap: 14px; margin-bottom: 32px; }
-  .kpi-card {
-    background: var(--card); border: 1px solid var(--border); border-radius: 14px;
-    padding: 20px; position: relative; overflow: hidden;
-  }
-  .kpi-card::before {
-    content: ''; position: absolute; top: 0; left: 0; right: 0; height: 3px;
-    background: var(--accent, var(--blue));
-  }
-  .kpi-label { font-size: 10px; font-weight: 700; letter-spacing: 1px; color: var(--muted); text-transform: uppercase; margin-bottom: 10px; }
-  .kpi-value { font-size: 34px; font-weight: 800; line-height: 1; margin-bottom: 6px; color: var(--accent, var(--text)); }
-  .kpi-sub { font-size: 11px; color: var(--muted); }
-  .kpi-bar { height: 4px; background: var(--border); border-radius: 2px; margin-top: 12px; overflow: hidden; }
-  .kpi-bar-fill { height: 100%; background: var(--accent, var(--blue)); border-radius: 2px; transition: width 1s ease; }
+/* date picker dropdown */
+.date-picker-wrap{position:relative}
+.date-trigger{display:flex;align-items:center;gap:8px;background:var(--card);border:1px solid var(--border);color:var(--text);padding:5px 12px;border-radius:8px;font-size:11px;font-weight:600;cursor:pointer;white-space:nowrap;min-width:200px;transition:border-color .15s}
+.date-trigger:hover,.date-trigger.open{border-color:var(--blue)}
+.date-trigger svg{color:var(--muted)}
+.date-trigger-label{flex:1}
+.date-trigger-chevron{color:var(--muted);transition:transform .2s}
+.date-trigger.open .date-trigger-chevron{transform:rotate(180deg)}
 
-  /* ── Charts Row ── */
-  .charts-row { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 14px; margin-bottom: 32px; }
-  .chart-card {
-    background: var(--card); border: 1px solid var(--border); border-radius: 14px; padding: 22px;
-  }
-  .chart-title { font-size: 13px; font-weight: 700; color: var(--text); margin-bottom: 18px; }
+.date-dropdown{position:absolute;top:calc(100% + 6px);left:0;background:#1e293b;border:1px solid var(--border);border-radius:12px;box-shadow:0 20px 60px rgba(0,0,0,.5);display:none;z-index:500;min-width:600px}
+.date-dropdown.open{display:flex}
 
-  /* Issue donut */
-  .donut-wrap { display: flex; align-items: center; gap: 20px; }
-  .donut-svg { flex-shrink: 0; }
-  .donut-legend { display: flex; flex-direction: column; gap: 8px; flex: 1; }
-  .legend-item { display: flex; align-items: center; gap: 8px; font-size: 11px; }
-  .legend-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
-  .legend-label { color: var(--muted); flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-  .legend-val { font-weight: 700; font-size: 12px; }
-  .legend-pct { color: var(--muted); font-size: 10px; }
+/* quick select list */
+.qs-list{width:180px;border-right:1px solid var(--border);padding:10px 0;flex-shrink:0}
+.qs-group-label{font-size:9px;font-weight:700;letter-spacing:1px;color:var(--muted);text-transform:uppercase;padding:8px 16px 4px}
+.qs-item{padding:7px 16px;font-size:12px;cursor:pointer;color:var(--muted);transition:all .12s;border-left:3px solid transparent}
+.qs-item:hover{color:var(--text);background:rgba(255,255,255,.05)}
+.qs-item.active{color:var(--blue);border-left-color:var(--blue);background:rgba(59,130,246,.08);font-weight:600}
 
-  /* Bar chart */
-  .bar-chart { display: flex; flex-direction: column; gap: 10px; }
-  .bar-row { display: grid; grid-template-columns: 110px 1fr 48px; align-items: center; gap: 10px; }
-  .bar-name { font-size: 11px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-  .bar-track { height: 8px; background: var(--border); border-radius: 4px; overflow: hidden; }
-  .bar-fill { height: 100%; border-radius: 4px; transition: width 1s ease; }
-  .bar-val { font-size: 11px; font-weight: 700; text-align: right; }
+/* calendar panel */
+.cal-panel{flex:1;padding:16px}
+.cal-header{font-size:11px;font-weight:600;color:var(--muted);letter-spacing:.5px;margin-bottom:10px}
+.cal-nav{display:flex;align-items:center;justify-content:space-between;margin-bottom:12px}
+.cal-nav-btn{background:none;border:1px solid var(--border);color:var(--text);width:28px;height:28px;border-radius:6px;cursor:pointer;display:flex;align-items:center;justify-content:center;font-size:14px}
+.cal-nav-btn:hover{background:var(--border)}
+.cal-month-year{font-size:13px;font-weight:700}
+.cal-grid{display:grid;grid-template-columns:repeat(7,1fr);gap:2px}
+.cal-day-name{font-size:9px;font-weight:700;color:var(--muted);text-align:center;padding:4px 0;letter-spacing:.5px}
+.cal-day{font-size:11px;text-align:center;padding:6px 2px;border-radius:6px;cursor:pointer;color:var(--muted);transition:all .1s;line-height:1}
+.cal-day.other-month{opacity:.3}
+.cal-day:not(.other-month):hover{background:rgba(59,130,246,.2);color:var(--text)}
+.cal-day.start,.cal-day.end{background:var(--blue)!important;color:#fff!important;font-weight:700}
+.cal-day.start{border-radius:6px 0 0 6px}
+.cal-day.end{border-radius:0 6px 6px 0}
+.cal-day.start.end{border-radius:6px}
+.cal-day.in-range{background:rgba(59,130,246,.15);color:var(--text);border-radius:0}
+.cal-day.today{font-weight:800;color:var(--blue)}
+.cal-footer{display:flex;align-items:center;justify-content:space-between;margin-top:12px;padding-top:10px;border-top:1px solid var(--border)}
+.cal-range-display{font-size:11px;color:var(--muted);font-family:monospace}
+.cal-range-display span{color:var(--text);font-weight:600}
+.cal-clear{font-size:11px;color:var(--muted);cursor:pointer;background:none;border:none;font-family:'Inter',sans-serif}
+.cal-clear:hover{color:var(--issue)}
 
-  /* Trend sparkline */
-  .trend-wrap { position: relative; }
-  .trend-svg { width: 100%; height: 120px; }
+/* main */
+main{padding:22px 28px;max-width:1440px;margin:0 auto}
+.sec-label{font-size:10px;font-weight:700;letter-spacing:1.5px;color:var(--muted);text-transform:uppercase;margin-bottom:10px;margin-top:22px}
+.sec-label:first-child{margin-top:0}
 
-  /* ── Tables ── */
-  .tables-row { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin-bottom: 32px; }
-  .table-card {
-    background: var(--card); border: 1px solid var(--border); border-radius: 14px;
-    overflow: hidden;
-  }
-  .table-header { padding: 18px 20px 14px; border-bottom: 1px solid var(--border); }
-  .table-header .chart-title { margin: 0; }
-  table { width: 100%; border-collapse: collapse; font-size: 12px; }
-  th { padding: 10px 16px; text-align: left; font-size: 10px; font-weight: 700; letter-spacing: 1px; color: var(--muted); text-transform: uppercase; border-bottom: 1px solid var(--border); }
-  td { padding: 11px 16px; border-bottom: 1px solid rgba(51,65,85,.5); }
-  tr:last-child td { border-bottom: none; }
-  tr:hover td { background: rgba(255,255,255,.03); }
-  .badge { display: inline-flex; align-items: center; padding: 2px 8px; border-radius: 20px; font-size: 10px; font-weight: 700; }
-  .badge-ok { background: rgba(16,185,129,.15); color: var(--ok); }
-  .badge-issue { background: rgba(249,115,22,.15); color: var(--issue); }
-  .badge-pending { background: rgba(139,92,246,.15); color: var(--pending); }
+/* kpis */
+.kpi-grid{display:grid;grid-template-columns:repeat(5,1fr);gap:10px}
+.kpi{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:16px;position:relative;overflow:hidden}
+.kpi::before{content:'';position:absolute;top:0;left:0;right:0;height:3px;background:var(--acc,var(--blue))}
+.kpi-lbl{font-size:9px;font-weight:700;letter-spacing:1px;color:var(--muted);text-transform:uppercase;margin-bottom:8px}
+.kpi-val{font-size:30px;font-weight:800;color:var(--acc,var(--text));line-height:1;margin-bottom:3px}
+.kpi-sub{font-size:10px;color:var(--muted)}
+.kpi-bar{height:3px;background:var(--border);border-radius:2px;margin-top:8px;overflow:hidden}
+.kpi-bar-fill{height:100%;background:var(--acc,var(--blue));border-radius:2px;transition:width .8s ease}
 
-  /* ── Rooftop progress rings ── */
-  .rooftop-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 14px; margin-bottom: 32px; }
-  .rooftop-card {
-    background: var(--card); border: 1px solid var(--border); border-radius: 14px;
-    padding: 18px; text-align: center; transition: border-color .2s;
-  }
-  .rooftop-card:hover { border-color: var(--blue); }
-  .ring-wrap { position: relative; width: 80px; height: 80px; margin: 0 auto 12px; }
-  .ring-svg { transform: rotate(-90deg); }
-  .ring-bg { fill: none; stroke: var(--border); stroke-width: 6; }
-  .ring-fill { fill: none; stroke-width: 6; stroke-linecap: round; transition: stroke-dashoffset 1.2s ease; }
-  .ring-center { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; }
-  .ring-pct { font-size: 16px; font-weight: 800; line-height: 1; }
-  .ring-label { font-size: 8px; color: var(--muted); font-weight: 600; letter-spacing: .5px; }
-  .rooftop-name { font-size: 11px; font-weight: 600; margin-bottom: 4px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-  .rooftop-count { font-size: 10px; color: var(--muted); }
+/* charts */
+.charts-row{display:grid;grid-template-columns:1fr 2fr 1fr;gap:10px}
+.chart-card{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:18px}
+.chart-title{font-size:12px;font-weight:700;margin-bottom:14px}
 
-  /* ── Recent activity ── */
-  .activity-card {
-    background: var(--card); border: 1px solid var(--border); border-radius: 14px;
-    overflow: hidden; margin-bottom: 32px;
-  }
-  .activity-row { display: grid; grid-template-columns: 140px 1fr 100px 80px 120px; gap: 12px; padding: 10px 20px; border-bottom: 1px solid rgba(51,65,85,.4); align-items: center; font-size: 11px; }
-  .activity-row:last-child { border-bottom: none; }
-  .activity-row:hover { background: rgba(255,255,255,.02); }
-  .activity-head { background: rgba(51,65,85,.3); font-size: 10px; font-weight: 700; letter-spacing: .8px; color: var(--muted); text-transform: uppercase; }
-  .vin-mono { font-family: monospace; font-size: 11px; color: var(--blue); }
+/* donut */
+.donut-wrap{display:flex;align-items:center;gap:14px}
+.donut-legend{display:flex;flex-direction:column;gap:6px;flex:1;overflow:hidden}
+.legend-item{display:flex;align-items:center;gap:6px;font-size:10px}
+.legend-dot{width:7px;height:7px;border-radius:50%;flex-shrink:0}
+.legend-label{color:var(--muted);flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.legend-val{font-weight:700}
 
-  /* ── Loading ── */
-  .loading-overlay { display: flex; flex-direction: column; align-items: center; justify-content: center; min-height: 400px; gap: 16px; }
-  .spinner { width: 36px; height: 36px; border: 3px solid var(--border); border-top-color: var(--blue); border-radius: 50%; animation: spin 1s linear infinite; }
-  .loading-text { color: var(--muted); font-size: 13px; }
-  .error-msg { color: var(--issue); font-size: 13px; text-align: center; padding: 40px; }
+/* trend bars */
+.trend-bars{display:flex;align-items:flex-end;gap:2px;height:110px}
+.trend-bar-wrap{display:flex;flex-direction:column;align-items:center;flex:1;min-width:0}
+.trend-bar{width:100%;background:var(--blue);border-radius:3px 3px 0 0;min-height:2px}
+.trend-bar:hover{background:#60a5fa}
+.trend-bar-val{font-size:7px;color:var(--muted);margin-bottom:2px}
+.trend-date{font-size:7px;color:var(--muted);margin-top:2px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:100%;text-align:center}
 
-  /* ── Responsive ── */
-  @media (max-width: 1100px) { .kpi-grid { grid-template-columns: repeat(3, 1fr); } .charts-row { grid-template-columns: 1fr 1fr; } }
-  @media (max-width: 768px) { main { padding: 16px; } .kpi-grid { grid-template-columns: 1fr 1fr; } .charts-row,.tables-row { grid-template-columns: 1fr; } header { padding: 12px 16px; } }
+/* horiz bars */
+.bar-chart{display:flex;flex-direction:column;gap:8px}
+.bar-row{display:grid;grid-template-columns:100px 1fr 40px;align-items:center;gap:8px}
+.bar-name{font-size:10px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.bar-track{height:6px;background:var(--border);border-radius:3px;overflow:hidden}
+.bar-fill{height:100%;border-radius:3px;transition:width .8s ease}
+.bar-val{font-size:10px;font-weight:700;text-align:right}
+
+/* rings */
+.rooftop-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(155px,1fr));gap:10px}
+.rt-card{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:14px;text-align:center;transition:border-color .2s}
+.rt-card:hover{border-color:var(--blue)}
+.ring-wrap{position:relative;width:68px;height:68px;margin:0 auto 8px}
+.ring-svg{transform:rotate(-90deg)}
+.ring-bg{fill:none;stroke:var(--border);stroke-width:5}
+.ring-fill{fill:none;stroke-width:5;stroke-linecap:round}
+.ring-center{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center}
+.ring-pct{font-size:14px;font-weight:800;line-height:1}
+.ring-lbl{font-size:8px;color:var(--muted);font-weight:600}
+.rt-name{font-size:10px;font-weight:600;margin-bottom:3px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.rt-count{font-size:9px;color:var(--muted)}
+
+/* tables */
+.tables-row{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.tbl-card{background:var(--card);border:1px solid var(--border);border-radius:12px;overflow:hidden}
+.tbl-head-bar{padding:14px 16px 10px;border-bottom:1px solid var(--border)}
+table{width:100%;border-collapse:collapse;font-size:11px}
+th{padding:7px 12px;text-align:left;font-size:9px;font-weight:700;letter-spacing:.8px;color:var(--muted);text-transform:uppercase;border-bottom:1px solid var(--border)}
+td{padding:8px 12px;border-bottom:1px solid rgba(51,65,85,.4)}
+tr:last-child td{border:none}
+tr:hover td{background:rgba(255,255,255,.02)}
+.badge{display:inline-flex;align-items:center;padding:2px 7px;border-radius:20px;font-size:9px;font-weight:700}
+.b-ok{background:rgba(16,185,129,.15);color:var(--ok)}
+.b-issue{background:rgba(249,115,22,.15);color:var(--issue)}
+
+/* activity */
+.act-card{background:var(--card);border:1px solid var(--border);border-radius:12px;overflow:hidden}
+.act-row{display:grid;grid-template-columns:95px 148px 1fr 110px 88px;gap:8px;padding:8px 16px;border-bottom:1px solid rgba(51,65,85,.35);align-items:center;font-size:10px}
+.act-row:last-child{border:none}
+.act-row:hover{background:rgba(255,255,255,.02)}
+.act-head{background:rgba(51,65,85,.3);font-size:9px;font-weight:700;letter-spacing:.8px;color:var(--muted);text-transform:uppercase}
+.vin-mono{font-family:monospace;font-size:10px;color:var(--blue)}
+
+.loading-overlay{display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:380px;gap:12px}
+.spinner{width:30px;height:30px;border:3px solid var(--border);border-top-color:var(--blue);border-radius:50%;animation:spin 1s linear infinite}
+.err{color:var(--issue);text-align:center;padding:40px;font-size:12px}
+
+@media(max-width:1100px){.kpi-grid{grid-template-columns:repeat(3,1fr)}.charts-row{grid-template-columns:1fr 1fr}}
+@media(max-width:768px){.kpi-grid{grid-template-columns:1fr 1fr}.charts-row,.tables-row{grid-template-columns:1fr}main,#filter-bar,header{padding-left:14px;padding-right:14px}}
 </style>
 </head>
 <body>
 
 <header>
-  <div class="logo">
-    <div class="logo-dot"></div>
-    <div>
-      <div class="logo-text">🏎 Spyne Review Dashboard</div>
-      <div class="logo-sub">1st Image Review · All Time</div>
-    </div>
+  <div>
+    <span class="logo-dot"></span>
+    <span class="logo-text">🏎 Spyne Review Dashboard</span>
+    <span class="logo-sub">1st Image QC · Live from BigQuery</span>
   </div>
-  <div class="header-right">
-    <span id="last-updated">Loading…</span>
-    <button class="refresh-btn" id="refresh-btn" onclick="loadAll()">
-      <svg width="13" height="13" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M4 4v5h5M20 20v-5h-5M4 9a9 9 0 0115.17-3.36M20 15a9 9 0 01-15.17 3.36"/></svg>
+  <div class="hdr-right">
+    <span id="last-updated"></span>
+    <button class="btn" id="refresh-btn" onclick="loadAll()">
+      <svg width="12" height="12" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M4 4v5h5M20 20v-5h-5M4 9a9 9 0 0115.17-3.36M20 15a9 9 0 01-15.17 3.36"/></svg>
       Refresh
     </button>
   </div>
 </header>
 
-<main id="main-content">
-  <div class="loading-overlay">
-    <div class="spinner"></div>
-    <div class="loading-text">Fetching data from BigQuery…</div>
+<div id="filter-bar">
+  <!-- Date picker -->
+  <span class="filter-label">Date Range</span>
+  <div class="date-picker-wrap" id="dp-wrap">
+    <div class="date-trigger" id="dp-trigger" onclick="toggleDP()">
+      <svg width="13" height="13" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"/></svg>
+      <span class="date-trigger-label" id="dp-label">All time</span>
+      <svg class="date-trigger-chevron" width="12" height="12" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M19 9l-7 7-7-7"/></svg>
+    </div>
+    <div class="date-dropdown" id="dp-dropdown">
+      <!-- Quick select -->
+      <div class="qs-list">
+        <div class="qs-group-label">Quick Select</div>
+        <div class="qs-item" onclick="qs('today')">Today</div>
+        <div class="qs-item" onclick="qs('yesterday')">Yesterday</div>
+        <div class="qs-item" onclick="qs('7d')">Last 7 days</div>
+        <div class="qs-item" onclick="qs('30d')">Last 30 days</div>
+        <div class="qs-group-label" style="margin-top:6px">Months</div>
+        <div class="qs-item" onclick="qs('month')">This month</div>
+        <div class="qs-item" onclick="qs('lastmonth')">Last month</div>
+        <div class="qs-item" onclick="qs('3m')">Last 3 months</div>
+        <div class="qs-item" onclick="qs('6m')">Last 6 months</div>
+        <div class="qs-item" onclick="qs('year')">This year</div>
+        <div class="qs-group-label" style="margin-top:6px">All</div>
+        <div class="qs-item active" onclick="qs('all')">All time</div>
+        <div class="qs-group-label" style="margin-top:6px">Custom</div>
+        <div class="qs-item" id="qs-custom" onclick="qs('custom')">Custom range</div>
+      </div>
+      <!-- Calendar -->
+      <div class="cal-panel">
+        <div class="cal-header">CUSTOM DATE RANGE</div>
+        <div id="cal-hint" style="font-size:11px;color:var(--muted);margin-bottom:10px">Click a start date, then click an end date.</div>
+        <div class="cal-nav">
+          <button class="cal-nav-btn" onclick="calNav(-1)">‹</button>
+          <span class="cal-month-year" id="cal-month-year"></span>
+          <button class="cal-nav-btn" onclick="calNav(1)">›</button>
+        </div>
+        <div class="cal-grid" id="cal-grid">
+          <div class="cal-day-name">SU</div><div class="cal-day-name">MO</div><div class="cal-day-name">TU</div>
+          <div class="cal-day-name">WE</div><div class="cal-day-name">TH</div><div class="cal-day-name">FR</div>
+          <div class="cal-day-name">SA</div>
+        </div>
+        <div class="cal-footer">
+          <div class="cal-range-display" id="cal-range-display">Pick a start date</div>
+          <button class="cal-clear" onclick="calClear()">Clear</button>
+        </div>
+      </div>
+    </div>
   </div>
+
+  <div class="filter-sep"></div>
+  <span class="filter-label">Enterprise</span>
+  <select id="sel-enterprise" class="filter-select" onchange="loadAll()"><option value="">All enterprises</option></select>
+
+  <span class="filter-label">Rooftop</span>
+  <select id="sel-rooftop" class="filter-select" onchange="loadAll()"><option value="">All rooftops</option></select>
+
+  <span class="filter-label">Reviewer</span>
+  <select id="sel-reviewer" class="filter-select" onchange="loadAll()"><option value="">All reviewers</option></select>
+</div>
+
+<main id="main-content">
+  <div class="loading-overlay"><div class="spinner"></div><div style="color:var(--muted);font-size:12px">Loading from BigQuery…</div></div>
 </main>
 
 <script>
-const BQ = 'https://script.google.com/macros/s/AKfycbxS1D1FkX2q_wQhh4U6LbzQKAgSRwzQGr0gEpmaM1rT8Sqig7ghr54ChYe9dor3PIaG/exec';
+const BQ  = 'https://script.google.com/macros/s/AKfycbxS1D1FkX2q_wQhh4U6LbzQKAgSRwzQGr0gEpmaM1rT8Sqig7ghr54ChYe9dor3PIaG/exec';
 const TBL = '`inspired-frame-453018-r2.spyne_reviews.image_reviews`';
 
+// ── Date state ──
+let dfrom='', dto='', calYear=new Date().getFullYear(), calMonth=new Date().getMonth();
+let calStart=null, calEnd=null, picking=false;
+const MONTHS=['January','February','March','April','May','June','July','August','September','October','November','December'];
+
+function fmt(d){ return d ? d.toLocaleDateString('en-GB',{day:'2-digit',month:'short',year:'numeric'}) : ''; }
+function iso(d){ return d ? d.toISOString().slice(0,10) : ''; }
+function today(){ return new Date(); }
+function daysAgo(n){ const d=new Date(); d.setDate(d.getDate()-n); return d; }
+function monthStart(offset=0){ const d=new Date(); d.setDate(1); d.setMonth(d.getMonth()+offset); return d; }
+function monthEnd(offset=0){ const d=new Date(); d.setDate(1); d.setMonth(d.getMonth()+offset+1); d.setDate(0); return d; }
+
+function qs(preset) {
+  document.querySelectorAll('.qs-item').forEach(i=>i.classList.remove('active'));
+  const el = [...document.querySelectorAll('.qs-item')].find(i=>i.getAttribute('onclick')?.includes(`'${preset}'`));
+  if(el) el.classList.add('active');
+
+  if(preset==='custom'){ renderCal(); return; }
+
+  calStart=null; calEnd=null;
+  let label='';
+  if(preset==='today')     { dfrom=dto=iso(today()); label='Today'; }
+  else if(preset==='yesterday'){ dfrom=dto=iso(daysAgo(1)); label='Yesterday'; }
+  else if(preset==='7d')   { dfrom=iso(daysAgo(6)); dto=iso(today()); label='Last 7 days'; }
+  else if(preset==='30d')  { dfrom=iso(daysAgo(29)); dto=iso(today()); label='Last 30 days'; }
+  else if(preset==='month'){ dfrom=iso(monthStart(0)); dto=iso(today()); label='This month'; }
+  else if(preset==='lastmonth'){ dfrom=iso(monthStart(-1)); dto=iso(monthEnd(-1)); label='Last month'; }
+  else if(preset==='3m')   { dfrom=iso(daysAgo(89)); dto=iso(today()); label='Last 3 months'; }
+  else if(preset==='6m')   { dfrom=iso(daysAgo(179)); dto=iso(today()); label='Last 6 months'; }
+  else if(preset==='year') { dfrom=new Date().getFullYear()+'-01-01'; dto=iso(today()); label='This year'; }
+  else if(preset==='all')  { dfrom=''; dto=''; label='All time'; }
+
+  document.getElementById('dp-label').textContent = label;
+  closeDP();
+  loadAll();
+}
+
+// ── Calendar ──
+function renderCal() {
+  const grid = document.getElementById('cal-grid');
+  // Remove old day cells (keep 7 day-name headers)
+  while(grid.children.length > 7) grid.removeChild(grid.lastChild);
+  document.getElementById('cal-month-year').textContent = MONTHS[calMonth]+' '+calYear;
+
+  const firstDay = new Date(calYear, calMonth, 1).getDay();
+  const daysInMonth = new Date(calYear, calMonth+1, 0).getDate();
+  const daysInPrev  = new Date(calYear, calMonth, 0).getDate();
+  const todayStr = iso(new Date());
+  const cs = calStart ? iso(calStart) : null;
+  const ce = calEnd   ? iso(calEnd)   : null;
+
+  // prev month padding
+  for(let i=firstDay-1;i>=0;i--){
+    const d = document.createElement('div');
+    d.className='cal-day other-month';
+    d.textContent=daysInPrev-i;
+    grid.appendChild(d);
+  }
+  for(let day=1;day<=daysInMonth;day++){
+    const d = document.createElement('div');
+    const dateStr = `${calYear}-${String(calMonth+1).padStart(2,'0')}-${String(day).padStart(2,'0')}`;
+    let cls = 'cal-day';
+    if(dateStr===todayStr) cls+=' today';
+    if(cs && dateStr===cs) cls+=' start';
+    if(ce && dateStr===ce) cls+=' end';
+    if(cs && ce && dateStr>cs && dateStr<ce) cls+=' in-range';
+    d.className=cls;
+    d.textContent=day;
+    d.onclick=()=>calPick(new Date(calYear,calMonth,day));
+    grid.appendChild(d);
+  }
+  // next month padding
+  const cells = firstDay + daysInMonth;
+  const extra = cells%7===0?0:7-(cells%7);
+  for(let i=1;i<=extra;i++){
+    const d=document.createElement('div'); d.className='cal-day other-month'; d.textContent=i; grid.appendChild(d);
+  }
+  // range display
+  const rd=document.getElementById('cal-range-display');
+  if(cs && ce) rd.innerHTML=`<span>${fmt(calStart)}</span> → <span>${fmt(calEnd)}</span>`;
+  else if(cs)  rd.innerHTML=`<span>${fmt(calStart)}</span> → pick end`;
+  else         rd.textContent='Pick a start date';
+}
+
+function calPick(d) {
+  if(!calStart || (calStart && calEnd)) { calStart=d; calEnd=null; }
+  else if(d<calStart) { calEnd=calStart; calStart=d; }
+  else { calEnd=d; }
+  renderCal();
+  if(calStart && calEnd) {
+    dfrom=iso(calStart); dto=iso(calEnd);
+    document.getElementById('dp-label').textContent=fmt(calStart)+' → '+fmt(calEnd);
+    setTimeout(()=>{ closeDP(); loadAll(); }, 300);
+  }
+}
+
+function calClear() {
+  calStart=null; calEnd=null; dfrom=''; dto='';
+  document.getElementById('dp-label').textContent='All time';
+  document.querySelectorAll('.qs-item').forEach(i=>i.classList.remove('active'));
+  const allEl=[...document.querySelectorAll('.qs-item')].find(i=>i.textContent==='All time');
+  if(allEl) allEl.classList.add('active');
+  renderCal();
+}
+
+function calNav(dir) { calMonth+=dir; if(calMonth>11){calMonth=0;calYear++;}else if(calMonth<0){calMonth=11;calYear--;} renderCal(); }
+
+// ── Dropdown ──
+function toggleDP() {
+  const dp=document.getElementById('dp-dropdown'), tr=document.getElementById('dp-trigger');
+  const open=dp.classList.toggle('open');
+  tr.classList.toggle('open', open);
+  if(open) renderCal();
+}
+function closeDP() {
+  document.getElementById('dp-dropdown').classList.remove('open');
+  document.getElementById('dp-trigger').classList.remove('open');
+}
+document.addEventListener('click', e=>{ if(!document.getElementById('dp-wrap').contains(e.target)) closeDP(); });
+
+// ── BQ ──
 async function query(sql) {
-  const res = await fetch(BQ + '?query=' + encodeURIComponent(sql), { redirect: 'follow' });
-  const data = await res.json();
-  if (!data.ok) throw new Error(data.error || 'Query failed');
-  return data.rows;
+  const res=await fetch(BQ+'?query='+encodeURIComponent(sql),{redirect:'follow'});
+  const d=await res.json();
+  if(!d.ok) throw new Error(d.error||'Query failed');
+  return d.rows;
 }
 
-const ISSUE_COLORS = {
-  'OK': '#10b981', 'Raw': '#f97316', 'Stock': '#3b82f6', 'Bad Input': '#8b5cf6',
-  'Banner': '#ec4899', 'Background': '#14b8a6', 'Quality': '#f59e0b',
-  'Hero Angle': '#6366f1', 'Photo NA': '#94a3b8', 'Unsupported Vehicle': '#ef4444',
-  'Pending': '#6b7280', 'Sequence': '#06b6d4', 'No exterior': '#84cc16',
-  'Input Overlap': '#a78bfa',
-};
-function issueColor(t) { return ISSUE_COLORS[t] || '#64748b'; }
-
-function pct(a, b) { return b > 0 ? Math.round(a / b * 100) : 0; }
-
-// ── Donut chart ──
-function buildDonut(data, size = 130) {
-  const total = data.reduce((s, d) => s + d.v, 0);
-  if (!total) return '<div style="color:var(--muted);font-size:12px;text-align:center;padding:20px">No data</div>';
-  const r = size * 0.38, cx = size / 2, cy = size / 2;
-  const circ = 2 * Math.PI * r;
-  let offset = 0;
-  let paths = '';
-  data.forEach(d => {
-    const frac = d.v / total;
-    const dash = frac * circ;
-    paths += `<circle cx="${cx}" cy="${cy}" r="${r}" fill="none" stroke="${d.c}" stroke-width="${size*0.12}" stroke-dasharray="${dash} ${circ}" stroke-dashoffset="${-offset}" stroke-linecap="butt"/>`;
-    offset += dash;
-  });
-  const legend = data.slice(0, 8).map(d =>
-    `<div class="legend-item"><div class="legend-dot" style="background:${d.c}"></div><span class="legend-label">${d.l}</span><span class="legend-val">${d.v}</span><span class="legend-pct"> ${pct(d.v,total)}%</span></div>`
-  ).join('');
-  return `<div class="donut-wrap">
-    <svg class="donut-svg" width="${size}" height="${size}" style="transform:rotate(-90deg)">
-      <circle cx="${cx}" cy="${cy}" r="${r}" fill="none" stroke="var(--border)" stroke-width="${size*0.12}"/>
-      ${paths}
-    </svg>
-    <div class="donut-legend">${legend}</div>
-  </div>`;
+function buildWhere() {
+  const parts=[];
+  if(dfrom) parts.push(`review_date >= '${dfrom}'`);
+  if(dto)   parts.push(`review_date <= '${dto}'`);
+  const rt=document.getElementById('sel-rooftop')?.value;
+  if(rt) parts.push(`rooftop = '${rt.replace(/'/g,"\\'")}'`);
+  const rv=document.getElementById('sel-reviewer')?.value;
+  if(rv) parts.push(`reviewer = '${rv.replace(/'/g,"\\'")}'`);
+  const ent=document.getElementById('sel-enterprise')?.value;
+  if(ent) parts.push(`enterprise = '${ent.replace(/'/g,"\\'")}'`);
+  return parts.length ? 'WHERE '+parts.join(' AND ') : '';
 }
 
-// ── Horizontal bar chart ──
-function buildBars(data, colorFn) {
-  const max = Math.max(...data.map(d => d.v), 1);
-  return `<div class="bar-chart">${data.map(d => `
-    <div class="bar-row">
-      <span class="bar-name" title="${d.l}">${d.l}</span>
-      <div class="bar-track"><div class="bar-fill" style="width:${pct(d.v,max)}%;background:${colorFn(d.l)}"></div></div>
-      <span class="bar-val" style="color:${colorFn(d.l)}">${d.v}</span>
-    </div>`).join('')}</div>`;
+const COLORS={'OK':'#10b981','Raw':'#f97316','Stock':'#3b82f6','Bad Input':'#8b5cf6','Banner':'#ec4899','Background':'#14b8a6','Quality':'#f59e0b','Hero Angle':'#6366f1','Photo NA':'#94a3b8','Unsupported Vehicle':'#ef4444','Pending':'#64748b','Sequence':'#06b6d4','No exterior':'#84cc16','Input Overlap':'#a78bfa'};
+const ic=t=>COLORS[t]||'#64748b';
+const pct=(a,b)=>b>0?Math.round(a/b*100):0;
+const N=v=>parseInt(v)||0;
+
+function donut(data,size=120){
+  const total=data.reduce((s,d)=>s+d.v,0);
+  if(!total) return '<div style="color:var(--muted);font-size:11px;padding:20px;text-align:center">No data</div>';
+  const r=size*.37,cx=size/2,cy=size/2,c=2*Math.PI*r; let off=0,paths='';
+  data.forEach(d=>{const dash=(d.v/total)*c; paths+=`<circle cx="${cx}" cy="${cy}" r="${r}" fill="none" stroke="${d.c}" stroke-width="${size*.11}" stroke-dasharray="${dash} ${c}" stroke-dashoffset="${-off}"/>`; off+=dash;});
+  return `<div class="donut-wrap"><svg width="${size}" height="${size}" style="transform:rotate(-90deg);flex-shrink:0"><circle cx="${cx}" cy="${cy}" r="${r}" fill="none" stroke="var(--border)" stroke-width="${size*.11}"/>${paths}</svg>
+    <div class="donut-legend">${data.slice(0,9).map(d=>`<div class="legend-item"><div class="legend-dot" style="background:${d.c}"></div><span class="legend-label">${d.l}</span><span class="legend-val">${d.v}</span><span style="color:var(--muted);font-size:9px"> ${pct(d.v,total)}%</span></div>`).join('')}</div></div>`;
 }
 
-// ── Sparkline trend ──
-function buildSparkline(rows) {
-  if (!rows.length) return '<div style="color:var(--muted);font-size:12px;padding:20px">No data</div>';
-  const vals = rows.map(r => parseInt(r.cnt) || 0);
-  const max = Math.max(...vals, 1);
-  const W = 400, H = 110, pad = 10;
-  const xStep = (W - pad*2) / Math.max(vals.length - 1, 1);
-  const pts = vals.map((v, i) => `${pad + i * xStep},${H - pad - (v / max) * (H - pad * 2)}`);
-  const area = `M${pts[0]} ` + pts.slice(1).map(p => `L${p}`).join(' ') + ` L${pts[pts.length-1].split(',')[0]},${H-pad} L${pad},${H-pad} Z`;
-  const line = `M${pts[0]} ` + pts.slice(1).map(p => `L${p}`).join(' ');
-  return `<svg class="trend-svg" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none">
-    <defs><linearGradient id="tg" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="0%" stop-color="#3b82f6" stop-opacity="0.3"/>
-      <stop offset="100%" stop-color="#3b82f6" stop-opacity="0"/>
-    </linearGradient></defs>
-    <path d="${area}" fill="url(#tg)"/>
-    <path d="${line}" fill="none" stroke="#3b82f6" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
-    ${pts.map((p,i) => `<circle cx="${p.split(',')[0]}" cy="${p.split(',')[1]}" r="3" fill="#3b82f6"/>`).join('')}
-    ${rows.slice(-5).map((r, i) => {
-      const idx = rows.length - 5 + i;
-      const x = pad + idx * xStep;
-      const y = H - pad - (vals[idx] / max) * (H - pad * 2);
-      return `<text x="${x}" y="${y-8}" font-size="9" fill="var(--muted)" text-anchor="middle">${vals[idx]}</text>`;
-    }).join('')}
-  </svg>
-  <div style="display:flex;justify-content:space-between;font-size:9px;color:var(--muted);padding:4px ${pad}px 0">
-    ${rows.length <= 7 ? rows.map(r => `<span>${r.review_date ? r.review_date.slice(5) : r.d || ''}</span>`).join('') : `<span>${rows[0].review_date||''}</span><span>${rows[rows.length-1].review_date||''}</span>`}
-  </div>`;
+function trendBars(rows){
+  if(!rows.length) return '<div style="color:var(--muted);font-size:11px;padding:20px">No data</div>';
+  const vals=rows.map(r=>N(r.cnt)),max=Math.max(...vals,1);
+  return `<div class="trend-bars">${rows.map((r,i)=>{const h=Math.max(Math.round((vals[i]/max)*100),2);const dt=(r.review_date||'').slice(5);return `<div class="trend-bar-wrap" title="${r.review_date}: ${vals[i]}"><div class="trend-bar-val">${vals[i]}</div><div class="trend-bar" style="height:${h}px"></div><div class="trend-date">${dt}</div></div>`;}).join('')}</div>`;
 }
 
-// ── Progress ring ──
-function buildRing(pctVal, color) {
-  const r = 31, circ = 2 * Math.PI * r;
-  const dash = (pctVal / 100) * circ;
-  const col = pctVal >= 80 ? '#10b981' : pctVal >= 50 ? '#f59e0b' : '#f97316';
-  return `<div class="ring-wrap">
-    <svg class="ring-svg" width="80" height="80" viewBox="0 0 80 80">
-      <circle class="ring-bg" cx="40" cy="40" r="${r}"/>
-      <circle class="ring-fill" cx="40" cy="40" r="${r}" stroke="${col}"
-        stroke-dasharray="${dash} ${circ}" stroke-dashoffset="0"/>
-    </svg>
-    <div class="ring-center">
-      <span class="ring-pct" style="color:${col}">${pctVal}%</span>
-      <span class="ring-label">OK</span>
-    </div>
-  </div>`;
+function hbars(data,colorFn){
+  const max=Math.max(...data.map(d=>d.v),1);
+  return `<div class="bar-chart">${data.map(d=>`<div class="bar-row"><span class="bar-name" title="${d.l}">${d.l}</span><div class="bar-track"><div class="bar-fill" style="width:${pct(d.v,max)}%;background:${colorFn(d.l)}"></div></div><span class="bar-val" style="color:${colorFn(d.l)}">${d.v}</span></div>`).join('')}</div>`;
 }
 
-// ── Main render ──
-async function loadAll() {
-  const btn = document.getElementById('refresh-btn');
-  btn.classList.add('loading');
+function ring(p){
+  const r=26,c=2*Math.PI*r,dash=(p/100)*c;
+  const col=p>=80?'#10b981':p>=50?'#eab308':'#f97316';
+  return `<div class="ring-wrap"><svg class="ring-svg" width="68" height="68" viewBox="0 0 68 68"><circle class="ring-bg" cx="34" cy="34" r="${r}"/><circle class="ring-fill" cx="34" cy="34" r="${r}" stroke="${col}" stroke-dasharray="${dash} ${c}"/></svg><div class="ring-center"><span class="ring-pct" style="color:${col}">${p}%</span><span class="ring-lbl">OK</span></div></div>`;
+}
 
-  try {
-    const [overallR, issuesR, reviewersR, rooftopsR, trendR, recentR, conditionR] = await Promise.all([
-      query(`SELECT COUNT(*) as total, COUNTIF(issue_type='OK') as ok_cnt, COUNTIF(issue_type='Pending') as pending_cnt, COUNTIF(issue_type NOT IN ('OK','Pending')) as issue_cnt, COUNT(DISTINCT reviewer) as reviewer_cnt, COUNT(DISTINCT rooftop) as rooftop_cnt FROM ${TBL}`),
-      query(`SELECT issue_type, COUNT(*) as cnt FROM ${TBL} GROUP BY issue_type ORDER BY cnt DESC`),
-      query(`SELECT reviewer, COUNT(*) as total, COUNTIF(issue_type='OK') as ok_cnt, COUNTIF(issue_type='Pending') as pending_cnt, COUNTIF(issue_type NOT IN ('OK','Pending')) as issue_cnt, MAX(review_date) as last_date FROM ${TBL} GROUP BY reviewer ORDER BY total DESC`),
-      query(`SELECT rooftop, enterprise, COUNT(*) as total, COUNTIF(issue_type='OK') as ok_cnt, COUNTIF(issue_type NOT IN ('OK','Pending')) as issue_cnt, COUNTIF(issue_type='Pending') as pending_cnt FROM ${TBL} GROUP BY rooftop, enterprise ORDER BY total DESC`),
-      query(`SELECT review_date, COUNT(*) as cnt FROM ${TBL} GROUP BY review_date ORDER BY review_date`),
-      query(`SELECT review_date, reviewer, rooftop, vin, issue_type, comment FROM ${TBL} WHERE issue_type != 'Pending' ORDER BY reviewed_at DESC LIMIT 20`),
-      query(`SELECT condition, COUNT(*) as cnt, COUNTIF(issue_type='OK') as ok_cnt FROM ${TBL} GROUP BY condition ORDER BY cnt DESC`),
+async function loadFilterOptions(){
+  try{
+    const[ents,rts,rvs]=await Promise.all([
+      query(`SELECT DISTINCT enterprise FROM ${TBL} WHERE enterprise IS NOT NULL ORDER BY enterprise`),
+      query(`SELECT DISTINCT rooftop FROM ${TBL} WHERE rooftop IS NOT NULL ORDER BY rooftop`),
+      query(`SELECT DISTINCT reviewer FROM ${TBL} WHERE reviewer IS NOT NULL ORDER BY reviewer`)
     ]);
+    const es=document.getElementById('sel-enterprise'),rs=document.getElementById('sel-rooftop'),rvs2=document.getElementById('sel-reviewer');
+    ents.forEach(r=>{const o=document.createElement('option');o.value=r.enterprise;o.textContent=r.enterprise;es.appendChild(o);});
+    rts.forEach(r=>{const o=document.createElement('option');o.value=r.rooftop;o.textContent=r.rooftop;rs.appendChild(o);});
+    rvs.forEach(r=>{const o=document.createElement('option');o.value=r.reviewer;o.textContent=r.reviewer.split('@')[0];o.title=r.reviewer;rvs2.appendChild(o);});
+  }catch(e){console.warn('filter options:',e);}
+}
 
-    const ov = overallR[0];
-    const total = parseInt(ov.total) || 0;
-    const ok = parseInt(ov.ok_cnt) || 0;
-    const pending = parseInt(ov.pending_cnt) || 0;
-    const issues = parseInt(ov.issue_cnt) || 0;
-    const okPct = pct(ok, total);
+async function loadAll(){
+  const btn=document.getElementById('refresh-btn'); btn.classList.add('loading');
+  const mc=document.getElementById('main-content');
+  mc.innerHTML='<div class="loading-overlay"><div class="spinner"></div><div style="color:var(--muted);font-size:12px">Querying BigQuery…</div></div>';
+  try{
+    const W=buildWhere();
+    const[ovR,issR,rvR,rtR,trendR,recentR]=await Promise.all([
+      query(`SELECT COUNT(*) as total, COUNTIF(issue_type='OK' OR issue_type='Pending') as ok_cnt, COUNTIF(issue_type NOT IN ('OK','Pending')) as issue_cnt, COUNT(DISTINCT reviewer) as rev_cnt, COUNT(DISTINCT rooftop) as rt_cnt, COUNT(DISTINCT vin) as vin_cnt FROM ${TBL} ${W}`),
+      query(`SELECT issue_type, COUNT(*) as cnt FROM ${TBL} ${W} GROUP BY issue_type ORDER BY cnt DESC`),
+      query(`SELECT reviewer, COUNT(*) as total, COUNTIF(issue_type='OK' OR issue_type='Pending') as ok_cnt, COUNTIF(issue_type NOT IN ('OK','Pending')) as issue_cnt, MAX(review_date) as last_date FROM ${TBL} ${W} GROUP BY reviewer ORDER BY total DESC`),
+      query(`SELECT rooftop, enterprise, COUNT(*) as total, COUNTIF(issue_type='OK' OR issue_type='Pending') as ok_cnt, COUNTIF(issue_type NOT IN ('OK','Pending')) as issue_cnt FROM ${TBL} ${W} GROUP BY rooftop,enterprise ORDER BY total DESC`),
+      query(`SELECT review_date, COUNT(*) as cnt FROM ${TBL} ${W} GROUP BY review_date ORDER BY review_date`),
+      query(`SELECT review_date,reviewer,rooftop,vin,issue_type,comment FROM ${TBL} ${W} WHERE issue_type NOT IN ('OK','Pending') ORDER BY reviewed_at DESC LIMIT 25`)
+    ]);
+    const ov=ovR[0]||{};
+    const total=N(ov.total),ok=N(ov.ok_cnt),issues=N(ov.issue_cnt);
+    const accuracy=100-pct(issues,total);
 
-    const html = `
-    <!-- KPIs -->
-    <div class="section-label">Overview</div>
+    mc.innerHTML=`
+    <div class="sec-label">Overview</div>
     <div class="kpi-grid">
-      <div class="kpi-card" style="--accent:#3b82f6">
-        <div class="kpi-label">Total Reviews</div>
-        <div class="kpi-value">${total.toLocaleString()}</div>
-        <div class="kpi-sub">${ov.rooftop_cnt} rooftops · ${ov.reviewer_cnt} reviewers</div>
-        <div class="kpi-bar"><div class="kpi-bar-fill" style="width:100%"></div></div>
-      </div>
-      <div class="kpi-card" style="--accent:#10b981">
-        <div class="kpi-label">Approved (OK)</div>
-        <div class="kpi-value">${ok.toLocaleString()}</div>
-        <div class="kpi-sub">${okPct}% of total</div>
-        <div class="kpi-bar"><div class="kpi-bar-fill" style="width:${okPct}%"></div></div>
-      </div>
-      <div class="kpi-card" style="--accent:#f97316">
-        <div class="kpi-label">Issues Found</div>
-        <div class="kpi-value">${issues.toLocaleString()}</div>
-        <div class="kpi-sub">${pct(issues,total)}% of total</div>
-        <div class="kpi-bar"><div class="kpi-bar-fill" style="width:${pct(issues,total)}%"></div></div>
-      </div>
-      <div class="kpi-card" style="--accent:#8b5cf6">
-        <div class="kpi-label">Pending</div>
-        <div class="kpi-value">${pending.toLocaleString()}</div>
-        <div class="kpi-sub">${pct(pending,total)}% not reviewed</div>
-        <div class="kpi-bar"><div class="kpi-bar-fill" style="width:${pct(pending,total)}%"></div></div>
-      </div>
-      <div class="kpi-card" style="--accent:#eab308">
-        <div class="kpi-label">Issue Rate</div>
-        <div class="kpi-value">${pct(issues, ok+issues)}%</div>
-        <div class="kpi-sub">of reviewed VINs</div>
-        <div class="kpi-bar"><div class="kpi-bar-fill" style="width:${pct(issues,ok+issues)}%"></div></div>
-      </div>
+      <div class="kpi" style="--acc:#3b82f6"><div class="kpi-lbl">Total VINs</div><div class="kpi-val">${total.toLocaleString()}</div><div class="kpi-sub">${ov.rt_cnt||0} rooftops · ${ov.rev_cnt||0} reviewers</div><div class="kpi-bar"><div class="kpi-bar-fill" style="width:100%"></div></div></div>
+      <div class="kpi" style="--acc:#10b981"><div class="kpi-lbl">OK (incl. Pending)</div><div class="kpi-val">${ok.toLocaleString()}</div><div class="kpi-sub">${pct(ok,total)}% of total</div><div class="kpi-bar"><div class="kpi-bar-fill" style="width:${pct(ok,total)}%"></div></div></div>
+      <div class="kpi" style="--acc:#f97316"><div class="kpi-lbl">Issues Found</div><div class="kpi-val">${issues.toLocaleString()}</div><div class="kpi-sub">${pct(issues,total)}% issue rate</div><div class="kpi-bar"><div class="kpi-bar-fill" style="width:${pct(issues,total)}%"></div></div></div>
+      <div class="kpi" style="--acc:${accuracy>=90?'#10b981':accuracy>=70?'#eab308':'#ef4444'}"><div class="kpi-lbl">Accuracy</div><div class="kpi-val">${accuracy}%</div><div class="kpi-sub">${issues} issues out of ${total} VINs</div><div class="kpi-bar"><div class="kpi-bar-fill" style="width:${accuracy}%"></div></div></div>
+      <div class="kpi" style="--acc:#8b5cf6"><div class="kpi-lbl">Unique VINs</div><div class="kpi-val">${N(ov.vin_cnt).toLocaleString()}</div><div class="kpi-sub">distinct vehicles</div><div class="kpi-bar"><div class="kpi-bar-fill" style="width:100%"></div></div></div>
     </div>
 
-    <!-- Charts -->
-    <div class="section-label">Analysis</div>
+    <div class="sec-label">Analysis</div>
     <div class="charts-row">
-      <div class="chart-card">
-        <div class="chart-title">Issue Breakdown</div>
-        ${buildDonut(issuesR.map(r => ({ l: r.issue_type, v: parseInt(r.cnt)||0, c: issueColor(r.issue_type) })))}
-      </div>
-      <div class="chart-card">
-        <div class="chart-title">Reviews by Date</div>
-        ${buildSparkline(trendR)}
-      </div>
-      <div class="chart-card">
-        <div class="chart-title">Condition Split</div>
-        ${buildBars(conditionR.map(r => ({ l: r.condition || 'Unknown', v: parseInt(r.cnt)||0 })), () => '#3b82f6')}
-        <div style="margin-top:16px"></div>
-        <div class="chart-title">Top Issues (bar)</div>
-        ${buildBars(issuesR.slice(0,6).map(r => ({ l: r.issue_type, v: parseInt(r.cnt)||0 })), issueColor)}
-      </div>
+      <div class="chart-card"><div class="chart-title">Issue Breakdown</div>${donut(issR.map(r=>({l:r.issue_type,v:N(r.cnt),c:ic(r.issue_type)})))}</div>
+      <div class="chart-card"><div class="chart-title">Daily Review Trend</div>${trendBars(trendR)}</div>
+      <div class="chart-card"><div class="chart-title">Top Issues</div>${hbars(issR.filter(r=>r.issue_type!=='OK'&&r.issue_type!=='Pending').slice(0,7).map(r=>({l:r.issue_type,v:N(r.cnt)})),ic)}</div>
     </div>
 
-    <!-- Rooftop rings -->
-    <div class="section-label">Rooftop Progress</div>
-    <div class="rooftop-grid">
-      ${rooftopsR.map(r => {
-        const t = parseInt(r.total)||0, o = parseInt(r.ok_cnt)||0;
-        const p = pct(o, t);
-        return `<div class="rooftop-card">
-          ${buildRing(p, '#10b981')}
-          <div class="rooftop-name" title="${r.rooftop}">${r.rooftop || 'Unknown'}</div>
-          <div class="rooftop-count">${t} VINs · ${parseInt(r.issue_cnt)||0} issues</div>
-        </div>`;
-      }).join('')}
-    </div>
+    <div class="sec-label">Rooftop Progress</div>
+    <div class="rooftop-grid">${rtR.map(r=>{const t=N(r.total),o=N(r.ok_cnt),iss=N(r.issue_cnt);return`<div class="rt-card">${ring(pct(o,t))}<div class="rt-name" title="${r.rooftop}">${r.rooftop||'Unknown'}</div><div class="rt-count">${t} VINs · <span style="color:var(--issue)">${iss} issues</span></div></div>`;}).join('')}</div>
 
-    <!-- Tables -->
-    <div class="section-label">Performance</div>
+    <div class="sec-label">Performance</div>
     <div class="tables-row">
-      <div class="table-card">
-        <div class="table-header"><div class="chart-title">Reviewer Performance</div></div>
-        <table>
-          <thead><tr><th>Reviewer</th><th>Total</th><th>OK</th><th>Issues</th><th>Pending</th><th>Last Active</th></tr></thead>
-          <tbody>${reviewersR.map(r => {
-            const t = parseInt(r.total)||0, o = parseInt(r.ok_cnt)||0, i = parseInt(r.issue_cnt)||0;
-            return `<tr>
-              <td>${r.reviewer?.split('@')[0] || '—'}<br><span style="font-size:9px;color:var(--muted)">${r.reviewer}</span></td>
-              <td><b>${t}</b></td>
-              <td><span class="badge badge-ok">${o}</span></td>
-              <td><span class="badge badge-issue">${i}</span></td>
-              <td><span class="badge badge-pending">${parseInt(r.pending_cnt)||0}</span></td>
-              <td style="color:var(--muted);font-size:10px">${r.last_date || '—'}</td>
-            </tr>`;
-          }).join('')}</tbody>
-        </table>
+      <div class="tbl-card"><div class="tbl-head-bar"><div class="chart-title">Reviewer Stats</div></div>
+        <table><thead><tr><th>Reviewer</th><th>Total</th><th>OK</th><th>Issues</th><th>Accuracy</th><th>Last Active</th></tr></thead>
+        <tbody>${rvR.map(r=>{const t=N(r.total),o=N(r.ok_cnt),iss=N(r.issue_cnt);const acc=100-pct(iss,t);return`<tr><td>${r.reviewer?.split('@')[0]||'—'}<br><span style="font-size:8px;color:var(--muted)">${r.reviewer}</span></td><td><b>${t}</b></td><td><span class="badge b-ok">${o}</span></td><td><span class="badge b-issue">${iss}</span></td><td><span style="font-weight:700;color:${acc>=90?'#10b981':acc>=70?'#eab308':'#f97316'}">${acc}%</span></td><td style="color:var(--muted);font-size:9px">${r.last_date||'—'}</td></tr>`;}).join('')}</tbody></table>
       </div>
-      <div class="table-card">
-        <div class="table-header"><div class="chart-title">Rooftop Summary</div></div>
-        <table>
-          <thead><tr><th>Rooftop</th><th>Total</th><th>OK%</th><th>Issues</th><th>Pending</th></tr></thead>
-          <tbody>${rooftopsR.map(r => {
-            const t = parseInt(r.total)||0, o = parseInt(r.ok_cnt)||0, i = parseInt(r.issue_cnt)||0, p2 = parseInt(r.pending_cnt)||0;
-            const op = pct(o,t);
-            return `<tr>
-              <td>${r.rooftop || '—'}<br><span style="font-size:9px;color:var(--muted)">${r.enterprise}</span></td>
-              <td><b>${t}</b></td>
-              <td><span style="color:${op>=80?'#10b981':op>=50?'#eab308':'#f97316'};font-weight:700">${op}%</span></td>
-              <td><span class="badge badge-issue">${i}</span></td>
-              <td><span class="badge badge-pending">${p2}</span></td>
-            </tr>`;
-          }).join('')}</tbody>
-        </table>
+      <div class="tbl-card"><div class="tbl-head-bar"><div class="chart-title">Rooftop Summary</div></div>
+        <table><thead><tr><th>Rooftop</th><th>Enterprise</th><th>Total</th><th>OK</th><th>Issues</th><th>Accuracy</th></tr></thead>
+        <tbody>${rtR.map(r=>{const t=N(r.total),o=N(r.ok_cnt),iss=N(r.issue_cnt);const acc=100-pct(iss,t);return`<tr><td>${r.rooftop||'—'}</td><td style="font-size:9px;color:var(--muted)">${r.enterprise||'—'}</td><td><b>${t}</b></td><td><span class="badge b-ok">${o}</span></td><td><span class="badge b-issue">${iss}</span></td><td><span style="font-weight:700;color:${acc>=90?'#10b981':acc>=70?'#eab308':'#f97316'}">${acc}%</span></td></tr>`;}).join('')}</tbody></table>
       </div>
     </div>
 
-    <!-- Recent Activity -->
-    <div class="section-label">Recent Activity (last 20 reviews with issues)</div>
-    <div class="activity-card">
-      <div class="activity-row activity-head">
-        <span>Date</span><span>VIN</span><span>Rooftop</span><span>Issue</span><span>Reviewer</span>
-      </div>
-      ${recentR.map(r => `
-        <div class="activity-row">
-          <span style="color:var(--muted)">${r.review_date || '—'}</span>
-          <span class="vin-mono">${r.vin || '—'}</span>
-          <span style="font-size:10px;color:var(--muted)">${r.rooftop || '—'}</span>
-          <span><span class="badge" style="background:${issueColor(r.issue_type)}22;color:${issueColor(r.issue_type)}">${r.issue_type}</span></span>
-          <span style="font-size:10px;color:var(--muted)">${r.reviewer?.split('@')[0] || '—'}</span>
-        </div>`).join('')}
+    <div class="sec-label">Recent Issues (last 25)</div>
+    <div class="act-card">
+      <div class="act-row act-head"><span>Date</span><span>VIN</span><span>Rooftop</span><span>Issue</span><span>Reviewer</span></div>
+      ${recentR.map(r=>`<div class="act-row"><span style="color:var(--muted)">${r.review_date||'—'}</span><span class="vin-mono">${r.vin||'—'}</span><span style="color:var(--muted);font-size:9px">${r.rooftop||'—'}</span><span><span class="badge" style="background:${ic(r.issue_type)}22;color:${ic(r.issue_type)}">${r.issue_type}</span></span><span style="color:var(--muted);font-size:9px">${r.reviewer?.split('@')[0]||'—'}</span></div>`).join('')}
     </div>`;
 
-    document.getElementById('main-content').innerHTML = html;
-    document.getElementById('last-updated').textContent = 'Updated ' + new Date().toLocaleTimeString();
-  } catch (err) {
-    document.getElementById('main-content').innerHTML = `<div class="error-msg">⚠ Failed to load: ${err.message}</div>`;
-  }
+    document.getElementById('last-updated').textContent='Updated '+new Date().toLocaleTimeString();
+  }catch(e){ mc.innerHTML=`<div class="err">⚠ ${e.message}</div>`; }
   btn.classList.remove('loading');
 }
 
+// init — set All time active
+document.querySelectorAll('.qs-item').forEach(i=>{ if(i.textContent.trim()==='All time') i.classList.add('active'); else i.classList.remove('active'); });
+loadFilterOptions();
 loadAll();
 </script>
 </body>
