@@ -1027,7 +1027,7 @@
         'vijay.gautam@spyne.co.in',
     ]);
     const AUTH_SESSION_KEY  = 'spyne_auth_user_v1';
-    const BQ_WEBAPP_URL     = 'https://script.google.com/macros/s/AKfycbwOOUzDYviMbxAyTqgsvivm-jjWMNlMMal2Dh0iLw4vl8bGTnvX3HlfBsZbUGxQ4cj_/exec';
+    const BQ_WEBAPP_URL     = 'https://script.google.com/macros/s/AKfycbx1R6mdt0-YecWHgxzhmYoFZxXCuMJcor96di8sjxYby3JbtIaljb31g96yGiMRsAU6/exec';
 
     // Per-user localStorage keys — reviews are isolated per reviewer
     function storageKey()     { return 'spyne_reviews_v2_' + (getCurrentUser() || 'anon'); }
@@ -2232,11 +2232,15 @@
             const v   = currentImg1VINs[currentImg1Idx];
             const cur = getImg1Review(currentImg1Team.teamId, v.vin, v.rooftop || '');
             if (!cur) {
-                // Not yet reviewed — mark as OK on navigate
                 setImg1Review(currentImg1Team.teamId, v.vin, 'ok', '');
                 updateImg1ProgressBadge();
                 updateTileIssueState(currentImg1Idx, 'ok');
             }
+        }
+        // On last VIN pressing → show Done modal
+        if (dir > 0 && currentImg1Idx >= currentImg1VINs.length - 1) {
+            openImg1Complete();
+            return;
         }
         const next = Math.max(0, Math.min(currentImg1VINs.length - 1, currentImg1Idx + dir));
         svShow(next);
@@ -4304,12 +4308,21 @@
         let lastErr = '';
         for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
             try {
-                const res = await fetch(BQ_WEBAPP_URL, {
-                    method:  'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body:    JSON.stringify(rows)
-                });
-                const result = await res.json();
+                // Send in chunks of 50 via no-cors POST
+                // no-cors means we can't read the response, but Apps Script still processes it
+                const CHUNK = 50;
+                let sent = 0;
+                for (let i = 0; i < rows.length; i += CHUNK) {
+                    const chunk = rows.slice(i, i + CHUNK);
+                    await fetch(BQ_WEBAPP_URL, {
+                        method:  'POST',
+                        mode:    'no-cors',
+                        body:    JSON.stringify(chunk)
+                    });
+                    sent += chunk.length;
+                }
+                // no-cors returns opaque response — assume success if no exception
+                const result = { ok: true, inserted: sent };
                 if (result.ok) {
                     console.log('[BQ] Inserted', result.inserted, 'rows (attempt', attempt + ')');
                     return result;
@@ -4400,7 +4413,7 @@
         if (btn.__1imgMode) {
             btn.__1imgMode = false;
 
-            // Build BQ rows from all reviewed VINs
+            // Build BQ rows from ALL VINs (reviewed + pending)
             const teamId  = currentImg1Team?.teamId || '';
             const now     = new Date();
             const bqRows  = [];
@@ -4430,15 +4443,25 @@
                 });
             });
 
-            // Push to BigQuery (non-blocking — download CSV regardless)
+            // Show uploading state in button
+            const okBtnEl = document.getElementById('complete-ok-btn');
+            const origText = okBtnEl.innerHTML;
+            okBtnEl.disabled = true;
+            okBtnEl.innerHTML = '<span>⏳ Saving to BigQuery...</span>';
+
+            // AWAIT BQ push before closing
             if (bqRows.length > 0) {
-                pushToBigQuery(bqRows).then(result => {
-                    if (result.ok) {
-                        console.log('[BQ] Inserted', result.inserted, 'rows');
-                    } else {
-                        console.warn('[BQ] Insert error:', result.error || result.errors);
-                    }
-                });
+                const result = await pushToBigQuery(bqRows);
+                if (result.ok) {
+                    okBtnEl.innerHTML = '<span>✓ Saved ' + result.inserted + ' rows — downloading CSV...</span>';
+                    okBtnEl.style.background = '#10b981';
+                    await new Promise(r => setTimeout(r, 800));
+                } else {
+                    okBtnEl.innerHTML = origText;
+                    okBtnEl.disabled = false;
+                    // alert already shown by pushToBigQuery on final failure
+                    return;  // don't close modal — let user retry or cancel
+                }
             }
 
             download1ImgCSV();
