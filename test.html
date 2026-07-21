@@ -4308,20 +4308,20 @@
         let lastErr = '';
         for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
             try {
-                // Send in chunks of 50 via no-cors POST
-                // no-cors means we can't read the response, but Apps Script still processes it
-                const CHUNK = 50;
+                // Send in chunks of 10 rows via GET (URL param) to avoid CORS issues
+                const CHUNK = 10;
                 let sent = 0;
                 for (let i = 0; i < rows.length; i += CHUNK) {
-                    const chunk = rows.slice(i, i + CHUNK);
-                    await fetch(BQ_WEBAPP_URL, {
-                        method:  'POST',
-                        mode:    'no-cors',
-                        body:    JSON.stringify(chunk)
-                    });
+                    const chunk   = rows.slice(i, i + CHUNK);
+                    const encoded = encodeURIComponent(JSON.stringify(chunk));
+                    const url     = BQ_WEBAPP_URL + '?data=' + encoded;
+                    const res     = await fetch(url, { method: 'GET', redirect: 'follow' });
+                    const txt     = await res.text();
+                    let chunkResult;
+                    try { chunkResult = JSON.parse(txt); } catch(e) { chunkResult = { ok: false, error: txt }; }
+                    if (!chunkResult.ok) throw new Error('Chunk ' + i + ' failed: ' + (chunkResult.error || JSON.stringify(chunkResult.errors)));
                     sent += chunk.length;
                 }
-                // no-cors returns opaque response — assume success if no exception
                 const result = { ok: true, inserted: sent };
                 if (result.ok) {
                     console.log('[BQ] Inserted', result.inserted, 'rows (attempt', attempt + ')');
