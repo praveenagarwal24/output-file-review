@@ -2607,14 +2607,13 @@
 
         // Auth gate: if we have a valid session, skip straight to login page
         const existingUser = getCurrentUser();
-        if (existingUser && AUTH_USERS.includes(existingUser.toLowerCase())) {
+        if (existingUser && AUTH_ALLOWED_EMAILS.has(existingUser.toLowerCase())) {
             updateUserBadge();
             showPage('page-login');
         } else {
             clearCurrentUser();
             showPage('page-auth');
-            // focus email field for fast typing
-            setTimeout(() => document.getElementById('auth-email')?.focus(), 50);
+
         }
 
         // Check if admin mode requested via ?admin=1
