@@ -1035,14 +1035,14 @@
     // Pure-JS SHA-256 — works on file:// (crypto.subtle requires HTTPS/localhost)
 
     function getCurrentUser() {
-        try { return sessionStorage.getItem(AUTH_SESSION_KEY) || ''; }
+        try { return localStorage.getItem(AUTH_SESSION_KEY) || ''; }
         catch (e) { return ''; }
     }
     function setCurrentUser(email) {
-        try { sessionStorage.setItem(AUTH_SESSION_KEY, email); } catch (e) {}
+        try { localStorage.setItem(AUTH_SESSION_KEY, email); } catch (e) {}
     }
     function clearCurrentUser() {
-        try { sessionStorage.removeItem(AUTH_SESSION_KEY); } catch (e) {}
+        try { localStorage.removeItem(AUTH_SESSION_KEY); } catch (e) {}
     }
 
     function updateUserBadge() {
