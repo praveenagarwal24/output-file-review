@@ -4308,21 +4308,14 @@
         let lastErr = '';
         for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
             try {
-                // Send in chunks of 10 rows via GET (URL param) to avoid CORS issues
-                const CHUNK = 10;
-                let sent = 0;
-                for (let i = 0; i < rows.length; i += CHUNK) {
-                    const chunk   = rows.slice(i, i + CHUNK);
-                    const encoded = encodeURIComponent(JSON.stringify(chunk));
-                    const url     = BQ_WEBAPP_URL + '?data=' + encoded;
-                    const res     = await fetch(url, { method: 'GET', redirect: 'follow' });
-                    const txt     = await res.text();
-                    let chunkResult;
-                    try { chunkResult = JSON.parse(txt); } catch(e) { chunkResult = { ok: false, error: txt }; }
-                    if (!chunkResult.ok) throw new Error('Chunk ' + i + ' failed: ' + (chunkResult.error || JSON.stringify(chunkResult.errors)));
-                    sent += chunk.length;
-                }
-                const result = { ok: true, inserted: sent };
+                // Send all rows in one request
+                const encoded = encodeURIComponent(JSON.stringify(rows));
+                const url     = BQ_WEBAPP_URL + '?data=' + encoded;
+                const res     = await fetch(url, { method: 'GET', redirect: 'follow' });
+                const txt     = await res.text();
+                let result;
+                try { result = JSON.parse(txt); } catch(e) { result = { ok: false, error: txt }; }
+                if (!result.ok) throw new Error(result.error || JSON.stringify(result.errors));
                 if (result.ok) {
                     console.log('[BQ] Inserted', result.inserted, 'rows (attempt', attempt + ')');
                     return result;
@@ -4447,20 +4440,28 @@
             const okBtnEl = document.getElementById('complete-ok-btn');
             const origText = okBtnEl.innerHTML;
             okBtnEl.disabled = true;
-            okBtnEl.innerHTML = '<span>⏳ Saving to BigQuery...</span>';
+
+            // Live timer while saving
+            let elapsed = 0;
+            const timerInterval = setInterval(() => {
+                elapsed++;
+                okBtnEl.innerHTML = '<span>⏳ Saving to BigQuery... ' + elapsed + 's</span>';
+            }, 1000);
+            okBtnEl.innerHTML = '<span>⏳ Saving to BigQuery... 0s</span>';
 
             // AWAIT BQ push before closing
             if (bqRows.length > 0) {
                 const result = await pushToBigQuery(bqRows);
+                clearInterval(timerInterval);
                 if (result.ok) {
-                    okBtnEl.innerHTML = '<span>✓ Saved ' + result.inserted + ' rows — downloading CSV...</span>';
+                    okBtnEl.innerHTML = '<span>✓ Saved ' + result.inserted + ' rows in ' + elapsed + 's — downloading CSV...</span>';
                     okBtnEl.style.background = '#10b981';
-                    await new Promise(r => setTimeout(r, 800));
+                    await new Promise(r => setTimeout(r, 1000));
                 } else {
+                    clearInterval(timerInterval);
                     okBtnEl.innerHTML = origText;
                     okBtnEl.disabled = false;
-                    // alert already shown by pushToBigQuery on final failure
-                    return;  // don't close modal — let user retry or cancel
+                    return;
                 }
             }
 
@@ -4738,6 +4739,14 @@
             document.getElementById('lightbox').classList.remove('active');
             document.getElementById('summary-modal').classList.remove('active');
             document.getElementById('complete-modal').classList.remove('active');
+        }
+        // Enter confirms the complete modal OK button
+        if (e.key === 'Enter') {
+            const modal = document.getElementById('complete-modal');
+            if (modal && modal.classList.contains('active')) {
+                const okBtn = document.getElementById('complete-ok-btn');
+                if (okBtn && !okBtn.disabled) okBtn.click();
+            }
         }
     });
 
