@@ -1879,7 +1879,7 @@
                     allImageData         = { headers: csvFileData.headers, rows: csvFileData.rows };
                     imagesLoaded         = true;
                     selectedEnterprise   = csvFileData.enterprise;
-                    selectedEnterpriseId = 'csv-ent-001';
+                    selectedEnterpriseId = (syntheticRows.length > 0 ? syntheticRows[0][2] : '') || 'csv-ent-001'
 
                     await buildTeamIndex(selectedEnterprise);
 
@@ -4443,9 +4443,9 @@
                 bqRows.push({
                     review_date:     now.toISOString().slice(0, 10),
                     reviewed_at:     now.toISOString(),
-                    reviewer:        getCurrentUser(),
+                    reviewer:        getCurrentUser() || document.getElementById('user-badge-text')?.textContent?.trim() || '',
                     enterprise:      selectedEnterprise || currentImg1Team?.name || '',
-                    enterprise_id:   currentImg1Team?.entId || '',
+                    enterprise_id:   currentImg1Team?.entId || selectedEnterpriseId || '',
                     rooftop:         rooftop,
                     condition:       v.condition || '',
                     team_id:         teamId,
