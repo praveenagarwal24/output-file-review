@@ -1832,9 +1832,12 @@
                 // Count unique rooftops for the info bar
                 const uniqueTeams = new Set(syntheticRows.map(r => r[1])).size;
 
+                // Grab enterprise_id from first row's col 2
+                const firstEntId = syntheticRows.length > 0 ? (syntheticRows[0][2] || '') : '';
                 csvFileData = {
                     name: file.name,
                     enterprise: enterpriseName,
+                    entId: firstEntId,
                     headers: ['name','teamId','enterpriseId','enterprise_name','dealerId',
                               'partnerId','row_count','s3_url','created_at','VIN','Image URLs','rooftop'],
                     rows: syntheticRows,
@@ -1879,7 +1882,7 @@
                     allImageData         = { headers: csvFileData.headers, rows: csvFileData.rows };
                     imagesLoaded         = true;
                     selectedEnterprise   = csvFileData.enterprise;
-                    selectedEnterpriseId = (syntheticRows.length > 0 ? syntheticRows[0][2] : '') || 'csv-ent-001'
+                    selectedEnterpriseId = csvFileData.entId || 'csv-ent-001'
 
                     await buildTeamIndex(selectedEnterprise);
 
