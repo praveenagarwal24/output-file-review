@@ -1645,7 +1645,7 @@
         for (const [teamId, t] of teamAgg.entries()) {
             let imageCount = 0;
             for (const entry of t.vins.values()) imageCount += (entry.urls || entry).length;
-            teamsList.push({ teamId, name: t.name, rooftop: t.rooftop || '', vinCount: t.vins.size, imageCount });
+            teamsList.push({ teamId, name: t.name, rooftop: t.rooftop || '', entId: t.entId || '', vinCount: t.vins.size, imageCount });
             vinsByTeam.set(teamId, t.vins);
         }
         teamsList.sort((a, b) => a.name.localeCompare(b.name));
@@ -1801,10 +1801,14 @@
                     const condition = conditionCol >= 0 ? String(r[conditionCol] || '').trim() : '';
                     // Key = VIN + rooftop so same VIN at different rooftops = separate entries
                     const key = vin + '|~|' + rooftop;
-                    if (!vinMap.has(key)) vinMap.set(key, { vin, rooftop, condition, urls: new Set() });
+                    const csvTeamId = teamIdCol       >= 0 ? String(r[teamIdCol]       || '').trim() : '';
+                    const csvEntId  = enterpriseIdCol >= 0 ? String(r[enterpriseIdCol] || '').trim() : '';
+                    if (!vinMap.has(key)) vinMap.set(key, { vin, rooftop, condition, csvTeamId, csvEntId, urls: new Set() });
                     const entry = vinMap.get(key);
                     if (imgRaw) splitUrls(imgRaw).forEach(u => { if (u) entry.urls.add(u); });
                     if (!entry.condition && condition) entry.condition = condition;
+                    if (!entry.csvTeamId && csvTeamId) entry.csvTeamId = csvTeamId;
+                    if (!entry.csvEntId  && csvEntId)  entry.csvEntId  = csvEntId;
                 });
 
                 setParseProgress(70, 'Building rows…');
@@ -1813,13 +1817,12 @@
                 for (const data of vinMap.values()) {
                     const { vin, rooftop, condition, csvTeamId, csvEntId } = data;
                     const imgUrls = [...data.urls].join('|');
-                    // Use team_id from CSV if present, else derive from rooftop name
+                    // team_id from CSV if present, else derive from rooftop name
                     const teamId  = csvTeamId || (rooftop ? toTeamId(rooftop) : 'csv-team-001');
-                    // Use Enterprise_Id from CSV if present, else use filename
-                    const entId   = csvEntId || 'csv-ent-001';
-                    const entName = csvEntId || enterpriseName;
+                    // enterprise_id from CSV (col 2), enterprise name stays as filename (col 3)
+                    const entId   = csvEntId  || 'csv-ent-001';
                     syntheticRows.push([
-                        vin, teamId, entId, entName,
+                        vin, teamId, entId, enterpriseName,
                         '', '', '1', '', '',
                         vin, imgUrls, rooftop, condition
                     ]);
@@ -4442,7 +4445,7 @@
                     reviewed_at:     now.toISOString(),
                     reviewer:        getCurrentUser(),
                     enterprise:      selectedEnterprise || currentImg1Team?.name || '',
-                    enterprise_id:   currentImg1Team?.entId || selectedEnterpriseId || '',
+                    enterprise_id:   currentImg1Team?.entId || '',
                     rooftop:         rooftop,
                     condition:       v.condition || '',
                     team_id:         teamId,
