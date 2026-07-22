@@ -4480,11 +4480,6 @@
 
             // AWAIT BQ push before closing
             if (bqRows.length > 0) {
-                // --- TEMP DEBUG: inspect enterprise_id being sent to BigQuery ---
-                console.log('[BQ DEBUG] enterprise_id (first row):', bqRows[0]?.enterprise_id);
-                console.log('[BQ DEBUG] enterprise_id (all rows):', bqRows.map(r => r.enterprise_id));
-                console.log('[BQ DEBUG] full first row:', JSON.stringify(bqRows[0], null, 2));
-                // --- END TEMP DEBUG ---
                 const result = await pushToBigQuery(bqRows);
                 clearInterval(timerInterval);
                 if (result.ok) {
