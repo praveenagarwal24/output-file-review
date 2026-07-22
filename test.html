@@ -1602,8 +1602,7 @@
 
             const rooftop = (r[C.rooftop] || '').trim();
             const isNew = !teamAgg.has(teamId);
-            const _eid = (r[C.entId] || '').trim();
-            if (isNew) { console.log('[DEBUG] teamAgg.set entId:', _eid, 'for teamId:', teamId); teamAgg.set(teamId, { name, vins: new Map(), rooftop: rooftop || '', entId: _eid }); }
+            if (isNew) teamAgg.set(teamId, { name, vins: new Map(), rooftop: rooftop || '', entId: (r[C.entId] || '').trim() });
             // Store per-VIN condition alongside URLs
             const t = teamAgg.get(teamId);
             if ((!t.name || t.name === teamId) && name !== teamId) t.name = name;
@@ -1646,7 +1645,6 @@
         for (const [teamId, t] of teamAgg.entries()) {
             let imageCount = 0;
             for (const entry of t.vins.values()) imageCount += (entry.urls || entry).length;
-            console.log('[DEBUG] teamsList.push entId:', t.entId, 'for teamId:', teamId);
             teamsList.push({ teamId, name: t.name, rooftop: t.rooftop || '', entId: t.entId || '', vinCount: t.vins.size, imageCount });
             vinsByTeam.set(teamId, t.vins);
         }
@@ -1836,7 +1834,6 @@
 
                 // Grab enterprise_id from first row's col 2
                 const firstEntId = syntheticRows.length > 0 ? (syntheticRows[0][2] || '') : '';
-                console.log('[DEBUG] firstEntId from CSV:', firstEntId);
                 csvFileData = {
                     name: file.name,
                     enterprise: enterpriseName,
@@ -1886,7 +1883,6 @@
                     imagesLoaded         = true;
                     selectedEnterprise   = csvFileData.enterprise;
                     selectedEnterpriseId = csvFileData.entId || 'csv-ent-001';
-                    console.log('[DEBUG] selectedEnterpriseId set to:', selectedEnterpriseId);
 
                     await buildTeamIndex(selectedEnterprise);
 
@@ -4452,7 +4448,7 @@
                     reviewed_at:     now.toISOString(),
                     reviewer:        getCurrentUser() || document.getElementById('user-badge-text')?.textContent?.trim() || '',
                     enterprise:      selectedEnterprise || currentImg1Team?.name || '',
-                    enterprise_id:   (() => { const eid = currentImg1Team?.entId || selectedEnterpriseId || ''; console.log('[DEBUG] bqRow enterprise_id:', eid, 'team.entId:', currentImg1Team?.entId, 'selectedEnterpriseId:', selectedEnterpriseId); return eid; })(),
+                    enterprise_id:   currentImg1Team?.entId || selectedEnterpriseId || '',
                     rooftop:         rooftop,
                     condition:       v.condition || '',
                     team_id:         teamId,
