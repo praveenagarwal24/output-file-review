@@ -1602,7 +1602,7 @@
 
             const rooftop = (r[C.rooftop] || '').trim();
             const isNew = !teamAgg.has(teamId);
-            if (isNew) teamAgg.set(teamId, { name, vins: new Map(), rooftop: rooftop || '' });
+            if (isNew) teamAgg.set(teamId, { name, vins: new Map(), rooftop: rooftop || '', entId: (r[C.entId] || '').trim() });
             // Store per-VIN condition alongside URLs
             const t = teamAgg.get(teamId);
             if ((!t.name || t.name === teamId) && name !== teamId) t.name = name;
@@ -2986,6 +2986,7 @@
             rooftop:   'All Rooftops (' + teamsList.length + ')',
             vinCount:  mergedMap.size,
             imageCount: totalImgs,
+            entId:     selectedEnterpriseId || '',
         };
         openTeam1stImage(virtualTeam);
     }
@@ -4441,6 +4442,7 @@
                     reviewed_at:     now.toISOString(),
                     reviewer:        getCurrentUser(),
                     enterprise:      selectedEnterprise || currentImg1Team?.name || '',
+                    enterprise_id:   currentImg1Team?.entId || selectedEnterpriseId || '',
                     rooftop:         rooftop,
                     condition:       v.condition || '',
                     team_id:         teamId,
