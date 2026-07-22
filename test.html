@@ -4399,7 +4399,7 @@
             const a    = document.createElement('a');
             a.href     = URL.createObjectURL(blob);
             const safe = (currentImg1Team.rooftop || currentImg1Team.teamId || 'review').replace(/[^a-z0-9_-]/gi, '_');
-            a.download = safe + '_' + new Date().toISOString().slice(0,10) + '.csv';
+            a.download = 'review_' + safe + '_' + new Date().toISOString().slice(0,10) + '.csv';
             document.body.appendChild(a);
             a.click();
             document.body.removeChild(a);
