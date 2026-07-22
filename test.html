@@ -1602,7 +1602,8 @@
 
             const rooftop = (r[C.rooftop] || '').trim();
             const isNew = !teamAgg.has(teamId);
-            if (isNew) teamAgg.set(teamId, { name, vins: new Map(), rooftop: rooftop || '' });
+            if (isNew) teamAgg.set(teamId, { name, vins: new Map(), rooftop: rooftop || '', entId: (r[C.entId] || '').trim() });
+            { const _t = teamAgg.get(teamId); if (_t && !_t.entId) _t.entId = (r[C.entId] || '').trim(); }
             // Store per-VIN condition alongside URLs
             const t = teamAgg.get(teamId);
             if ((!t.name || t.name === teamId) && name !== teamId) t.name = name;
@@ -1610,7 +1611,7 @@
 
             const condition = (r[C.condition] || '').trim();
             const rooftopName = (r[C.rooftop] || '').trim() || t.rooftop || '';
-            if (!t.vins.has(vin)) t.vins.set(vin, { urls: [], condition: '', rooftop: '' });
+            if (!t.vins.has(vin)) t.vins.set(vin, { urls: [], condition: '', rooftop: '', teamId: teamId, entId: (r[C.entId] || '').trim() });
             const entry = t.vins.get(vin);
             if (!entry.condition && condition) entry.condition = condition;
             if (!entry.rooftop && rooftopName) entry.rooftop = rooftopName;
@@ -1645,7 +1646,7 @@
         for (const [teamId, t] of teamAgg.entries()) {
             let imageCount = 0;
             for (const entry of t.vins.values()) imageCount += (entry.urls || entry).length;
-            teamsList.push({ teamId, name: t.name, rooftop: t.rooftop || '', vinCount: t.vins.size, imageCount });
+            teamsList.push({ teamId, name: t.name, rooftop: t.rooftop || '', vinCount: t.vins.size, imageCount, entId: t.entId || '' });
             vinsByTeam.set(teamId, t.vins);
         }
         teamsList.sort((a, b) => a.name.localeCompare(b.name));
@@ -2770,7 +2771,7 @@
             if (currentTeam) {
                 const teamVins = vinsByTeam.get(currentTeam.teamId);
                 if (teamVins) {
-                    currentTeamVINs = [...teamVins.entries()].map(([key, entry]) => { const vin = key.includes('|~|') ? key.split('|~|')[0] : key; return { vin, urls: Array.isArray(entry) ? entry : (entry.urls||[]), rooftop: Array.isArray(entry) ? '' : (entry.rooftop||''), condition: Array.isArray(entry) ? '' : (entry.condition||'') }; });
+                    currentTeamVINs = [...teamVins.entries()].map(([key, entry]) => { const vin = key.includes('|~|') ? key.split('|~|')[0] : key; return { vin, urls: Array.isArray(entry) ? entry : (entry.urls||[]), rooftop: Array.isArray(entry) ? '' : (entry.rooftop||''), condition: Array.isArray(entry) ? '' : (entry.condition||''), teamId: Array.isArray(entry) ? '' : (entry.teamId||''), entId: Array.isArray(entry) ? '' : (entry.entId||'') }; });
                     renderVINSidebar();
                     updateProgressBadge();
                 }
@@ -2958,7 +2959,9 @@
                 const urls      = Array.isArray(entry) ? entry : (entry.urls || []);
                 const key = vin + '|~|' + rooftop;
                 if (!mergedMap.has(key)) {
-                    mergedMap.set(key, { urls, rooftop, condition });
+                    const eTeamId = Array.isArray(entry) ? (t.teamId || '') : (entry.teamId || t.teamId || '');
+                    const eEntId  = Array.isArray(entry) ? (t.entId  || '') : (entry.entId  || t.entId  || '');
+                    mergedMap.set(key, { urls, rooftop, condition, teamId: eTeamId, entId: eEntId });
                 }
             }
         }
@@ -2990,7 +2993,7 @@
         document.getElementById('review-team-id').innerText   = '';  // hide teamId in 1img mode
 
         const teamVins = vinsByTeam.get(team.teamId);
-        currentTeamVINs = teamVins ? [...teamVins.entries()].map(([key, entry]) => { const vin = key.includes('|~|') ? key.split('|~|')[0] : key; return { vin, urls: Array.isArray(entry) ? entry : (entry.urls||[]), rooftop: Array.isArray(entry) ? '' : (entry.rooftop||''), condition: Array.isArray(entry) ? '' : (entry.condition||'') }; }) : [];
+        currentTeamVINs = teamVins ? [...teamVins.entries()].map(([key, entry]) => { const vin = key.includes('|~|') ? key.split('|~|')[0] : key; return { vin, urls: Array.isArray(entry) ? entry : (entry.urls||[]), rooftop: Array.isArray(entry) ? '' : (entry.rooftop||''), condition: Array.isArray(entry) ? '' : (entry.condition||''), teamId: Array.isArray(entry) ? '' : (entry.teamId||''), entId: Array.isArray(entry) ? '' : (entry.entId||'') }; }) : [];
 
         showPage('page-review');
         updateProgressBadge();
@@ -3645,7 +3648,9 @@
                 vin,
                 urls:      Array.isArray(entry) ? entry : (entry.urls || []),
                 rooftop:   Array.isArray(entry) ? '' : (entry.rooftop || ''),
-                condition: Array.isArray(entry) ? '' : (entry.condition || '')
+                condition: Array.isArray(entry) ? '' : (entry.condition || ''),
+                teamId:    Array.isArray(entry) ? '' : (entry.teamId || ''),
+                entId:     Array.isArray(entry) ? '' : (entry.entId || '')
             };
         }) : [];
 
@@ -4350,7 +4355,7 @@
             if (!currentImg1Team) { console.error('No currentImg1Team'); return; }
             if (!currentImg1VINs || !currentImg1VINs.length) { console.error('No currentImg1VINs'); return; }
             const header = [
-                '#', 'Rooftop', 'Condition', 'Team ID', 'VIN', 'Total Images',
+                '#', 'Rooftop', 'Condition', 'Enterprise ID', 'Team ID', 'VIN', 'Total Images',
                 'Issue Type', '1st Image URL', 'Comment', 'User'
             ];
             const lines = [header.join(',')];
@@ -4367,7 +4372,8 @@
                     idx + 1,
                     csvCell(rooftop || currentImg1Team.rooftop || currentImg1Team.name),
                     csvCell(v.condition || ''),
-                    csvCell(teamId),
+                    csvCell(v.entId || selectedEnterpriseId),
+                    csvCell(v.teamId || teamId),
                     csvCell(v.vin),
                     v.urls.length,
                     csvCell(issueType),
@@ -4430,9 +4436,10 @@
                     reviewed_at:     now.toISOString(),
                     reviewer:        getCurrentUser(),
                     enterprise:      selectedEnterprise || currentImg1Team?.name || '',
+                    enterprise_id:   (v.entId || selectedEnterpriseId || ''),
                     rooftop:         rooftop,
                     condition:       v.condition || '',
-                    team_id:         teamId,
+                    team_id:         (v.teamId || teamId || ''),
                     vin:             v.vin,
                     total_images:    v.urls?.length || 0,
                     issue_type:      issType,
@@ -4818,7 +4825,7 @@
 
     function downloadCSV() {
         if (!currentTeam) return;
-        const header = ['#', 'Rooftop', 'Condition', 'Team ID', 'VIN', 'Image Count', 'Status', 'Issues', 'Comment', 'Reviewed At'];
+        const header = ['#', 'Rooftop', 'Condition', 'Enterprise ID', 'Team ID', 'VIN', 'Image Count', 'Status', 'Issues', 'Comment', 'Reviewed At'];
         const lines = [header.join(',')];
         currentTeamVINs.forEach((v, idx) => {
             const r = getReview(currentTeam.teamId, v.vin);
@@ -4826,7 +4833,8 @@
                 idx + 1,
                 csvCell(v.rooftop || currentTeam.rooftop || currentTeam.name),
                 csvCell(v.condition || ''),
-                csvCell(currentTeam.teamId),
+                csvCell(v.entId || selectedEnterpriseId),
+                csvCell(v.teamId || currentTeam.teamId),
                 csvCell(v.vin),
                 v.urls.length,
                 csvCell(r?.status || 'pending'),
