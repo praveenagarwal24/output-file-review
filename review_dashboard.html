@@ -460,6 +460,20 @@ function enableSort(root){
   });
 }
 
+// Drill into a single issue type → per-account (rooftop + enterprise) breakdown.
+function drillIssue(it){
+  if(!DRILL) return;
+  const rows=(DRILL.issByAcct||[]).filter(r=>r.issue_type===it);
+  const tot=rows.reduce((s,r)=>s+N(r.cnt),0);
+  const data=rows.map(r=>({rooftop:r.rooftop,enterprise:r.enterprise,cnt:N(r.cnt),share:pct(N(r.cnt),tot)+'%'})).sort((a,b)=>b.cnt-a.cnt);
+  const cols=[['rooftop','Rooftop'],['enterprise','Enterprise'],['cnt','Count','num'],['share','Share']];
+  document.getElementById('modal-title').textContent='Issue · '+it+' — by Account ('+tot.toLocaleString()+' total)';
+  const mb=document.getElementById('modal-body');
+  mb.innerHTML=renderDrillTable(cols,data);
+  document.getElementById('modal-ov').classList.add('open');
+  enableSort(mb);
+}
+
 // Instant drill-downs — rendered from data already loaded (no extra BQ round-trip).
 function drill(type){
   if(!DRILL){return;}
@@ -581,7 +595,7 @@ async function loadAll(){
   mc.innerHTML='<div class="loading-overlay"><div class="spinner"></div><div style="color:var(--muted);font-size:12px">Querying BigQuery…</div></div>';
   try{
     const W=buildWhere();
-    const[ovR,issR,rvR,rtR,trendR,recentR,segR,arrR,aeR,worstTeamR]=await Promise.all([
+    const[ovR,issR,rvR,rtR,trendR,recentR,segR,arrR,aeR,worstTeamR,issAcctR]=await Promise.all([
       query(`SELECT COUNT(*) as total, COUNTIF(issue_type='OK' OR issue_type='Pending') as ok_cnt, COUNTIF(issue_type NOT IN ('OK','Pending')) as issue_cnt, COUNT(DISTINCT reviewer) as rev_cnt, COUNT(DISTINCT rooftop) as rt_cnt, COUNT(DISTINCT COALESCE(enterprise_name, enterprise)) as ent_cnt, COUNT(DISTINCT vin) as vin_cnt FROM ${SRC} ${W}`),
       query(`SELECT issue_type, COUNT(*) as cnt FROM ${SRC} ${W} GROUP BY issue_type ORDER BY cnt DESC`),
       query(`SELECT reviewer, COUNT(*) as total, COUNTIF(issue_type='OK' OR issue_type='Pending') as ok_cnt, COUNTIF(issue_type NOT IN ('OK','Pending')) as issue_cnt, MAX(review_date) as last_date FROM ${SRC} ${W} GROUP BY reviewer ORDER BY total DESC`),
@@ -591,7 +605,8 @@ async function loadAll(){
       query(`SELECT customer_segment, COUNT(*) as total, COUNTIF(issue_type NOT IN ('OK','Pending')) as issue_cnt FROM ${SRC} ${W} GROUP BY customer_segment ORDER BY total DESC`),
       query(`SELECT customer_segment, SUM(arr) as arr, SUM(IF(has_issue,arr,0)) as arr_risk, COUNT(*) as teams FROM (SELECT team_id, ANY_VALUE(customer_segment) as customer_segment, MAX(SAFE_CAST(apld_contracted_arr AS FLOAT64)) as arr, MAX(IF(issue_type NOT IN ('OK','Pending'),1,0))=1 as has_issue FROM ${SRC} ${W} GROUP BY team_id) GROUP BY customer_segment ORDER BY arr DESC`),
       query(`SELECT ae_poc_email, COUNT(*) as total, COUNTIF(issue_type NOT IN ('OK','Pending')) as issue_cnt, MAX(review_date) as last_date FROM ${SRC} ${W} GROUP BY ae_poc_email ORDER BY total DESC`),
-      query(`SELECT team_id, MAX(enterprise_name) as enterprise_name, MAX(team_name) as team_name, MAX(ae) as ae, MAX(ob) as ob, MAX(cs) as cs, COUNTIF(is_issue) as issue_cnt FROM (SELECT team_id, enterprise_name, apld_team_name as team_name, ae_poc_email as ae, ob_poc_email as ob, cs_poc_email as cs, (issue_type NOT IN ('OK','Pending')) as is_issue FROM ${SRC} ${W}) WHERE enterprise_name IS NOT NULL GROUP BY team_id ORDER BY issue_cnt DESC LIMIT 1`)
+      query(`SELECT team_id, MAX(enterprise_name) as enterprise_name, MAX(team_name) as team_name, MAX(ae) as ae, MAX(ob) as ob, MAX(cs) as cs, COUNTIF(is_issue) as issue_cnt FROM (SELECT team_id, enterprise_name, apld_team_name as team_name, ae_poc_email as ae, ob_poc_email as ob, cs_poc_email as cs, (issue_type NOT IN ('OK','Pending')) as is_issue FROM ${SRC} ${W}) WHERE enterprise_name IS NOT NULL GROUP BY team_id ORDER BY issue_cnt DESC LIMIT 1`),
+      query(`SELECT issue_type, rooftop, enterprise, COUNT(*) as cnt FROM (SELECT issue_type, rooftop, COALESCE(enterprise_name, enterprise) as enterprise FROM ${SRC} ${W} ${W?'AND':'WHERE'} issue_type NOT IN ('OK','Pending')) GROUP BY issue_type, rooftop, enterprise ORDER BY cnt DESC`)
     ]);
     const ov=ovR[0]||{};
     const total=N(ov.total),ok=N(ov.ok_cnt),issues=N(ov.issue_cnt);
@@ -604,7 +619,7 @@ async function loadAll(){
     const entCnt=N(ov.ent_cnt);
     const topIssue=issR.filter(r=>r.issue_type!=='OK'&&r.issue_type!=='Pending')[0]||null;
     const worst=(worstTeamR&&worstTeamR[0])?worstTeamR[0]:null;
-    DRILL={rtR,issR};  // cache for instant drill-downs
+    DRILL={rtR,issR,issByAcct:issAcctR};  // cache for instant drill-downs
 
     mc.innerHTML=`
     <div class="sec-label">Overview</div>
@@ -622,11 +637,11 @@ async function loadAll(){
       ${topCard('Top Issue · Type', topIssue?topIssue.issue_type:null, topIssue?N(topIssue.cnt):0, '#a78bfa')}
     </div>
 
-    <div class="sec-label">Analysis</div>
-    <div class="charts-row">
-      <div class="chart-card"><div class="chart-title">Issue Breakdown</div>${donut(issR.map(r=>({l:r.issue_type,v:N(r.cnt),c:ic(r.issue_type)})))}</div>
-      <div class="chart-card"><div class="chart-title">Daily Review Trend</div>${trendBars(trendR)}</div>
-      <div class="chart-card"><div class="chart-title">Top Issues</div>${hbars(issR.filter(r=>r.issue_type!=='OK'&&r.issue_type!=='Pending').slice(0,7).map(r=>({l:r.issue_type,v:N(r.cnt)})),ic)}</div>
+    <div class="sec-label">Issues</div>
+    <div class="chart-card">
+      <div class="chart-title">Issue Types · click a row to drill to accounts (rooftop + enterprise)</div>
+      <table><thead><tr><th>Issue Type</th><th>Count</th><th>% of Issues</th></tr></thead>
+      <tbody>${issR.filter(r=>r.issue_type!=='OK'&&r.issue_type!=='Pending').map(r=>{const c=N(r.cnt);return `<tr style="cursor:pointer" onclick="drillIssue('${(r.issue_type||'').replace(/'/g,"\\'")}')"><td><span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:${ic(r.issue_type)};margin-right:7px"></span>${r.issue_type} <span style="color:var(--muted);font-size:9px">⤢</span></td><td><b>${c.toLocaleString()}</b></td><td>${pct(c,issues)}%</td></tr>`;}).join('')}</tbody></table>
     </div>
 
     <div class="sec-label">Issue Analytics</div>
