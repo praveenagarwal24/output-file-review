@@ -239,6 +239,9 @@ tr:hover td{background:rgba(255,255,255,.02)}
 
   <span class="filter-label">Segment</span>
   <select id="sel-segment" class="filter-select" onchange="loadAll()"><option value="">All segments</option></select>
+
+  <span class="filter-label">POC</span>
+  <select id="sel-poc" class="filter-select" onchange="loadAll()"><option value="">All POCs</option></select>
 </div>
 
 <main id="main-content">
@@ -402,9 +405,11 @@ function buildWhere() {
   const rv=document.getElementById('sel-reviewer')?.value;
   if(rv) parts.push(`reviewer = '${rv.replace(/'/g,"\\'")}'`);
   const ent=document.getElementById('sel-enterprise')?.value;
-  if(ent) parts.push(`enterprise = '${ent.replace(/'/g,"\\'")}'`);
+  if(ent) parts.push(`enterprise_name = '${ent.replace(/'/g,"\\'")}'`);
   const seg=document.getElementById('sel-segment')?.value;
   if(seg) parts.push(`customer_segment = '${seg.replace(/'/g,"\\'")}'`);
+  const poc=document.getElementById('sel-poc')?.value;
+  if(poc){const p=poc.replace(/'/g,"\\'");parts.push(`(ae_poc_email = '${p}' OR ob_poc_email = '${p}' OR cs_poc_email = '${p}')`);}
   return parts.length ? 'WHERE '+parts.join(' AND ') : '';
 }
 
@@ -443,17 +448,19 @@ function ring(p){
 
 async function loadFilterOptions(){
   try{
-    const[ents,rts,rvs,segs]=await Promise.all([
-      query(`SELECT DISTINCT enterprise FROM ${TBL} WHERE enterprise IS NOT NULL ORDER BY enterprise`),
+    const[ents,rts,rvs,segs,pocs]=await Promise.all([
+      query(`SELECT DISTINCT enterprise_name FROM ${SRC} WHERE enterprise_name IS NOT NULL ORDER BY enterprise_name`),
       query(`SELECT DISTINCT rooftop FROM ${TBL} WHERE rooftop IS NOT NULL ORDER BY rooftop`),
       query(`SELECT DISTINCT reviewer FROM ${TBL} WHERE reviewer IS NOT NULL ORDER BY reviewer`),
-      query(`SELECT DISTINCT customer_segment FROM ${ENT} WHERE customer_segment IS NOT NULL ORDER BY customer_segment`)
+      query(`SELECT DISTINCT customer_segment FROM ${ENT} WHERE customer_segment IS NOT NULL ORDER BY customer_segment`),
+      query(`SELECT DISTINCT poc FROM (SELECT ae_poc_email AS poc FROM ${SRC} UNION DISTINCT SELECT ob_poc_email FROM ${SRC} UNION DISTINCT SELECT cs_poc_email FROM ${SRC}) WHERE poc IS NOT NULL AND poc != '' ORDER BY poc`)
     ]);
-    const es=document.getElementById('sel-enterprise'),rs=document.getElementById('sel-rooftop'),rvs2=document.getElementById('sel-reviewer'),ss=document.getElementById('sel-segment');
-    ents.forEach(r=>{const o=document.createElement('option');o.value=r.enterprise;o.textContent=r.enterprise;es.appendChild(o);});
+    const es=document.getElementById('sel-enterprise'),rs=document.getElementById('sel-rooftop'),rvs2=document.getElementById('sel-reviewer'),ss=document.getElementById('sel-segment'),ps=document.getElementById('sel-poc');
+    ents.forEach(r=>{const o=document.createElement('option');o.value=r.enterprise_name;o.textContent=r.enterprise_name;es.appendChild(o);});
     rts.forEach(r=>{const o=document.createElement('option');o.value=r.rooftop;o.textContent=r.rooftop;rs.appendChild(o);});
     rvs.forEach(r=>{const o=document.createElement('option');o.value=r.reviewer;o.textContent=r.reviewer.split('@')[0];o.title=r.reviewer;rvs2.appendChild(o);});
     segs.forEach(r=>{const o=document.createElement('option');o.value=r.customer_segment;o.textContent=r.customer_segment;ss.appendChild(o);});
+    pocs.forEach(r=>{const o=document.createElement('option');o.value=r.poc;o.textContent=r.poc.split('@')[0];o.title=r.poc;ps.appendChild(o);});
   }catch(e){console.warn('filter options:',e);}
 }
 
