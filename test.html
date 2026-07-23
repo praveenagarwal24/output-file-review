@@ -548,6 +548,8 @@
                     <h2 id="review-team-name" class="font-bold text-slate-800 text-[15px]"></h2>
                     <span id="review-team-id" class="text-[11px] font-semibold text-slate-400 uppercase tracking-wide"></span>
                 </div>
+                <!-- Enterprise metadata (from spyne_rooftop_enterprises, joined on team_id) -->
+                <div id="enterprise-meta" class="hidden items-center flex-wrap gap-1.5"></div>
                 <!-- Progress summary bar — 1st image mode -->
                 <div id="img1-progress-bar" class="hidden items-center space-x-1 flex-wrap gap-y-1">
                     <span id="pg-reviewed" class="px-2 py-0.5 rounded-full text-[11px] font-semibold bg-slate-100 text-slate-600"></span>
@@ -1028,6 +1030,58 @@
     ]);
     const AUTH_SESSION_KEY  = 'spyne_auth_user_v1';
     const BQ_WEBAPP_URL     = 'https://script.google.com/macros/s/AKfycbyWgJgtuiCwstoNi4LA-meGMIo0HBVRG2Fp1gfNCPjE2Or24HLaKZSYk-obZjh2OILj/exec';
+
+    // ── Enterprise metadata (spyne_rooftop_enterprises), keyed by team_id ──
+    // Loaded once from the BQ web app; used to enrich the review header.
+    const entMetaByTeamId = new Map();
+    let   entMetaLoaded   = false;
+
+    async function loadEnterpriseMeta() {
+        if (entMetaLoaded) return;
+        try {
+            const res = await fetch(BQ_WEBAPP_URL, {
+                method:   'POST',
+                redirect: 'follow',
+                body:     JSON.stringify({ action: 'getEnterprises' })
+            });
+            const data = JSON.parse(await res.text());
+            if (data && data.ok && Array.isArray(data.enterprises)) {
+                data.enterprises.forEach(e => {
+                    if (e.team_id) entMetaByTeamId.set(String(e.team_id), e);
+                });
+                entMetaLoaded = true;
+            }
+        } catch (err) {
+            console.warn('[EntMeta] load failed:', err);
+        }
+    }
+
+    function fmtArr(v) {
+        const n = Number(v);
+        if (!v || isNaN(n)) return '';
+        return '$' + Math.round(n).toLocaleString();
+    }
+
+    // Fill the #enterprise-meta card for a given team_id (join key).
+    function renderEnterpriseMeta(teamId) {
+        const box = document.getElementById('enterprise-meta');
+        if (!box) return;
+        const m = teamId ? entMetaByTeamId.get(String(teamId)) : null;
+        if (!m) { box.classList.add('hidden'); box.classList.remove('flex'); box.innerHTML = ''; return; }
+        const chip = (label, val, cls) => val
+            ? `<span class="px-2 py-0.5 rounded-full text-[11px] font-semibold ${cls}" title="${label}">${val}</span>` : '';
+        const mail = (label, val) => val
+            ? `<span class="text-[11px] text-slate-500">${label}: <a href="mailto:${val}" class="text-blue-600 hover:underline">${val}</a></span>` : '';
+        const parts = [
+            chip('Segment', m.customer_segment, 'bg-indigo-100 text-indigo-700'),
+            chip('Contracted ARR', fmtArr(m.apld_contracted_arr), 'bg-emerald-100 text-emerald-700'),
+            mail('AE', m.ae_poc_email),
+            mail('OB', m.ob_poc_email),
+            mail('CS', m.cs_poc_email)
+        ].filter(Boolean);
+        box.innerHTML = parts.join('<span class="text-slate-300 text-[10px]">|</span>');
+        box.classList.remove('hidden'); box.classList.add('flex');
+    }
 
     // Per-user localStorage keys — reviews are isolated per reviewer
     function storageKey()     { return 'spyne_reviews_v2_' + (getCurrentUser() || 'anon'); }
@@ -2626,6 +2680,7 @@
     // =========================================================================
     async function init() {
         loadReviews();
+        loadEnterpriseMeta();  // fetch enterprise metadata (by team_id) in the background
 
         // Auth gate: if we have a valid session, skip straight to login page
         const existingUser = getCurrentUser();
@@ -3006,6 +3061,7 @@
 
         document.getElementById('review-team-name').innerText = team.name;
         document.getElementById('review-team-id').innerText   = '';  // hide teamId in 1img mode
+        renderEnterpriseMeta(team.teamId);
 
         const teamVins = vinsByTeam.get(team.teamId);
         currentTeamVINs = teamVins ? [...teamVins.entries()].map(([key, entry]) => { const vin = key.includes('|~|') ? key.split('|~|')[0] : key; return { vin, urls: Array.isArray(entry) ? entry : (entry.urls||[]), rooftop: Array.isArray(entry) ? '' : (entry.rooftop||''), condition: Array.isArray(entry) ? '' : (entry.condition||'') }; }) : [];
@@ -3670,6 +3726,7 @@
         // Reuse the same review page — update header labels
         document.getElementById('review-team-name').innerText = team.rooftop || team.name || '1st Image Review';
         document.getElementById('review-team-id').innerText   = '';  // hide teamId in 1img mode
+        renderEnterpriseMeta(team.teamId);
 
         // Mode badge removed — title already says "1st Image Review"
         const modeBadge = document.getElementById('review-mode-badge');
