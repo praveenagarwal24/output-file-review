@@ -640,8 +640,8 @@ async function loadAll(){
     <div class="sec-label">Issues</div>
     <div class="chart-card">
       <div class="chart-title">Issue Types · click a row to drill to accounts (rooftop + enterprise)</div>
-      <table><thead><tr><th>Issue Type</th><th>Count</th><th>% of Issues</th></tr></thead>
-      <tbody>${issR.filter(r=>r.issue_type!=='OK'&&r.issue_type!=='Pending').map(r=>{const c=N(r.cnt);return `<tr style="cursor:pointer" onclick="drillIssue('${(r.issue_type||'').replace(/'/g,"\\'")}')"><td><span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:${ic(r.issue_type)};margin-right:7px"></span>${r.issue_type} <span style="color:var(--muted);font-size:9px">⤢</span></td><td><b>${c.toLocaleString()}</b></td><td>${pct(c,issues)}%</td></tr>`;}).join('')}</tbody></table>
+      <table><thead><tr><th>Issue Type</th><th>Count</th><th>% of Issues</th><th>% of Total VINs</th></tr></thead>
+      <tbody>${issR.filter(r=>r.issue_type!=='OK'&&r.issue_type!=='Pending').map(r=>{const c=N(r.cnt);return `<tr style="cursor:pointer" onclick="drillIssue('${(r.issue_type||'').replace(/'/g,"\\'")}')"><td><span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:${ic(r.issue_type)};margin-right:7px"></span>${r.issue_type} <span style="color:var(--muted);font-size:9px">⤢</span></td><td><b>${c.toLocaleString()}</b></td><td>${pct(c,issues)}%</td><td>${pct(c,total)}%</td></tr>`;}).join('')}</tbody></table>
     </div>
 
     <div class="sec-label">Issue Analytics</div>
