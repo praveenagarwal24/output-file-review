@@ -236,6 +236,9 @@ tr:hover td{background:rgba(255,255,255,.02)}
 
   <span class="filter-label">Reviewer</span>
   <select id="sel-reviewer" class="filter-select" onchange="loadAll()"><option value="">All reviewers</option></select>
+
+  <span class="filter-label">Segment</span>
+  <select id="sel-segment" class="filter-select" onchange="loadAll()"><option value="">All segments</option></select>
 </div>
 
 <main id="main-content">
@@ -245,6 +248,20 @@ tr:hover td{background:rgba(255,255,255,.02)}
 <script>
 const BQ  = 'https://script.google.com/macros/s/AKfycbxS1D1FkX2q_wQhh4U6LbzQKAgSRwzQGr0gEpmaM1rT8Sqig7ghr54ChYe9dor3PIaG/exec';
 const TBL = '`inspired-frame-453018-r2.spyne_reviews.image_reviews`';
+const ENT = '`inspired-frame-453018-r2.spyne_reviews.spyne_rooftop_enterprises`';
+// Reviews joined (on team_id) to deduped enterprise metadata. Used as the FROM
+// source for all analytical queries so segment / ARR / POC fields are available.
+const SRC = `(SELECT r.*, e.customer_segment, e.apld_contracted_arr, e.ae_poc_email, e.ob_poc_email, e.cs_poc_email
+  FROM ${TBL} r
+  LEFT JOIN (
+    SELECT team_id,
+           ANY_VALUE(customer_segment)   AS customer_segment,
+           MAX(SAFE_CAST(apld_contracted_arr AS FLOAT64)) AS apld_contracted_arr,
+           ANY_VALUE(ae_poc_email)        AS ae_poc_email,
+           ANY_VALUE(ob_poc_email)        AS ob_poc_email,
+           ANY_VALUE(cs_poc_email)        AS cs_poc_email
+    FROM ${ENT} WHERE team_id IS NOT NULL GROUP BY team_id
+  ) e ON CAST(r.team_id AS STRING) = CAST(e.team_id AS STRING))`;
 
 // ── Date state ──
 let dfrom='', dto='', calYear=new Date().getFullYear(), calMonth=new Date().getMonth();
@@ -384,6 +401,8 @@ function buildWhere() {
   if(rv) parts.push(`reviewer = '${rv.replace(/'/g,"\\'")}'`);
   const ent=document.getElementById('sel-enterprise')?.value;
   if(ent) parts.push(`enterprise = '${ent.replace(/'/g,"\\'")}'`);
+  const seg=document.getElementById('sel-segment')?.value;
+  if(seg) parts.push(`customer_segment = '${seg.replace(/'/g,"\\'")}'`);
   return parts.length ? 'WHERE '+parts.join(' AND ') : '';
 }
 
@@ -391,6 +410,7 @@ const COLORS={'OK':'#10b981','Raw':'#f97316','Stock':'#3b82f6','Bad Input':'#8b5
 const ic=t=>COLORS[t]||'#64748b';
 const pct=(a,b)=>b>0?Math.round(a/b*100):0;
 const N=v=>parseInt(v)||0;
+const money=v=>{const n=Number(v)||0;if(n>=1e6)return '$'+(n/1e6).toFixed(1)+'M';if(n>=1e3)return '$'+(n/1e3).toFixed(1)+'K';return '$'+Math.round(n);};
 
 function donut(data,size=120){
   const total=data.reduce((s,d)=>s+d.v,0);
@@ -407,9 +427,10 @@ function trendBars(rows){
   return `<div class="trend-bars">${rows.map((r,i)=>{const h=Math.max(Math.round((vals[i]/max)*100),2);const dt=(r.review_date||'').slice(5);return `<div class="trend-bar-wrap" title="${r.review_date}: ${vals[i]}"><div class="trend-bar-val">${vals[i]}</div><div class="trend-bar" style="height:${h}px"></div><div class="trend-date">${dt}</div></div>`;}).join('')}</div>`;
 }
 
-function hbars(data,colorFn){
+function hbars(data,colorFn,valFmt){
+  if(!data.length) return '<div style="color:var(--muted);font-size:11px;padding:20px">No data</div>';
   const max=Math.max(...data.map(d=>d.v),1);
-  return `<div class="bar-chart">${data.map(d=>`<div class="bar-row"><span class="bar-name" title="${d.l}">${d.l}</span><div class="bar-track"><div class="bar-fill" style="width:${pct(d.v,max)}%;background:${colorFn(d.l)}"></div></div><span class="bar-val" style="color:${colorFn(d.l)}">${d.v}</span></div>`).join('')}</div>`;
+  return `<div class="bar-chart">${data.map(d=>`<div class="bar-row"><span class="bar-name" title="${d.l}">${d.l}</span><div class="bar-track"><div class="bar-fill" style="width:${pct(d.v,max)}%;background:${colorFn(d.l)}"></div></div><span class="bar-val" style="color:${colorFn(d.l)}">${valFmt?valFmt(d.v):d.v}</span></div>`).join('')}</div>`;
 }
 
 function ring(p){
@@ -420,15 +441,17 @@ function ring(p){
 
 async function loadFilterOptions(){
   try{
-    const[ents,rts,rvs]=await Promise.all([
+    const[ents,rts,rvs,segs]=await Promise.all([
       query(`SELECT DISTINCT enterprise FROM ${TBL} WHERE enterprise IS NOT NULL ORDER BY enterprise`),
       query(`SELECT DISTINCT rooftop FROM ${TBL} WHERE rooftop IS NOT NULL ORDER BY rooftop`),
-      query(`SELECT DISTINCT reviewer FROM ${TBL} WHERE reviewer IS NOT NULL ORDER BY reviewer`)
+      query(`SELECT DISTINCT reviewer FROM ${TBL} WHERE reviewer IS NOT NULL ORDER BY reviewer`),
+      query(`SELECT DISTINCT customer_segment FROM ${ENT} WHERE customer_segment IS NOT NULL ORDER BY customer_segment`)
     ]);
-    const es=document.getElementById('sel-enterprise'),rs=document.getElementById('sel-rooftop'),rvs2=document.getElementById('sel-reviewer');
+    const es=document.getElementById('sel-enterprise'),rs=document.getElementById('sel-rooftop'),rvs2=document.getElementById('sel-reviewer'),ss=document.getElementById('sel-segment');
     ents.forEach(r=>{const o=document.createElement('option');o.value=r.enterprise;o.textContent=r.enterprise;es.appendChild(o);});
     rts.forEach(r=>{const o=document.createElement('option');o.value=r.rooftop;o.textContent=r.rooftop;rs.appendChild(o);});
     rvs.forEach(r=>{const o=document.createElement('option');o.value=r.reviewer;o.textContent=r.reviewer.split('@')[0];o.title=r.reviewer;rvs2.appendChild(o);});
+    segs.forEach(r=>{const o=document.createElement('option');o.value=r.customer_segment;o.textContent=r.customer_segment;ss.appendChild(o);});
   }catch(e){console.warn('filter options:',e);}
 }
 
@@ -438,17 +461,25 @@ async function loadAll(){
   mc.innerHTML='<div class="loading-overlay"><div class="spinner"></div><div style="color:var(--muted);font-size:12px">Querying BigQuery…</div></div>';
   try{
     const W=buildWhere();
-    const[ovR,issR,rvR,rtR,trendR,recentR]=await Promise.all([
-      query(`SELECT COUNT(*) as total, COUNTIF(issue_type='OK' OR issue_type='Pending') as ok_cnt, COUNTIF(issue_type NOT IN ('OK','Pending')) as issue_cnt, COUNT(DISTINCT reviewer) as rev_cnt, COUNT(DISTINCT rooftop) as rt_cnt, COUNT(DISTINCT vin) as vin_cnt FROM ${TBL} ${W}`),
-      query(`SELECT issue_type, COUNT(*) as cnt FROM ${TBL} ${W} GROUP BY issue_type ORDER BY cnt DESC`),
-      query(`SELECT reviewer, COUNT(*) as total, COUNTIF(issue_type='OK' OR issue_type='Pending') as ok_cnt, COUNTIF(issue_type NOT IN ('OK','Pending')) as issue_cnt, MAX(review_date) as last_date FROM ${TBL} ${W} GROUP BY reviewer ORDER BY total DESC`),
-      query(`SELECT rooftop, enterprise, COUNT(*) as total, COUNTIF(issue_type='OK' OR issue_type='Pending') as ok_cnt, COUNTIF(issue_type NOT IN ('OK','Pending')) as issue_cnt FROM ${TBL} ${W} GROUP BY rooftop,enterprise ORDER BY total DESC`),
-      query(`SELECT review_date, COUNT(*) as cnt FROM ${TBL} ${W} GROUP BY review_date ORDER BY review_date`),
-      query(`SELECT review_date,reviewer,rooftop,vin,issue_type,comment FROM ${TBL} ${W} WHERE issue_type NOT IN ('OK','Pending') ORDER BY reviewed_at DESC LIMIT 25`)
+    const[ovR,issR,rvR,rtR,trendR,recentR,segR,arrR,aeR]=await Promise.all([
+      query(`SELECT COUNT(*) as total, COUNTIF(issue_type='OK' OR issue_type='Pending') as ok_cnt, COUNTIF(issue_type NOT IN ('OK','Pending')) as issue_cnt, COUNT(DISTINCT reviewer) as rev_cnt, COUNT(DISTINCT rooftop) as rt_cnt, COUNT(DISTINCT vin) as vin_cnt FROM ${SRC} ${W}`),
+      query(`SELECT issue_type, COUNT(*) as cnt FROM ${SRC} ${W} GROUP BY issue_type ORDER BY cnt DESC`),
+      query(`SELECT reviewer, COUNT(*) as total, COUNTIF(issue_type='OK' OR issue_type='Pending') as ok_cnt, COUNTIF(issue_type NOT IN ('OK','Pending')) as issue_cnt, MAX(review_date) as last_date FROM ${SRC} ${W} GROUP BY reviewer ORDER BY total DESC`),
+      query(`SELECT rooftop, enterprise, COUNT(*) as total, COUNTIF(issue_type='OK' OR issue_type='Pending') as ok_cnt, COUNTIF(issue_type NOT IN ('OK','Pending')) as issue_cnt FROM ${SRC} ${W} GROUP BY rooftop,enterprise ORDER BY total DESC`),
+      query(`SELECT review_date, COUNT(*) as cnt FROM ${SRC} ${W} GROUP BY review_date ORDER BY review_date`),
+      query(`SELECT review_date,reviewer,rooftop,vin,issue_type,comment FROM ${SRC} ${W} ${W?'AND':'WHERE'} issue_type NOT IN ('OK','Pending') ORDER BY reviewed_at DESC LIMIT 25`),
+      query(`SELECT customer_segment, COUNT(*) as total, COUNTIF(issue_type NOT IN ('OK','Pending')) as issue_cnt FROM ${SRC} ${W} GROUP BY customer_segment ORDER BY total DESC`),
+      query(`SELECT customer_segment, SUM(arr) as arr, SUM(IF(has_issue,arr,0)) as arr_risk, COUNT(*) as teams FROM (SELECT team_id, ANY_VALUE(customer_segment) as customer_segment, MAX(SAFE_CAST(apld_contracted_arr AS FLOAT64)) as arr, MAX(IF(issue_type NOT IN ('OK','Pending'),1,0))=1 as has_issue FROM ${SRC} ${W} GROUP BY team_id) GROUP BY customer_segment ORDER BY arr DESC`),
+      query(`SELECT ae_poc_email, COUNT(*) as total, COUNTIF(issue_type NOT IN ('OK','Pending')) as issue_cnt, MAX(review_date) as last_date FROM ${SRC} ${W} GROUP BY ae_poc_email ORDER BY total DESC`)
     ]);
     const ov=ovR[0]||{};
     const total=N(ov.total),ok=N(ov.ok_cnt),issues=N(ov.issue_cnt);
     const accuracy=100-pct(issues,total);
+    const segRows=segR.filter(r=>r.customer_segment);
+    const arrRows=arrR.filter(r=>r.customer_segment);
+    const aeRows=aeR.filter(r=>r.ae_poc_email).slice(0,15);
+    const arrTotal=arrR.reduce((s,r)=>s+(Number(r.arr)||0),0);
+    const arrRisk=arrR.reduce((s,r)=>s+(Number(r.arr_risk)||0),0);
 
     mc.innerHTML=`
     <div class="sec-label">Overview</div>
@@ -467,6 +498,18 @@ async function loadAll(){
       <div class="chart-card"><div class="chart-title">Top Issues</div>${hbars(issR.filter(r=>r.issue_type!=='OK'&&r.issue_type!=='Pending').slice(0,7).map(r=>({l:r.issue_type,v:N(r.cnt)})),ic)}</div>
     </div>
 
+    <div class="sec-label">Revenue &amp; Segment</div>
+    <div class="kpi-grid" style="grid-template-columns:repeat(3,1fr)">
+      <div class="kpi" style="--acc:#8b5cf6"><div class="kpi-lbl">Contracted ARR (in scope)</div><div class="kpi-val">${money(arrTotal)}</div><div class="kpi-sub">across ${arrRows.reduce((s,r)=>s+N(r.teams),0)} teams reviewed</div><div class="kpi-bar"><div class="kpi-bar-fill" style="width:100%"></div></div></div>
+      <div class="kpi" style="--acc:#f97316"><div class="kpi-lbl">ARR at Risk</div><div class="kpi-val">${money(arrRisk)}</div><div class="kpi-sub">${pct(arrRisk,arrTotal)}% of in-scope ARR · teams with ≥1 issue</div><div class="kpi-bar"><div class="kpi-bar-fill" style="width:${pct(arrRisk,arrTotal)}%"></div></div></div>
+      <div class="kpi" style="--acc:#3b82f6"><div class="kpi-lbl">Segments</div><div class="kpi-val">${segRows.length}</div><div class="kpi-sub">customer segments in scope</div><div class="kpi-bar"><div class="kpi-bar-fill" style="width:100%"></div></div></div>
+    </div>
+    <div class="charts-row" style="grid-template-columns:1fr 1fr 1fr">
+      <div class="chart-card"><div class="chart-title">Reviews by Segment</div>${hbars(segRows.map(r=>({l:r.customer_segment,v:N(r.total)})),()=>'#3b82f6')}</div>
+      <div class="chart-card"><div class="chart-title">Issues by Segment</div>${hbars(segRows.map(r=>({l:r.customer_segment,v:N(r.issue_cnt)})),()=>'#f97316')}</div>
+      <div class="chart-card"><div class="chart-title">Contracted ARR by Segment</div>${hbars(arrRows.map(r=>({l:r.customer_segment,v:Math.round(Number(r.arr)||0)})),()=>'#8b5cf6',money)}</div>
+    </div>
+
     <div class="sec-label">Rooftop Progress</div>
     <div class="rooftop-grid">${rtR.map(r=>{const t=N(r.total),o=N(r.ok_cnt),iss=N(r.issue_cnt);return`<div class="rt-card">${ring(pct(o,t))}<div class="rt-name" title="${r.rooftop}">${r.rooftop||'Unknown'}</div><div class="rt-count">${t} VINs · <span style="color:var(--issue)">${iss} issues</span></div></div>`;}).join('')}</div>
 
@@ -480,6 +523,12 @@ async function loadAll(){
         <table><thead><tr><th>Rooftop</th><th>Enterprise</th><th>Total</th><th>OK</th><th>Issues</th><th>Accuracy</th></tr></thead>
         <tbody>${rtR.map(r=>{const t=N(r.total),o=N(r.ok_cnt),iss=N(r.issue_cnt);const acc=100-pct(iss,t);return`<tr><td>${r.rooftop||'—'}</td><td style="font-size:9px;color:var(--muted)">${r.enterprise||'—'}</td><td><b>${t}</b></td><td><span class="badge b-ok">${o}</span></td><td><span class="badge b-issue">${iss}</span></td><td><span style="font-weight:700;color:${acc>=90?'#10b981':acc>=70?'#eab308':'#f97316'}">${acc}%</span></td></tr>`;}).join('')}</tbody></table>
       </div>
+    </div>
+
+    <div class="sec-label">By Account Owner (AE)</div>
+    <div class="tbl-card"><div class="tbl-head-bar"><div class="chart-title">AE POC · review volume &amp; quality</div></div>
+      <table><thead><tr><th>AE POC</th><th>Reviews</th><th>Issues</th><th>Accuracy</th><th>Last Active</th></tr></thead>
+      <tbody>${aeRows.length?aeRows.map(r=>{const t=N(r.total),iss=N(r.issue_cnt);const acc=100-pct(iss,t);return`<tr><td>${(r.ae_poc_email||'').split('@')[0]||'—'}<br><span style="font-size:8px;color:var(--muted)">${r.ae_poc_email||''}</span></td><td><b>${t}</b></td><td><span class="badge b-issue">${iss}</span></td><td><span style="font-weight:700;color:${acc>=90?'#10b981':acc>=70?'#eab308':'#f97316'}">${acc}%</span></td><td style="color:var(--muted);font-size:9px">${r.last_date||'—'}</td></tr>`;}).join(''):`<tr><td colspan="5" style="color:var(--muted);text-align:center;padding:16px">No AE data</td></tr>`}</tbody></table>
     </div>
 
     <div class="sec-label">Recent Issues (last 25)</div>
