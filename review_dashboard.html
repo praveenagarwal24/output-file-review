@@ -156,6 +156,19 @@ tr:hover td{background:rgba(255,255,255,.02)}
 .spinner{width:30px;height:30px;border:3px solid var(--border);border-top-color:var(--blue);border-radius:50%;animation:spin 1s linear infinite}
 .err{color:var(--issue);text-align:center;padding:40px;font-size:12px}
 
+/* drill-down modal */
+.kpi.clickable{cursor:pointer}
+.kpi.clickable:hover{border-color:var(--blue)}
+.kpi.clickable::after{content:'⤢';position:absolute;top:10px;right:12px;font-size:11px;color:var(--muted);opacity:.6}
+.modal-ov{position:fixed;inset:0;background:rgba(0,0,0,.62);display:none;align-items:flex-start;justify-content:center;z-index:1000;padding:56px 20px;overflow:auto}
+.modal-ov.open{display:flex}
+.modal{background:var(--card);border:1px solid var(--border);border-radius:14px;width:100%;max-width:780px;box-shadow:0 30px 80px rgba(0,0,0,.6)}
+.modal-head{display:flex;align-items:center;justify-content:space-between;padding:15px 20px;border-bottom:1px solid var(--border);position:sticky;top:0;background:var(--card);border-radius:14px 14px 0 0}
+.modal-title{font-size:14px;font-weight:700}
+.modal-close{background:none;border:none;color:var(--muted);font-size:18px;cursor:pointer;line-height:1}
+.modal-close:hover{color:var(--text)}
+.modal-body{max-height:64vh;overflow:auto}
+
 @media(max-width:1100px){.kpi-grid{grid-template-columns:repeat(3,1fr)}.charts-row{grid-template-columns:1fr 1fr}}
 @media(max-width:768px){.kpi-grid{grid-template-columns:1fr 1fr}.charts-row,.tables-row{grid-template-columns:1fr}main,#filter-bar,header{padding-left:14px;padding-right:14px}}
 </style>
@@ -242,6 +255,13 @@ tr:hover td{background:rgba(255,255,255,.02)}
 
   <span class="filter-label">POC</span>
   <select id="sel-poc" class="filter-select" onchange="loadAll()"><option value="">All POCs</option></select>
+</div>
+
+<div class="modal-ov" id="modal-ov" onclick="if(event.target===this)closeModal()">
+  <div class="modal">
+    <div class="modal-head"><div class="modal-title" id="modal-title"></div><button class="modal-close" onclick="closeModal()">✕</button></div>
+    <div class="modal-body" id="modal-body"></div>
+  </div>
 </div>
 
 <main id="main-content">
@@ -396,6 +416,58 @@ async function query(sql) {
   return d.rows;
 }
 
+// ── Drill-down modal ──
+function closeModal(){ document.getElementById('modal-ov').classList.remove('open'); }
+document.addEventListener('keydown',e=>{ if(e.key==='Escape') closeModal(); });
+
+function renderDrillTable(cols,rows){
+  if(!rows.length) return '<div style="padding:34px;text-align:center;color:var(--muted);font-size:12px">No data for the current filters.</div>';
+  const th=cols.map(c=>`<th>${c[1]}</th>`).join('');
+  const body=rows.map(r=>'<tr>'+cols.map(c=>{
+    let v;
+    if(c[0]==='__acc'){const t=N(r.total),iss=N(r.issues);const a=100-pct(iss,t);v=`<span style="font-weight:700;color:${a>=90?'#10b981':a>=70?'#eab308':'#f97316'}">${a}%</span>`;}
+    else if(c[2]==='money'){v=money(r[c[0]]);}
+    else if(c[2]==='num'){v=N(r[c[0]]).toLocaleString();}
+    else {v=(r[c[0]]==null||r[c[0]]==='')?'—':r[c[0]];}
+    return `<td>${v}</td>`;
+  }).join('')+'</tr>').join('');
+  return `<table><thead><tr>${th}</tr></thead><tbody>${body}</tbody></table>`;
+}
+
+async function drill(type){
+  const W=buildWhere();
+  const iss=`issue_type NOT IN ('OK','Pending')`;
+  let title,sql,cols;
+  if(type==='vins'){
+    title='Total VINs · by Rooftop';
+    sql=`SELECT rooftop, COUNT(*) as total, COUNT(DISTINCT vin) as vins, COUNTIF(${iss}) as issues FROM ${SRC} ${W} GROUP BY rooftop ORDER BY total DESC`;
+    cols=[['rooftop','Rooftop'],['vins','Unique VINs','num'],['total','Rows','num'],['issues','Issues','num'],['__acc','Accuracy']];
+  } else if(type==='issues'){
+    title='Issues Found · by Type';
+    sql=`SELECT issue_type, COUNT(*) as total FROM ${SRC} ${W} ${W?'AND':'WHERE'} ${iss} GROUP BY issue_type ORDER BY total DESC`;
+    cols=[['issue_type','Issue Type'],['total','Count','num']];
+  } else if(type==='accuracy'){
+    title='Accuracy · by Rooftop (worst first)';
+    sql=`SELECT rooftop, COUNT(*) as total, COUNTIF(${iss}) as issues FROM ${SRC} ${W} GROUP BY rooftop ORDER BY issues DESC`;
+    cols=[['rooftop','Rooftop'],['total','Total','num'],['issues','Issues','num'],['__acc','Accuracy']];
+  } else if(type==='enterprises'){
+    title='Enterprises Reviewed';
+    sql=`SELECT name, COUNT(DISTINCT rooftop) as rooftops, COUNT(*) as total, COUNTIF(is_issue) as issues FROM (SELECT COALESCE(enterprise_name, enterprise) as name, rooftop, (${iss}) as is_issue FROM ${SRC} ${W}) GROUP BY name ORDER BY total DESC`;
+    cols=[['name','Enterprise'],['rooftops','Rooftops','num'],['total','Reviews','num'],['issues','Issues','num'],['__acc','Accuracy']];
+  } else if(type==='rooftops'){
+    title='Rooftops Reviewed';
+    sql=`SELECT rooftop, COUNT(DISTINCT vin) as vins, COUNT(*) as total, COUNTIF(${iss}) as issues FROM ${SRC} ${W} GROUP BY rooftop ORDER BY total DESC`;
+    cols=[['rooftop','Rooftop'],['vins','Unique VINs','num'],['total','Reviews','num'],['issues','Issues','num'],['__acc','Accuracy']];
+  } else return;
+
+  document.getElementById('modal-title').textContent=title;
+  const mb=document.getElementById('modal-body');
+  mb.innerHTML='<div style="padding:44px;text-align:center"><div class="spinner" style="margin:0 auto"></div></div>';
+  document.getElementById('modal-ov').classList.add('open');
+  try{ const rows=await query(sql); mb.innerHTML=renderDrillTable(cols,rows); }
+  catch(e){ mb.innerHTML=`<div class="err">⚠ ${e.message}</div>`; }
+}
+
 function buildWhere() {
   const parts=[];
   if(dfrom) parts.push(`review_date >= '${dfrom}'`);
@@ -507,11 +579,11 @@ async function loadAll(){
     mc.innerHTML=`
     <div class="sec-label">Overview</div>
     <div class="kpi-grid">
-      <div class="kpi" style="--acc:#3b82f6"><div class="kpi-lbl">Total VINs</div><div class="kpi-val">${total.toLocaleString()}</div><div class="kpi-sub">${ov.rev_cnt||0} reviewers</div><div class="kpi-bar"><div class="kpi-bar-fill" style="width:100%"></div></div></div>
-      <div class="kpi" style="--acc:#f97316"><div class="kpi-lbl">Issues Found</div><div class="kpi-val">${issues.toLocaleString()}</div><div class="kpi-sub">${pct(issues,total)}% issue rate</div><div class="kpi-bar"><div class="kpi-bar-fill" style="width:${pct(issues,total)}%"></div></div></div>
-      <div class="kpi" style="--acc:${accuracy>=90?'#10b981':accuracy>=70?'#eab308':'#ef4444'}"><div class="kpi-lbl">Accuracy</div><div class="kpi-val">${accuracy}%</div><div class="kpi-sub">${issues} issues of ${total} VINs</div><div class="kpi-bar"><div class="kpi-bar-fill" style="width:${accuracy}%"></div></div></div>
-      <div class="kpi" style="--acc:#06b6d4"><div class="kpi-lbl">Enterprises Reviewed</div><div class="kpi-val">${entCnt.toLocaleString()}</div><div class="kpi-sub">distinct enterprises</div><div class="kpi-bar"><div class="kpi-bar-fill" style="width:100%"></div></div></div>
-      <div class="kpi" style="--acc:#8b5cf6"><div class="kpi-lbl">Rooftops Reviewed</div><div class="kpi-val">${N(ov.rt_cnt).toLocaleString()}</div><div class="kpi-sub">distinct rooftops</div><div class="kpi-bar"><div class="kpi-bar-fill" style="width:100%"></div></div></div>
+      <div class="kpi clickable" onclick="drill('vins')" style="--acc:#3b82f6"><div class="kpi-lbl">Total VINs</div><div class="kpi-val">${total.toLocaleString()}</div><div class="kpi-sub">${ov.rev_cnt||0} reviewers</div><div class="kpi-bar"><div class="kpi-bar-fill" style="width:100%"></div></div></div>
+      <div class="kpi clickable" onclick="drill('issues')" style="--acc:#f97316"><div class="kpi-lbl">Issues Found</div><div class="kpi-val">${issues.toLocaleString()}</div><div class="kpi-sub">${pct(issues,total)}% issue rate</div><div class="kpi-bar"><div class="kpi-bar-fill" style="width:${pct(issues,total)}%"></div></div></div>
+      <div class="kpi clickable" onclick="drill('accuracy')" style="--acc:${accuracy>=90?'#10b981':accuracy>=70?'#eab308':'#ef4444'}"><div class="kpi-lbl">Accuracy</div><div class="kpi-val">${accuracy}%</div><div class="kpi-sub">${issues} issues of ${total} VINs</div><div class="kpi-bar"><div class="kpi-bar-fill" style="width:${accuracy}%"></div></div></div>
+      <div class="kpi clickable" onclick="drill('enterprises')" style="--acc:#06b6d4"><div class="kpi-lbl">Enterprises Reviewed</div><div class="kpi-val">${entCnt.toLocaleString()}</div><div class="kpi-sub">distinct enterprises</div><div class="kpi-bar"><div class="kpi-bar-fill" style="width:100%"></div></div></div>
+      <div class="kpi clickable" onclick="drill('rooftops')" style="--acc:#8b5cf6"><div class="kpi-lbl">Rooftops Reviewed</div><div class="kpi-val">${N(ov.rt_cnt).toLocaleString()}</div><div class="kpi-sub">distinct rooftops</div><div class="kpi-bar"><div class="kpi-bar-fill" style="width:100%"></div></div></div>
     </div>
     <div class="kpi-grid" style="grid-template-columns:repeat(4,1fr);margin-top:10px">
       ${topCard('Top Issue · Enterprise', worst?worst.enterprise_name:null, worst?N(worst.issue_cnt):0, '#ef4444')}
