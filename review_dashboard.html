@@ -446,6 +446,11 @@ function ring(p){
   return `<div class="ring-wrap"><svg class="ring-svg" width="68" height="68" viewBox="0 0 68 68"><circle class="ring-bg" cx="34" cy="34" r="${r}"/><circle class="ring-fill" cx="34" cy="34" r="${r}" stroke="${col}" stroke-dasharray="${dash} ${c}"/></svg><div class="ring-center"><span class="ring-pct" style="color:${col}">${p}%</span><span class="ring-lbl">OK</span></div></div>`;
 }
 
+function topCard(label,name,count,color,title){
+  const val = name ? name : '—';
+  return `<div class="kpi" style="--acc:${color}"><div class="kpi-lbl">${label}</div><div class="kpi-val" title="${(title||val).replace(/"/g,'&quot;')}" style="font-size:16px;line-height:1.25;min-height:42px;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden">${val}</div><div class="kpi-sub">${count.toLocaleString()} issues</div><div class="kpi-bar"><div class="kpi-bar-fill" style="width:100%"></div></div></div>`;
+}
+
 async function loadFilterOptions(){
   try{
     const[ents,rts,rvs,segs,pocs]=await Promise.all([
@@ -470,8 +475,8 @@ async function loadAll(){
   mc.innerHTML='<div class="loading-overlay"><div class="spinner"></div><div style="color:var(--muted);font-size:12px">Querying BigQuery…</div></div>';
   try{
     const W=buildWhere();
-    const[ovR,issR,rvR,rtR,trendR,recentR,segR,arrR,aeR]=await Promise.all([
-      query(`SELECT COUNT(*) as total, COUNTIF(issue_type='OK' OR issue_type='Pending') as ok_cnt, COUNTIF(issue_type NOT IN ('OK','Pending')) as issue_cnt, COUNT(DISTINCT reviewer) as rev_cnt, COUNT(DISTINCT rooftop) as rt_cnt, COUNT(DISTINCT vin) as vin_cnt FROM ${SRC} ${W}`),
+    const[ovR,issR,rvR,rtR,trendR,recentR,segR,arrR,aeR,topEntR,topPocR]=await Promise.all([
+      query(`SELECT COUNT(*) as total, COUNTIF(issue_type='OK' OR issue_type='Pending') as ok_cnt, COUNTIF(issue_type NOT IN ('OK','Pending')) as issue_cnt, COUNT(DISTINCT reviewer) as rev_cnt, COUNT(DISTINCT rooftop) as rt_cnt, COUNT(DISTINCT COALESCE(enterprise_name, enterprise)) as ent_cnt, COUNT(DISTINCT vin) as vin_cnt FROM ${SRC} ${W}`),
       query(`SELECT issue_type, COUNT(*) as cnt FROM ${SRC} ${W} GROUP BY issue_type ORDER BY cnt DESC`),
       query(`SELECT reviewer, COUNT(*) as total, COUNTIF(issue_type='OK' OR issue_type='Pending') as ok_cnt, COUNTIF(issue_type NOT IN ('OK','Pending')) as issue_cnt, MAX(review_date) as last_date FROM ${SRC} ${W} GROUP BY reviewer ORDER BY total DESC`),
       query(`SELECT rooftop, enterprise, ANY_VALUE(enterprise_name) as ent_name, ANY_VALUE(apld_team_name) as team_name, ANY_VALUE(cs_poc_email) as cs_email, COUNT(*) as total, COUNTIF(issue_type='OK' OR issue_type='Pending') as ok_cnt, COUNTIF(issue_type NOT IN ('OK','Pending')) as issue_cnt FROM ${SRC} ${W} GROUP BY rooftop,enterprise ORDER BY total DESC`),
@@ -479,7 +484,9 @@ async function loadAll(){
       query(`SELECT review_date,reviewer,rooftop,vin,issue_type,comment FROM ${SRC} ${W} ${W?'AND':'WHERE'} issue_type NOT IN ('OK','Pending') ORDER BY reviewed_at DESC LIMIT 25`),
       query(`SELECT customer_segment, COUNT(*) as total, COUNTIF(issue_type NOT IN ('OK','Pending')) as issue_cnt FROM ${SRC} ${W} GROUP BY customer_segment ORDER BY total DESC`),
       query(`SELECT customer_segment, SUM(arr) as arr, SUM(IF(has_issue,arr,0)) as arr_risk, COUNT(*) as teams FROM (SELECT team_id, ANY_VALUE(customer_segment) as customer_segment, MAX(SAFE_CAST(apld_contracted_arr AS FLOAT64)) as arr, MAX(IF(issue_type NOT IN ('OK','Pending'),1,0))=1 as has_issue FROM ${SRC} ${W} GROUP BY team_id) GROUP BY customer_segment ORDER BY arr DESC`),
-      query(`SELECT ae_poc_email, COUNT(*) as total, COUNTIF(issue_type NOT IN ('OK','Pending')) as issue_cnt, MAX(review_date) as last_date FROM ${SRC} ${W} GROUP BY ae_poc_email ORDER BY total DESC`)
+      query(`SELECT ae_poc_email, COUNT(*) as total, COUNTIF(issue_type NOT IN ('OK','Pending')) as issue_cnt, MAX(review_date) as last_date FROM ${SRC} ${W} GROUP BY ae_poc_email ORDER BY total DESC`),
+      query(`SELECT COALESCE(enterprise_name, enterprise) as e, COUNTIF(issue_type NOT IN ('OK','Pending')) as issue_cnt FROM ${SRC} ${W} GROUP BY e ORDER BY issue_cnt DESC LIMIT 1`),
+      query(`SELECT poc, COUNTIF(iss) as issue_cnt FROM (SELECT ae_poc_email AS poc, issue_type NOT IN ('OK','Pending') AS iss FROM ${SRC} ${W} UNION ALL SELECT ob_poc_email, issue_type NOT IN ('OK','Pending') FROM ${SRC} ${W} UNION ALL SELECT cs_poc_email, issue_type NOT IN ('OK','Pending') FROM ${SRC} ${W}) WHERE poc IS NOT NULL AND poc != '' GROUP BY poc ORDER BY issue_cnt DESC LIMIT 1`)
     ]);
     const ov=ovR[0]||{};
     const total=N(ov.total),ok=N(ov.ok_cnt),issues=N(ov.issue_cnt);
@@ -489,15 +496,26 @@ async function loadAll(){
     const aeRows=aeR.filter(r=>r.ae_poc_email).slice(0,15);
     const arrTotal=arrR.reduce((s,r)=>s+(Number(r.arr)||0),0);
     const arrRisk=arrR.reduce((s,r)=>s+(Number(r.arr_risk)||0),0);
+    const entCnt=N(ov.ent_cnt);
+    const topIssue=issR.filter(r=>r.issue_type!=='OK'&&r.issue_type!=='Pending')[0]||null;
+    const topRt=[...rtR].sort((a,b)=>N(b.issue_cnt)-N(a.issue_cnt))[0]||null;
+    const topEnt=(topEntR&&topEntR[0])?topEntR[0]:null;
+    const topPoc=(topPocR&&topPocR[0])?topPocR[0]:null;
 
     mc.innerHTML=`
     <div class="sec-label">Overview</div>
     <div class="kpi-grid">
-      <div class="kpi" style="--acc:#3b82f6"><div class="kpi-lbl">Total VINs</div><div class="kpi-val">${total.toLocaleString()}</div><div class="kpi-sub">${ov.rt_cnt||0} rooftops · ${ov.rev_cnt||0} reviewers</div><div class="kpi-bar"><div class="kpi-bar-fill" style="width:100%"></div></div></div>
-      <div class="kpi" style="--acc:#10b981"><div class="kpi-lbl">OK (incl. Pending)</div><div class="kpi-val">${ok.toLocaleString()}</div><div class="kpi-sub">${pct(ok,total)}% of total</div><div class="kpi-bar"><div class="kpi-bar-fill" style="width:${pct(ok,total)}%"></div></div></div>
+      <div class="kpi" style="--acc:#3b82f6"><div class="kpi-lbl">Total VINs</div><div class="kpi-val">${total.toLocaleString()}</div><div class="kpi-sub">${ov.rev_cnt||0} reviewers</div><div class="kpi-bar"><div class="kpi-bar-fill" style="width:100%"></div></div></div>
       <div class="kpi" style="--acc:#f97316"><div class="kpi-lbl">Issues Found</div><div class="kpi-val">${issues.toLocaleString()}</div><div class="kpi-sub">${pct(issues,total)}% issue rate</div><div class="kpi-bar"><div class="kpi-bar-fill" style="width:${pct(issues,total)}%"></div></div></div>
-      <div class="kpi" style="--acc:${accuracy>=90?'#10b981':accuracy>=70?'#eab308':'#ef4444'}"><div class="kpi-lbl">Accuracy</div><div class="kpi-val">${accuracy}%</div><div class="kpi-sub">${issues} issues out of ${total} VINs</div><div class="kpi-bar"><div class="kpi-bar-fill" style="width:${accuracy}%"></div></div></div>
-      <div class="kpi" style="--acc:#8b5cf6"><div class="kpi-lbl">Unique VINs</div><div class="kpi-val">${N(ov.vin_cnt).toLocaleString()}</div><div class="kpi-sub">distinct vehicles</div><div class="kpi-bar"><div class="kpi-bar-fill" style="width:100%"></div></div></div>
+      <div class="kpi" style="--acc:${accuracy>=90?'#10b981':accuracy>=70?'#eab308':'#ef4444'}"><div class="kpi-lbl">Accuracy</div><div class="kpi-val">${accuracy}%</div><div class="kpi-sub">${issues} issues of ${total} VINs</div><div class="kpi-bar"><div class="kpi-bar-fill" style="width:${accuracy}%"></div></div></div>
+      <div class="kpi" style="--acc:#06b6d4"><div class="kpi-lbl">Enterprises Reviewed</div><div class="kpi-val">${entCnt.toLocaleString()}</div><div class="kpi-sub">distinct enterprises</div><div class="kpi-bar"><div class="kpi-bar-fill" style="width:100%"></div></div></div>
+      <div class="kpi" style="--acc:#8b5cf6"><div class="kpi-lbl">Rooftops Reviewed</div><div class="kpi-val">${N(ov.rt_cnt).toLocaleString()}</div><div class="kpi-sub">distinct rooftops</div><div class="kpi-bar"><div class="kpi-bar-fill" style="width:100%"></div></div></div>
+    </div>
+    <div class="kpi-grid" style="grid-template-columns:repeat(4,1fr);margin-top:10px">
+      ${topCard('Top Issue · Enterprise', topEnt?topEnt.e:null, topEnt?N(topEnt.issue_cnt):0, '#ef4444')}
+      ${topCard('Top Issue · Rooftop', topRt?topRt.rooftop:null, topRt?N(topRt.issue_cnt):0, '#f97316')}
+      ${topCard('Top Issue · POC', topPoc?(topPoc.poc||'').split('@')[0]:null, topPoc?N(topPoc.issue_cnt):0, '#eab308', topPoc?topPoc.poc:'')}
+      ${topCard('Top Issue · Type', topIssue?topIssue.issue_type:null, topIssue?N(topIssue.cnt):0, '#a78bfa')}
     </div>
 
     <div class="sec-label">Analysis</div>
