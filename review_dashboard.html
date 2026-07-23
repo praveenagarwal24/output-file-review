@@ -434,38 +434,66 @@ function renderDrillTable(cols,rows){
   return `<table><thead><tr>${th}</tr></thead><tbody>${body}</tbody></table>`;
 }
 
-async function drill(type){
-  const W=buildWhere();
-  const iss=`issue_type NOT IN ('OK','Pending')`;
-  let title,sql,cols;
-  if(type==='vins'){
-    title='Total VINs · by Rooftop';
-    sql=`SELECT rooftop, COUNT(*) as total, COUNT(DISTINCT vin) as vins, COUNTIF(${iss}) as issues FROM ${SRC} ${W} GROUP BY rooftop ORDER BY total DESC`;
-    cols=[['rooftop','Rooftop'],['vins','Unique VINs','num'],['total','Rows','num'],['issues','Issues','num'],['__acc','Accuracy']];
-  } else if(type==='issues'){
+// Attach click-to-sort to every table under `root`.
+function enableSort(root){
+  if(!root) return;
+  root.querySelectorAll('table').forEach(tbl=>{
+    const ths=[...tbl.querySelectorAll('thead th')];
+    const tbody=tbl.querySelector('tbody');
+    if(!tbody) return;
+    ths.forEach((th,ci)=>{
+      th.style.cursor='pointer'; th.style.userSelect='none';
+      th.onclick=()=>{
+        const dir=th.getAttribute('data-sort')==='asc'?'desc':'asc';
+        ths.forEach(h=>{h.removeAttribute('data-sort');h.querySelector('.sort-arr')?.remove();});
+        th.setAttribute('data-sort',dir);
+        const parse=v=>{let s=(v||'').replace(/[$,%\s]/g,''),m=1;if(/^-?[\d.]+K$/i.test(s)){m=1e3;s=s.slice(0,-1);}else if(/^-?[\d.]+M$/i.test(s)){m=1e6;s=s.slice(0,-1);}const n=parseFloat(s);return isNaN(n)?null:n*m;};
+        [...tbody.querySelectorAll('tr')].sort((a,b)=>{
+          const ta=(a.children[ci]?.textContent||'').trim(), tb=(b.children[ci]?.textContent||'').trim();
+          const na=parse(ta), nb=parse(tb);
+          let r=(na!==null&&nb!==null)?na-nb:ta.localeCompare(tb);
+          return dir==='asc'?r:-r;
+        }).forEach(tr=>tbody.appendChild(tr));
+        const ar=document.createElement('span');ar.className='sort-arr';ar.textContent=dir==='asc'?' ▲':' ▼';ar.style.fontSize='8px';ar.style.color='var(--blue)';th.appendChild(ar);
+      };
+    });
+  });
+}
+
+// Instant drill-downs — rendered from data already loaded (no extra BQ round-trip).
+function drill(type){
+  if(!DRILL){return;}
+  let title,cols,rows;
+  if(type==='issues'){
+    const ti=DRILL.issR.filter(r=>r.issue_type!=='OK'&&r.issue_type!=='Pending');
+    const tot=ti.reduce((s,r)=>s+N(r.cnt),0);
     title='Issues Found · by Type';
-    sql=`SELECT issue_type, COUNT(*) as total FROM ${SRC} ${W} ${W?'AND':'WHERE'} ${iss} GROUP BY issue_type ORDER BY total DESC`;
-    cols=[['issue_type','Issue Type'],['total','Count','num']];
+    rows=ti.map(r=>({issue_type:r.issue_type,total:N(r.cnt),pctv:pct(N(r.cnt),tot)+'%'}));
+    cols=[['issue_type','Issue Type'],['total','Count','num'],['pctv','% of Issues']];
+  } else if(type==='vins'){
+    title='Total VINs · by Rooftop';
+    rows=DRILL.rtR.map(r=>({rooftop:r.rooftop,vins:N(r.vins),total:N(r.total),issues:N(r.issue_cnt)})).sort((a,b)=>b.total-a.total);
+    cols=[['rooftop','Rooftop'],['vins','Unique VINs','num'],['total','Rows','num'],['issues','Issues','num'],['__acc','Accuracy']];
   } else if(type==='accuracy'){
     title='Accuracy · by Rooftop (worst first)';
-    sql=`SELECT rooftop, COUNT(*) as total, COUNTIF(${iss}) as issues FROM ${SRC} ${W} GROUP BY rooftop ORDER BY issues DESC`;
+    rows=DRILL.rtR.map(r=>({rooftop:r.rooftop,total:N(r.total),issues:N(r.issue_cnt)})).sort((a,b)=>b.issues-a.issues);
     cols=[['rooftop','Rooftop'],['total','Total','num'],['issues','Issues','num'],['__acc','Accuracy']];
-  } else if(type==='enterprises'){
-    title='Enterprises Reviewed';
-    sql=`SELECT name, COUNT(DISTINCT rooftop) as rooftops, COUNT(*) as total, COUNTIF(is_issue) as issues FROM (SELECT COALESCE(enterprise_name, enterprise) as name, rooftop, (${iss}) as is_issue FROM ${SRC} ${W}) GROUP BY name ORDER BY total DESC`;
-    cols=[['name','Enterprise'],['rooftops','Rooftops','num'],['total','Reviews','num'],['issues','Issues','num'],['__acc','Accuracy']];
   } else if(type==='rooftops'){
     title='Rooftops Reviewed';
-    sql=`SELECT rooftop, COUNT(DISTINCT vin) as vins, COUNT(*) as total, COUNTIF(${iss}) as issues FROM ${SRC} ${W} GROUP BY rooftop ORDER BY total DESC`;
+    rows=DRILL.rtR.map(r=>({rooftop:r.rooftop,vins:N(r.vins),total:N(r.total),issues:N(r.issue_cnt)})).sort((a,b)=>b.total-a.total);
     cols=[['rooftop','Rooftop'],['vins','Unique VINs','num'],['total','Reviews','num'],['issues','Issues','num'],['__acc','Accuracy']];
+  } else if(type==='enterprises'){
+    title='Enterprises Reviewed';
+    const map={};
+    DRILL.rtR.forEach(r=>{const name=r.ent_name||r.enterprise||'—';(map[name]=map[name]||{name,rooftops:0,total:0,issues:0});map[name].rooftops++;map[name].total+=N(r.total);map[name].issues+=N(r.issue_cnt);});
+    rows=Object.values(map).sort((a,b)=>b.total-a.total);
+    cols=[['name','Enterprise'],['rooftops','Rooftops','num'],['total','Reviews','num'],['issues','Issues','num'],['__acc','Accuracy']];
   } else return;
-
   document.getElementById('modal-title').textContent=title;
   const mb=document.getElementById('modal-body');
-  mb.innerHTML='<div style="padding:44px;text-align:center"><div class="spinner" style="margin:0 auto"></div></div>';
+  mb.innerHTML=renderDrillTable(cols,rows);
   document.getElementById('modal-ov').classList.add('open');
-  try{ const rows=await query(sql); mb.innerHTML=renderDrillTable(cols,rows); }
-  catch(e){ mb.innerHTML=`<div class="err">⚠ ${e.message}</div>`; }
+  enableSort(mb);
 }
 
 function buildWhere() {
@@ -490,6 +518,7 @@ const ic=t=>COLORS[t]||'#64748b';
 const pct=(a,b)=>b>0?Math.round(a/b*100):0;
 const N=v=>parseInt(v)||0;
 const money=v=>{const n=Number(v)||0;if(n>=1e6)return '$'+(n/1e6).toFixed(1)+'M';if(n>=1e3)return '$'+(n/1e3).toFixed(1)+'K';return '$'+Math.round(n);};
+let DRILL=null;  // in-memory data for instant drill-downs
 
 function donut(data,size=120){
   const total=data.reduce((s,d)=>s+d.v,0);
@@ -556,8 +585,8 @@ async function loadAll(){
       query(`SELECT COUNT(*) as total, COUNTIF(issue_type='OK' OR issue_type='Pending') as ok_cnt, COUNTIF(issue_type NOT IN ('OK','Pending')) as issue_cnt, COUNT(DISTINCT reviewer) as rev_cnt, COUNT(DISTINCT rooftop) as rt_cnt, COUNT(DISTINCT COALESCE(enterprise_name, enterprise)) as ent_cnt, COUNT(DISTINCT vin) as vin_cnt FROM ${SRC} ${W}`),
       query(`SELECT issue_type, COUNT(*) as cnt FROM ${SRC} ${W} GROUP BY issue_type ORDER BY cnt DESC`),
       query(`SELECT reviewer, COUNT(*) as total, COUNTIF(issue_type='OK' OR issue_type='Pending') as ok_cnt, COUNTIF(issue_type NOT IN ('OK','Pending')) as issue_cnt, MAX(review_date) as last_date FROM ${SRC} ${W} GROUP BY reviewer ORDER BY total DESC`),
-      query(`SELECT rooftop, enterprise, ANY_VALUE(enterprise_name) as ent_name, ANY_VALUE(apld_team_name) as team_name, ANY_VALUE(cs_poc_email) as cs_email, COUNT(*) as total, COUNTIF(issue_type='OK' OR issue_type='Pending') as ok_cnt, COUNTIF(issue_type NOT IN ('OK','Pending')) as issue_cnt FROM ${SRC} ${W} GROUP BY rooftop,enterprise ORDER BY total DESC`),
-      query(`SELECT review_date, COUNT(*) as cnt FROM ${SRC} ${W} GROUP BY review_date ORDER BY review_date`),
+      query(`SELECT rooftop, enterprise, ANY_VALUE(enterprise_name) as ent_name, ANY_VALUE(apld_team_name) as team_name, ANY_VALUE(cs_poc_email) as cs_email, COUNT(DISTINCT vin) as vins, COUNT(*) as total, COUNTIF(issue_type='OK' OR issue_type='Pending') as ok_cnt, COUNTIF(issue_type NOT IN ('OK','Pending')) as issue_cnt FROM ${SRC} ${W} GROUP BY rooftop,enterprise ORDER BY total DESC`),
+      query(`SELECT review_date, COUNT(*) as cnt, COUNTIF(issue_type NOT IN ('OK','Pending')) as iss FROM ${SRC} ${W} GROUP BY review_date ORDER BY review_date`),
       query(`SELECT review_date,reviewer,rooftop,vin,issue_type,comment FROM ${SRC} ${W} ${W?'AND':'WHERE'} issue_type NOT IN ('OK','Pending') ORDER BY reviewed_at DESC LIMIT 25`),
       query(`SELECT customer_segment, COUNT(*) as total, COUNTIF(issue_type NOT IN ('OK','Pending')) as issue_cnt FROM ${SRC} ${W} GROUP BY customer_segment ORDER BY total DESC`),
       query(`SELECT customer_segment, SUM(arr) as arr, SUM(IF(has_issue,arr,0)) as arr_risk, COUNT(*) as teams FROM (SELECT team_id, ANY_VALUE(customer_segment) as customer_segment, MAX(SAFE_CAST(apld_contracted_arr AS FLOAT64)) as arr, MAX(IF(issue_type NOT IN ('OK','Pending'),1,0))=1 as has_issue FROM ${SRC} ${W} GROUP BY team_id) GROUP BY customer_segment ORDER BY arr DESC`),
@@ -575,6 +604,7 @@ async function loadAll(){
     const entCnt=N(ov.ent_cnt);
     const topIssue=issR.filter(r=>r.issue_type!=='OK'&&r.issue_type!=='Pending')[0]||null;
     const worst=(worstTeamR&&worstTeamR[0])?worstTeamR[0]:null;
+    DRILL={rtR,issR};  // cache for instant drill-downs
 
     mc.innerHTML=`
     <div class="sec-label">Overview</div>
@@ -597,6 +627,17 @@ async function loadAll(){
       <div class="chart-card"><div class="chart-title">Issue Breakdown</div>${donut(issR.map(r=>({l:r.issue_type,v:N(r.cnt),c:ic(r.issue_type)})))}</div>
       <div class="chart-card"><div class="chart-title">Daily Review Trend</div>${trendBars(trendR)}</div>
       <div class="chart-card"><div class="chart-title">Top Issues</div>${hbars(issR.filter(r=>r.issue_type!=='OK'&&r.issue_type!=='Pending').slice(0,7).map(r=>({l:r.issue_type,v:N(r.cnt)})),ic)}</div>
+    </div>
+
+    <div class="sec-label">Issue Analytics</div>
+    <div class="charts-row" style="grid-template-columns:1fr 1fr 1fr">
+      <div class="chart-card"><div class="chart-title">Issues by Rooftop</div>${hbars([...rtR].sort((a,b)=>N(b.issue_cnt)-N(a.issue_cnt)).slice(0,8).map(r=>({l:r.rooftop,v:N(r.issue_cnt)})),()=>'#f97316')}</div>
+      <div class="chart-card"><div class="chart-title">Issue Rate by Rooftop</div>${hbars([...rtR].map(r=>({l:r.rooftop,v:pct(N(r.issue_cnt),N(r.total))})).sort((a,b)=>b.v-a.v).slice(0,8),()=>'#ef4444',v=>v+'%')}</div>
+      <div class="chart-card"><div class="chart-title">Issues by Reviewer</div>${hbars([...rvR].sort((a,b)=>N(b.issue_cnt)-N(a.issue_cnt)).slice(0,8).map(r=>({l:(r.reviewer||'').split('@')[0],v:N(r.issue_cnt)})),()=>'#8b5cf6')}</div>
+    </div>
+    <div class="charts-row" style="grid-template-columns:2fr 1fr">
+      <div class="chart-card"><div class="chart-title">Daily Issues Trend</div>${trendBars(trendR.map(r=>({review_date:r.review_date,cnt:r.iss})))}</div>
+      <div class="chart-card"><div class="chart-title">Issues by Segment</div>${hbars(segRows.map(r=>({l:r.customer_segment,v:N(r.issue_cnt)})),()=>'#f59e0b')}</div>
     </div>
 
     <div class="sec-label">Revenue &amp; Segment</div>
@@ -639,6 +680,7 @@ async function loadAll(){
     </div>`;
 
     document.getElementById('last-updated').textContent='Updated '+new Date().toLocaleTimeString();
+    enableSort(mc);  // make all rendered tables sortable
   }catch(e){ mc.innerHTML=`<div class="err">⚠ ${e.message}</div>`; }
   btn.classList.remove('loading');
 }
