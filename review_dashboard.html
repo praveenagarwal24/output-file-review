@@ -168,6 +168,8 @@ tr:hover td{background:rgba(255,255,255,.02)}
 .modal-close{background:none;border:none;color:var(--muted);font-size:18px;cursor:pointer;line-height:1}
 .modal-close:hover{color:var(--text)}
 .modal-body{max-height:64vh;overflow:auto}
+.copy-mini{background:none;border:none;color:var(--muted);cursor:pointer;font-size:11px;padding:0 3px}
+.copy-mini:hover{color:var(--blue)}
 
 @media(max-width:1100px){.kpi-grid{grid-template-columns:repeat(3,1fr)}.charts-row{grid-template-columns:1fr 1fr}}
 @media(max-width:768px){.kpi-grid{grid-template-columns:1fr 1fr}.charts-row,.tables-row{grid-template-columns:1fr}main,#filter-bar,header{padding-left:14px;padding-right:14px}}
@@ -427,6 +429,7 @@ function renderDrillTable(cols,rows){
     let v;
     if(c[0]==='__acc'){const t=N(r.total),iss=N(r.issues);const a=100-pct(iss,t);v=`<span style="font-weight:700;color:${a>=90?'#10b981':a>=70?'#eab308':'#f97316'}">${a}%</span>`;}
     else if(c[2]==='money'){v=money(r[c[0]]);}
+    else if(c[2]==='vin'){const x=r[c[0]];v=x?`<span style="font-family:monospace;color:var(--blue)">${x}</span> <button class="copy-mini" onclick="event.stopPropagation();copyCell('${(''+x).replace(/'/g,"\\'")}',this)" title="Copy VIN">⧉</button>`:'—';}
     else if(c[2]==='mono'){const x=r[c[0]];v=x?`<span style="font-family:monospace;color:var(--blue)">${x}</span>`:'—';}
     else if(c[2]==='num'){v=N(r[c[0]]).toLocaleString();}
     else {v=(r[c[0]]==null||r[c[0]]==='')?'—':r[c[0]];}
@@ -468,7 +471,9 @@ function _copy(text,btn){
     .catch(()=>{btn.textContent='Copy failed';});
 }
 function copyCol(f,btn){ if(!_drillRows)return; _copy(_drillRows.map(r=>r[f]==null?'':r[f]).join('\n'),btn); }
-function copyTbl(btn){ if(!_drillRows)return; const h='VIN\tEnterprise\tRooftop\tReviewer\tDate'; const body=_drillRows.map(r=>[r.vin,r.enterprise,r.rooftop,r.reviewer,r.review_date].map(x=>x==null?'':x).join('\t')).join('\n'); _copy(h+'\n'+body,btn); }
+function copyCell(text,btn){ navigator.clipboard.writeText(text).then(()=>{const t=btn.textContent;btn.textContent='✓';setTimeout(()=>btn.textContent=t,900);}); }
+function copyTbl(btn){ if(!_drillRows)return; const h='VIN\tEnterprise\tRooftop\tRooftop ID\tReviewer\tDate'; const body=_drillRows.map(r=>[r.vin,r.enterprise,r.rooftop,r.team_id,r.reviewer,r.review_date].map(x=>x==null?'':x).join('\t')).join('\n'); _copy(h+'\n'+body,btn); }
+function downloadCSV(){ if(!_drillRows)return; const cols=['vin','enterprise','rooftop','team_id','reviewer','review_date'],head=['VIN','Enterprise','Rooftop','Rooftop ID','Reviewer','Date']; const esc=s=>{s=(s==null?'':''+s);return /[",\n]/.test(s)?'"'+s.replace(/"/g,'""')+'"':s;}; const csv=[head.join(',')].concat(_drillRows.map(r=>cols.map(c=>esc(r[c])).join(','))).join('\n'); const a=document.createElement('a'); a.href=URL.createObjectURL(new Blob([csv],{type:'text/csv'})); a.download='issue_vins.csv'; a.click(); setTimeout(()=>URL.revokeObjectURL(a.href),1000); }
 
 function drillIssue(it){
   if(!DRILL||!DRILL.issVins) return;
@@ -478,8 +483,9 @@ function drillIssue(it){
     <button class="btn" onclick="copyCol('vin',this)">Copy VINs</button>
     <button class="btn" onclick="copyCol('enterprise',this)">Copy Enterprises</button>
     <button class="btn" onclick="copyCol('rooftop',this)">Copy Rooftops</button>
-    <button class="btn" onclick="copyTbl(this)">Copy Table (TSV)</button></div>`;
-  const cols=[['vin','VIN','mono'],['enterprise','Enterprise'],['rooftop','Rooftop'],['reviewer','Reviewer'],['review_date','Date']];
+    <button class="btn" onclick="copyTbl(this)">Copy Table (TSV)</button>
+    <button class="btn" onclick="downloadCSV()">⬇ Download CSV</button></div>`;
+  const cols=[['vin','VIN','vin'],['enterprise','Enterprise'],['rooftop','Rooftop'],['team_id','Rooftop ID','mono'],['reviewer','Reviewer'],['review_date','Date']];
   const mb=document.getElementById('modal-body');
   mb.innerHTML=bar+renderDrillTable(cols,_drillRows);
   document.getElementById('modal-ov').classList.add('open');
@@ -624,7 +630,7 @@ async function loadAll(){
       query(`SELECT customer_segment, SUM(arr) as arr, SUM(IF(has_issue,arr,0)) as arr_risk, COUNT(*) as teams FROM (SELECT team_id, ANY_VALUE(customer_segment) as customer_segment, MAX(SAFE_CAST(apld_contracted_arr AS FLOAT64)) as arr, MAX(IF(issue_type NOT IN ('OK','Pending'),1,0))=1 as has_issue FROM ${SRC} ${W} GROUP BY team_id) GROUP BY customer_segment ORDER BY arr DESC`),
       query(`SELECT ae_poc_email, COUNT(*) as total, COUNTIF(issue_type NOT IN ('OK','Pending')) as issue_cnt, MAX(review_date) as last_date FROM ${SRC} ${W} GROUP BY ae_poc_email ORDER BY total DESC`),
       query(`SELECT team_id, MAX(enterprise_name) as enterprise_name, MAX(team_name) as team_name, MAX(ae) as ae, MAX(ob) as ob, MAX(cs) as cs, COUNTIF(is_issue) as issue_cnt FROM (SELECT team_id, enterprise_name, apld_team_name as team_name, ae_poc_email as ae, ob_poc_email as ob, cs_poc_email as cs, (issue_type NOT IN ('OK','Pending')) as is_issue FROM ${SRC} ${W}) WHERE enterprise_name IS NOT NULL GROUP BY team_id ORDER BY issue_cnt DESC LIMIT 1`),
-      query(`SELECT vin, rooftop, COALESCE(enterprise_name, enterprise) as enterprise, issue_type, review_date, reviewer FROM ${SRC} ${W} ${W?'AND':'WHERE'} issue_type NOT IN ('OK','Pending') ORDER BY issue_type, review_date DESC`)
+      query(`SELECT vin, rooftop, team_id, COALESCE(enterprise_name, enterprise) as enterprise, issue_type, review_date, reviewer FROM ${SRC} ${W} ${W?'AND':'WHERE'} issue_type NOT IN ('OK','Pending') ORDER BY issue_type, review_date DESC`)
     ]);
     const ov=ovR[0]||{};
     const total=N(ov.total),ok=N(ov.ok_cnt),issues=N(ov.issue_cnt);
