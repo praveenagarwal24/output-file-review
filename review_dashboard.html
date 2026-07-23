@@ -561,6 +561,12 @@ function ring(p){
   return `<div class="ring-wrap"><svg class="ring-svg" width="68" height="68" viewBox="0 0 68 68"><circle class="ring-bg" cx="34" cy="34" r="${r}"/><circle class="ring-fill" cx="34" cy="34" r="${r}" stroke="${col}" stroke-dasharray="${dash} ${c}"/></svg><div class="ring-center"><span class="ring-pct" style="color:${col}">${p}%</span><span class="ring-lbl">OK</span></div></div>`;
 }
 
+function topIssuesCard(label,rows,color){
+  const line=r=>`<div style="display:flex;justify-content:space-between;gap:8px;font-size:11px;line-height:1.6;white-space:nowrap"><span style="overflow:hidden;text-overflow:ellipsis"><span style="display:inline-block;width:7px;height:7px;border-radius:50%;background:${ic(r.name)};margin-right:6px"></span>${r.name}</span><span style="color:var(--muted);flex-shrink:0"><b style="color:var(--text)">${r.cnt.toLocaleString()}</b> · ${r.pct}%</span></div>`;
+  const body=rows.length?rows.map(line).join(''):'<div style="color:var(--muted);font-size:11px">—</div>';
+  return `<div class="kpi" style="--acc:${color}"><div class="kpi-lbl">${label}</div><div style="margin:8px 0 4px">${body}</div><div class="kpi-bar"><div class="kpi-bar-fill" style="width:100%"></div></div></div>`;
+}
+
 function pocCard(label,ae,ob,cs,color){
   const line=(role,em)=>`<div style="font-size:11px;line-height:1.55;white-space:nowrap;overflow:hidden;text-overflow:ellipsis"><span style="color:var(--muted);display:inline-block;width:36px">${role}</span>${em?`<a href="mailto:${em}" title="${em}" style="color:${color};font-weight:600">${em.split('@')[0]}</a>`:'<span style="color:var(--muted)">—</span>'}</div>`;
   return `<div class="kpi" style="--acc:${color}"><div class="kpi-lbl">${label}</div><div style="margin:8px 0 4px">${line('AE',ae)}${line('OB',ob)}${line('CSM',cs)}</div><div class="kpi-bar"><div class="kpi-bar-fill" style="width:100%"></div></div></div>`;
@@ -619,6 +625,7 @@ async function loadAll(){
     const entCnt=N(ov.ent_cnt);
     const topIssue=issR.filter(r=>r.issue_type!=='OK'&&r.issue_type!=='Pending')[0]||null;
     const worst=(worstTeamR&&worstTeamR[0])?worstTeamR[0]:null;
+    const top3Issues=issR.filter(r=>r.issue_type!=='OK'&&r.issue_type!=='Pending').slice(0,3).map(r=>({name:r.issue_type,cnt:N(r.cnt),pct:pct(N(r.cnt),issues)}));
     DRILL={rtR,issR,issByAcct:issAcctR};  // cache for instant drill-downs
 
     mc.innerHTML=`
@@ -634,7 +641,7 @@ async function loadAll(){
       ${topCard('Top Issue · Enterprise', worst?worst.enterprise_name:null, worst?N(worst.issue_cnt):0, '#ef4444')}
       ${topCard('Top Issue · Rooftop', worst?worst.team_name:null, worst?N(worst.issue_cnt):0, '#f97316')}
       ${pocCard('POCs · Top Issue Team', worst?worst.ae:null, worst?worst.ob:null, worst?worst.cs:null, '#eab308')}
-      ${topCard('Top Issue · Type', topIssue?topIssue.issue_type:null, topIssue?N(topIssue.cnt):0, '#a78bfa')}
+      ${topIssuesCard('Top 3 Issues · Type', top3Issues, '#a78bfa')}
     </div>
 
     <div class="sec-label">Issues</div>
@@ -654,21 +661,6 @@ async function loadAll(){
       <div class="chart-card"><div class="chart-title">Daily Issues Trend</div>${trendBars(trendR.map(r=>({review_date:r.review_date,cnt:r.iss})))}</div>
       <div class="chart-card"><div class="chart-title">Issues by Segment</div>${hbars(segRows.map(r=>({l:r.customer_segment,v:N(r.issue_cnt)})),()=>'#f59e0b')}</div>
     </div>
-
-    <div class="sec-label">Revenue &amp; Segment</div>
-    <div class="kpi-grid" style="grid-template-columns:repeat(3,1fr)">
-      <div class="kpi" style="--acc:#8b5cf6"><div class="kpi-lbl">Contracted ARR (in scope)</div><div class="kpi-val">${money(arrTotal)}</div><div class="kpi-sub">across ${arrRows.reduce((s,r)=>s+N(r.teams),0)} teams reviewed</div><div class="kpi-bar"><div class="kpi-bar-fill" style="width:100%"></div></div></div>
-      <div class="kpi" style="--acc:#f97316"><div class="kpi-lbl">ARR at Risk</div><div class="kpi-val">${money(arrRisk)}</div><div class="kpi-sub">${pct(arrRisk,arrTotal)}% of in-scope ARR · teams with ≥1 issue</div><div class="kpi-bar"><div class="kpi-bar-fill" style="width:${pct(arrRisk,arrTotal)}%"></div></div></div>
-      <div class="kpi" style="--acc:#3b82f6"><div class="kpi-lbl">Segments</div><div class="kpi-val">${segRows.length}</div><div class="kpi-sub">customer segments in scope</div><div class="kpi-bar"><div class="kpi-bar-fill" style="width:100%"></div></div></div>
-    </div>
-    <div class="charts-row" style="grid-template-columns:1fr 1fr 1fr">
-      <div class="chart-card"><div class="chart-title">Reviews by Segment</div>${hbars(segRows.map(r=>({l:r.customer_segment,v:N(r.total)})),()=>'#3b82f6')}</div>
-      <div class="chart-card"><div class="chart-title">Issues by Segment</div>${hbars(segRows.map(r=>({l:r.customer_segment,v:N(r.issue_cnt)})),()=>'#f97316')}</div>
-      <div class="chart-card"><div class="chart-title">Contracted ARR by Segment</div>${hbars(arrRows.map(r=>({l:r.customer_segment,v:Math.round(Number(r.arr)||0)})),()=>'#8b5cf6',money)}</div>
-    </div>
-
-    <div class="sec-label">Rooftop Progress</div>
-    <div class="rooftop-grid">${rtR.map(r=>{const t=N(r.total),o=N(r.ok_cnt),iss=N(r.issue_cnt);return`<div class="rt-card">${ring(pct(o,t))}<div class="rt-name" title="${r.rooftop}">${r.rooftop||'Unknown'}</div><div class="rt-count">${t} VINs · <span style="color:var(--issue)">${iss} issues</span></div></div>`;}).join('')}</div>
 
     <div class="sec-label">Performance</div>
     <div class="tables-row" style="grid-template-columns:1fr">
