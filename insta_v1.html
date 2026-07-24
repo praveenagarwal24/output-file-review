@@ -285,6 +285,7 @@
             <!-- qc_done push status -->
             <div id="qc-status" class="hidden mt-3 text-[12px] rounded-lg px-3 py-2.5 leading-snug"></div>
             <button id="qc-retry" class="hidden mt-2 w-full border border-blue-200 text-blue-700 font-semibold py-2 rounded-lg hover:bg-blue-50 transition text-[12px]">Retry qc_done push</button>
+            <button id="qc-done-btn" class="hidden mt-2 w-full bg-emerald-600 hover:bg-emerald-700 text-white font-bold py-2.5 rounded-lg transition text-[12px]">Back to rooftops</button>
             <div class="mt-3 flex gap-2">
                 <button id="sum-keep" class="flex-1 border border-slate-200 text-slate-600 font-semibold py-2.5 rounded-lg hover:bg-slate-50 transition">Keep reviewing</button>
                 <button id="sum-download" class="flex-1 bg-blue-600 hover:bg-blue-700 text-white font-bold py-2.5 rounded-lg flex items-center justify-center space-x-2 transition">
@@ -349,9 +350,10 @@
 <!-- Enterprise ID modal (shown after CSV upload) -->
 <div id="ent-modal" class="fixed inset-0 z-50 bg-slate-900/60 items-center justify-center hidden p-4">
     <div class="bg-white rounded-2xl shadow-2xl w-full max-w-md p-6">
-        <h3 class="font-bold text-slate-800 text-[17px] mb-1">Enterprise ID</h3>
-        <p class="text-[12px] text-slate-500 leading-relaxed mb-4">Enter the <b>enterpriseId</b> for this file. It applies to every rooftop and is sent when marking VINs as qc_done.</p>
-        <input id="ent-input" type="text" placeholder="e.g. 00d2aafe9" class="w-full p-2.5 border border-slate-200 rounded-lg text-[13px] font-mono outline-none focus:border-blue-400 focus:ring-1 focus:ring-blue-400 transition">
+        <h3 class="font-bold text-slate-800 text-[17px] mb-1">Enterprise</h3>
+        <p class="text-[12px] text-slate-500 leading-relaxed mb-4">Choose the <b>enterprise</b> for this file. It applies to every rooftop and is sent when marking VINs as qc_done.</p>
+        <select id="ent-select" class="w-full p-2.5 border border-slate-200 rounded-lg text-[13px] bg-white outline-none focus:border-blue-400 focus:ring-1 focus:ring-blue-400 transition"></select>
+        <input id="ent-input" type="text" placeholder="Enter enterprise ID manually" class="hidden w-full mt-2 p-2.5 border border-slate-200 rounded-lg text-[13px] font-mono outline-none focus:border-blue-400 focus:ring-1 focus:ring-blue-400 transition">
         <div id="ent-error" class="hidden mt-2 text-[12px] text-rose-600 bg-rose-50 border border-rose-200 rounded-lg px-3 py-2"></div>
         <div class="mt-4 flex gap-2">
             <button id="ent-cancel" class="flex-1 border border-slate-200 text-slate-600 font-semibold py-2.5 rounded-lg hover:bg-slate-50 transition">Back</button>
@@ -400,9 +402,15 @@ const STORAGE_PREFIX = 'spyne_io_review_';
 const QC_API_URL   = 'https://api.spyne.ai/console/v1/sku/update-sku-crm-status';
 const QC_STATUS    = 'qc_done';
 const QC_CHUNK      = 200;   // max skuIds per request
-const TOKEN_STORAGE_KEY = 'spyne_io_review_token';   // sessionStorage (per tab)
-let apiToken     = '';   // Bearer token, entered at login
-let enterpriseId = '';   // one enterprise per file, entered after upload
+const TOKEN_STORAGE_KEY = 'spyne_io_review_token';   // localStorage (persisted, prefilled each login)
+let apiToken     = '';   // Bearer token, entered/confirmed at login
+let enterpriseId = '';   // one enterprise per file, chosen after upload
+
+// Known enterprises for the dropdown. Add more here as { id, name }; users can also type one manually.
+const ENTERPRISES = [
+    { id: '00d2aafe9', name: 'IM Marketplace GmBH' },
+    // { id: 'xxxxxxxxx', name: 'Another Enterprise' },
+];
 
 // ── Auth (Google Sign-In) ──────────────────────────────────────────────────────
 // 1) Create a Google OAuth 2.0 "Web application" client ID (Google Cloud Console →
@@ -865,6 +873,7 @@ function openSummary() {
     // Reset the qc_done push status each time the summary opens
     document.getElementById('qc-status').classList.add('hidden');
     document.getElementById('qc-retry').classList.add('hidden');
+    document.getElementById('qc-done-btn').classList.add('hidden');
 }
 function markCurrentPendingAsOk() {
     const now = new Date().toISOString();
@@ -931,12 +940,15 @@ async function pushQcDone(skuIds) {
     }
     return { sent: sent };
 }
+document.getElementById('qc-done-btn').addEventListener('click', () => { closeSummary(); backToRooftops(); });
 let _lastOkVins = [];
 async function runQcPush(okVins) {
     _lastOkVins = okVins;
     const retryEl = document.getElementById('qc-retry');
+    const doneEl  = document.getElementById('qc-done-btn');
     retryEl.classList.add('hidden');
-    if (!okVins.length)   { setQcStatus('info',  'No OK VINs in this rooftop to mark qc_done.'); return; }
+    doneEl.classList.add('hidden');
+    if (!okVins.length)   { setQcStatus('info',  'No OK VINs in this rooftop to mark qc_done.'); doneEl.classList.remove('hidden'); return; }
     if (!apiToken)        { setQcStatus('error', 'No API token found — sign out and sign in again to enter it.'); return; }
     if (!enterpriseId)    { setQcStatus('error', 'No enterprise ID set for this file.'); openEntModal(); return; }
     setQcStatus('pending', 'Marking ' + okVins.length + ' OK VIN' + (okVins.length === 1 ? '' : 's') + ' as qc_done…');
@@ -944,6 +956,7 @@ async function runQcPush(okVins) {
     try {
         const res = await pushQcDone(okVins);
         setQcStatus('ok', '✓ Marked ' + res.sent + ' VIN' + (res.sent === 1 ? '' : 's') + ' as qc_done.');
+        doneEl.classList.remove('hidden');
     } catch (err) {
         let m = err && err.message ? err.message : String(err);
         if (/failed to fetch|networkerror/i.test(m)) m += ' (likely a CORS/network block — the API origin may not allow this site, or the token was rejected before CORS headers were returned)';
@@ -1181,8 +1194,9 @@ function toast(msg) {
 // ── API token modal (shown after Google sign-in) ───────────────────────────────
 let _afterToken = null;
 function requireTokenThen(next) {
+    // Always show the modal, prefilled with the saved token, so the user can
+    // keep the same token (Continue) or change it before proceeding.
     _afterToken = next;
-    if (apiToken) { const cb = _afterToken; _afterToken = null; cb(); return; }
     openTokenModal();
 }
 function openTokenModal() {
@@ -1198,25 +1212,52 @@ document.getElementById('token-continue').addEventListener('click', () => {
     const val = document.getElementById('token-input').value.trim().replace(/^Bearer\s+/i, '');
     if (!val) { const e = document.getElementById('token-error'); e.textContent = 'Please paste your Bearer token.'; e.classList.remove('hidden'); return; }
     apiToken = val;
-    try { sessionStorage.setItem(TOKEN_STORAGE_KEY, val); } catch (e) {}
+    try { localStorage.setItem(TOKEN_STORAGE_KEY, val); } catch (e) {}
     closeTokenModal();
     const cb = _afterToken; _afterToken = null; if (cb) cb();
 });
 document.getElementById('token-logout').addEventListener('click', () => { closeTokenModal(); logout(); });
 
-// ── Enterprise ID modal (shown after CSV upload) ────────────────────────────────
+// ── Enterprise modal (shown after CSV upload) ───────────────────────────────────
+function buildEntOptions() {
+    const sel = document.getElementById('ent-select');
+    sel.innerHTML = '';
+    ENTERPRISES.forEach(e => {
+        const o = document.createElement('option');
+        o.value = e.id; o.textContent = e.name + ' (' + e.id + ')';
+        sel.appendChild(o);
+    });
+    const other = document.createElement('option');
+    other.value = '__other__'; other.textContent = 'Other — enter manually…';
+    sel.appendChild(other);
+}
+function syncEntManual() {
+    const sel = document.getElementById('ent-select');
+    const inp = document.getElementById('ent-input');
+    if (sel.value === '__other__') { inp.classList.remove('hidden'); setTimeout(() => inp.focus(), 50); }
+    else inp.classList.add('hidden');
+}
 function openEntModal() {
     document.getElementById('ent-error').classList.add('hidden');
-    const ei = document.getElementById('ent-input');
-    ei.value = enterpriseId || '';
+    buildEntOptions();
+    const sel = document.getElementById('ent-select');
+    const inp = document.getElementById('ent-input');
+    const known = ENTERPRISES.some(e => e.id === enterpriseId);
+    if (enterpriseId && known)      { sel.value = enterpriseId; inp.value = ''; }
+    else if (enterpriseId)          { sel.value = '__other__';  inp.value = enterpriseId; }
+    else                            { sel.selectedIndex = 0;    inp.value = ''; }
+    syncEntManual();
     document.getElementById('ent-modal').style.display = 'flex';
-    setTimeout(() => ei.focus(), 50);
 }
 function closeEntModal() { document.getElementById('ent-modal').style.display = 'none'; }
 function entModalOpen() { return document.getElementById('ent-modal').style.display === 'flex'; }
+document.getElementById('ent-select').addEventListener('change', syncEntManual);
 document.getElementById('ent-continue').addEventListener('click', () => {
-    const val = document.getElementById('ent-input').value.trim();
-    if (!val) { const e = document.getElementById('ent-error'); e.textContent = 'Please enter the enterprise ID.'; e.classList.remove('hidden'); return; }
+    const sel = document.getElementById('ent-select');
+    const err = document.getElementById('ent-error');
+    let val = sel.value;
+    if (val === '__other__') val = document.getElementById('ent-input').value.trim();
+    if (!val) { err.textContent = 'Please choose or enter an enterprise ID.'; err.classList.remove('hidden'); return; }
     enterpriseId = val;
     closeEntModal();
 });
@@ -1256,7 +1297,7 @@ function handleCredentialResponse(resp) {
 function logout() {
     currentUser = ''; currentUserName = '';
     apiToken = ''; enterpriseId = '';
-    try { sessionStorage.removeItem(TOKEN_STORAGE_KEY); } catch(e){}
+    try { localStorage.removeItem(TOKEN_STORAGE_KEY); } catch(e){}
     try { localStorage.removeItem(AUTH_STORAGE_KEY); } catch(e){}
     try { if (window.google && google.accounts && google.accounts.id) google.accounts.id.disableAutoSelect(); } catch(e){}
     const chip = document.getElementById('user-chip');
@@ -1299,11 +1340,10 @@ function initGoogleSignIn() {
     let saved = null;
     try { saved = JSON.parse(localStorage.getItem(AUTH_STORAGE_KEY) || 'null'); } catch(e) { saved = null; }
     if (typeof saved === 'string') saved = { email: saved, name: '' };   // migrate old format
-    try { apiToken = sessionStorage.getItem(TOKEN_STORAGE_KEY) || ''; } catch(e) { apiToken = ''; }
+    try { apiToken = localStorage.getItem(TOKEN_STORAGE_KEY) || ''; } catch(e) { apiToken = ''; }
     if (saved && saved.email && ALLOWED.has(String(saved.email).toLowerCase())) {
         setLoggedIn(String(saved.email).toLowerCase(), saved.name || '');
-        show('upload-view');
-        if (!apiToken) openTokenModal();   // session restored but token cleared (new tab) → ask again
+        requireTokenThen(() => show('upload-view'));   // prompt prefilled: keep or change the saved token
     } else {
         show('login-view');
     }
