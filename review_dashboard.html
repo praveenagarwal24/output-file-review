@@ -476,31 +476,41 @@ function enableSort(root){
 }
 
 // Drill into a single issue type → VIN-level list (VIN, enterprise, rooftop) + copy.
-let _drillRows=null;
+let _drillRows=null,_drillCols=null;
 function _copy(text,btn){
   navigator.clipboard.writeText(text).then(()=>{const t=btn.textContent;btn.textContent='Copied ✓';setTimeout(()=>btn.textContent=t,1200);})
     .catch(()=>{btn.textContent='Copy failed';});
 }
 function copyCol(f,btn){ if(!_drillRows)return; _copy(_drillRows.map(r=>r[f]==null?'':r[f]).join('\n'),btn); }
 function copyCell(text,btn){ navigator.clipboard.writeText(text).then(()=>{const t=btn.textContent;btn.textContent='✓';setTimeout(()=>btn.textContent=t,900);}); }
-function copyTbl(btn){ if(!_drillRows)return; const h='VIN\tEnterprise\tRooftop\tRooftop ID\tReviewer\tDate'; const body=_drillRows.map(r=>[r.vin,r.enterprise,r.rooftop,r.team_id,r.reviewer,r.review_date].map(x=>x==null?'':x).join('\t')).join('\n'); _copy(h+'\n'+body,btn); }
-function downloadCSV(){ if(!_drillRows)return; const cols=['vin','enterprise','rooftop','team_id','reviewer','review_date'],head=['VIN','Enterprise','Rooftop','Rooftop ID','Reviewer','Date']; const esc=s=>{s=(s==null?'':''+s);return /[",\n]/.test(s)?'"'+s.replace(/"/g,'""')+'"':s;}; const csv=[head.join(',')].concat(_drillRows.map(r=>cols.map(c=>esc(r[c])).join(','))).join('\n'); const a=document.createElement('a'); a.href=URL.createObjectURL(new Blob([csv],{type:'text/csv'})); a.download='issue_vins.csv'; a.click(); setTimeout(()=>URL.revokeObjectURL(a.href),1000); }
+function copyTbl(btn){ if(!_drillRows||!_drillCols)return; const h=_drillCols.map(c=>c[1]).join('\t'); const body=_drillRows.map(r=>_drillCols.map(c=>r[c[0]]==null?'':r[c[0]]).join('\t')).join('\n'); _copy(h+'\n'+body,btn); }
+function downloadCSV(){ if(!_drillRows||!_drillCols)return; const esc=s=>{s=(s==null?'':''+s);return /[",\n]/.test(s)?'"'+s.replace(/"/g,'""')+'"':s;}; const csv=[_drillCols.map(c=>esc(c[1])).join(',')].concat(_drillRows.map(r=>_drillCols.map(c=>esc(r[c[0]])).join(','))).join('\n'); const a=document.createElement('a'); a.href=URL.createObjectURL(new Blob([csv],{type:'text/csv'})); a.download='vin_list.csv'; a.click(); setTimeout(()=>URL.revokeObjectURL(a.href),1000); }
+
+function renderVinDrill(title,rows,cols){
+  _drillRows=rows; _drillCols=cols;
+  document.getElementById('modal-title').textContent=title;
+  const bar=`<div style="display:flex;gap:8px;padding:11px 16px;border-bottom:1px solid var(--border);flex-wrap:wrap;position:sticky;top:0;background:var(--card);z-index:2">
+    <button class="btn" onclick="copyCol('vin',this)">Copy VINs</button>
+    <button class="btn" onclick="copyTbl(this)">Copy Table (TSV)</button>
+    <button class="btn" onclick="downloadCSV()">⬇ Download CSV</button></div>`;
+  const mb=document.getElementById('modal-body');
+  mb.innerHTML=bar+renderDrillTable(cols,rows);
+  document.getElementById('modal-ov').classList.add('open');
+  enableSort(mb);
+}
 
 function drillIssue(it){
   if(!DRILL||!DRILL.issVins) return;
-  _drillRows=DRILL.issVins.filter(r=>r.issue_type===it);
-  document.getElementById('modal-title').textContent='Issue · '+it+' — VIN list ('+_drillRows.length.toLocaleString()+')';
-  const bar=`<div style="display:flex;gap:8px;padding:11px 16px;border-bottom:1px solid var(--border);flex-wrap:wrap;position:sticky;top:0;background:var(--card);z-index:2">
-    <button class="btn" onclick="copyCol('vin',this)">Copy VINs</button>
-    <button class="btn" onclick="copyCol('enterprise',this)">Copy Enterprises</button>
-    <button class="btn" onclick="copyCol('rooftop',this)">Copy Rooftops</button>
-    <button class="btn" onclick="copyTbl(this)">Copy Table (TSV)</button>
-    <button class="btn" onclick="downloadCSV()">⬇ Download CSV</button></div>`;
-  const cols=[['vin','VIN','vin'],['enterprise','Enterprise'],['rooftop','Rooftop'],['team_id','Rooftop ID','mono'],['reviewer','Reviewer'],['review_date','Date']];
-  const mb=document.getElementById('modal-body');
-  mb.innerHTML=bar+renderDrillTable(cols,_drillRows);
-  document.getElementById('modal-ov').classList.add('open');
-  enableSort(mb);
+  const rows=DRILL.issVins.filter(r=>r.issue_type===it);
+  renderVinDrill('Issue · '+it+' — VIN list ('+rows.length.toLocaleString()+')', rows,
+    [['vin','VIN','vin'],['enterprise','Enterprise'],['rooftop','Rooftop'],['team_id','Rooftop ID','mono'],['reviewer','Reviewer'],['review_date','Date']]);
+}
+
+function drillRooftop(rt){
+  if(!DRILL||!DRILL.issVins) return;
+  const rows=DRILL.issVins.filter(r=>r.rooftop===rt);
+  renderVinDrill('Rooftop · '+rt+' — VIN list ('+rows.length.toLocaleString()+')', rows,
+    [['vin','VIN','vin'],['enterprise','Enterprise'],['issue_type','Issue'],['reviewer','Reviewer'],['review_date','Date'],['team_id','Rooftop ID','mono']]);
 }
 
 // Instant drill-downs — rendered from data already loaded (no extra BQ round-trip).
@@ -641,7 +651,7 @@ async function loadAll(){
       query(`SELECT customer_segment, SUM(arr) as arr, SUM(IF(has_issue,arr,0)) as arr_risk, COUNT(*) as teams FROM (SELECT team_id, ANY_VALUE(customer_segment) as customer_segment, MAX(SAFE_CAST(apld_contracted_arr AS FLOAT64)) as arr, MAX(IF(issue_type NOT IN ('OK','Pending'),1,0))=1 as has_issue FROM ${SRC} ${W} GROUP BY team_id) GROUP BY customer_segment ORDER BY arr DESC`),
       query(`SELECT ae_poc_email, COUNT(*) as total, COUNTIF(issue_type NOT IN ('OK','Pending')) as issue_cnt, MAX(review_date) as last_date FROM ${SRC} ${W} GROUP BY ae_poc_email ORDER BY total DESC`),
       query(`SELECT team_id, MAX(enterprise_name) as enterprise_name, MAX(team_name) as team_name, MAX(ae) as ae, MAX(ob) as ob, MAX(cs) as cs, COUNTIF(is_issue) as issue_cnt FROM (SELECT team_id, enterprise_name, apld_team_name as team_name, ae_poc_email as ae, ob_poc_email as ob, cs_poc_email as cs, (issue_type NOT IN ('OK','Pending')) as is_issue FROM ${SRC} ${W}) WHERE enterprise_name IS NOT NULL GROUP BY team_id ORDER BY issue_cnt DESC LIMIT 1`),
-      query(`SELECT vin, rooftop, team_id, COALESCE(enterprise_name, enterprise) as enterprise, issue_type, review_date, reviewer FROM ${SRC} ${W} ${W?'AND':'WHERE'} issue_type NOT IN ('OK','Pending') ORDER BY issue_type, review_date DESC`)
+      query(`SELECT vin, rooftop, team_id, COALESCE(enterprise_name, enterprise) as enterprise, issue_type, review_date, reviewer FROM ${SRC} ${W} ORDER BY rooftop, review_date DESC`)
     ]);
     const ov=ovR[0]||{};
     const total=N(ov.total),ok=N(ov.ok_cnt),issues=N(ov.issue_cnt);
@@ -657,7 +667,7 @@ async function loadAll(){
     const top3Issues=issR.filter(r=>r.issue_type!=='OK'&&r.issue_type!=='Pending').slice(0,3).map(r=>({name:r.issue_type,cnt:N(r.cnt),pct:pct(N(r.cnt),issues)}));
     const issTypes=issR.filter(r=>r.issue_type!=='OK'&&r.issue_type!=='Pending').map(r=>r.issue_type);
     const issByRt={};
-    issVinsR.forEach(r=>{ if(!issByRt[r.rooftop]) issByRt[r.rooftop]={}; issByRt[r.rooftop][r.issue_type]=(issByRt[r.rooftop][r.issue_type]||0)+1; });
+    issVinsR.forEach(r=>{ if(r.issue_type==='OK'||r.issue_type==='Pending')return; if(!issByRt[r.rooftop]) issByRt[r.rooftop]={}; issByRt[r.rooftop][r.issue_type]=(issByRt[r.rooftop][r.issue_type]||0)+1; });
     DRILL={rtR,issR,issVins:issVinsR};  // cache for instant drill-downs
 
     mc.innerHTML=`
@@ -691,7 +701,7 @@ async function loadAll(){
       </div>
       <div class="tbl-card"><div class="tbl-head-bar"><div class="chart-title">Rooftop Summary</div></div>
         <table><thead><tr><th>Rooftop</th><th>Enterprise</th><th>CS POC</th><th>VINs</th>${issTypes.map(t=>`<th>${t}</th>`).join('')}<th>Accuracy</th></tr></thead>
-        <tbody>${rtR.map(r=>{const iss=N(r.issue_cnt);const acc=100-pct(iss,N(r.total));const cs=r.cs_email?`<a href="mailto:${r.cs_email}" style="color:var(--blue)">${r.cs_email.split('@')[0]}</a>`:'—';const cnts=issByRt[r.rooftop]||{};return`<tr><td>${r.rooftop||'—'}</td><td style="font-size:9px;color:var(--muted)">${r.ent_name||r.enterprise||'—'}</td><td style="font-size:9px" title="${r.cs_email||''}">${cs}</td><td><b>${N(r.total).toLocaleString()}</b></td>${issTypes.map(it=>{const c=cnts[it]||0;return `<td style="color:${c?'var(--issue)':'var(--muted)'}">${c}</td>`;}).join('')}<td><span style="font-weight:700;color:${acc>=90?'#10b981':acc>=70?'#eab308':'#f97316'}">${acc}%</span></td></tr>`;}).join('')}</tbody></table>
+        <tbody>${rtR.map(r=>{const iss=N(r.issue_cnt);const acc=100-pct(iss,N(r.total));const cs=r.cs_email?`<a href="mailto:${r.cs_email}" style="color:var(--blue)" onclick="event.stopPropagation()">${r.cs_email.split('@')[0]}</a>`:'—';const cnts=issByRt[r.rooftop]||{};return`<tr style="cursor:pointer" onclick="drillRooftop('${(r.rooftop||'').replace(/'/g,"\\'")}')"><td>${r.rooftop||'—'}</td><td style="font-size:9px;color:var(--muted)">${r.ent_name||r.enterprise||'—'}</td><td style="font-size:9px" title="${r.cs_email||''}">${cs}</td><td><b>${N(r.total).toLocaleString()}</b></td>${issTypes.map(it=>{const c=cnts[it]||0;return `<td style="color:${c?'var(--issue)':'var(--muted)'}">${c}</td>`;}).join('')}<td><span style="font-weight:700;color:${acc>=90?'#10b981':acc>=70?'#eab308':'#f97316'}">${acc}%</span></td></tr>`;}).join('')}</tbody></table>
       </div>
     </div>
 
