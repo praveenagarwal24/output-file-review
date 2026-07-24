@@ -178,6 +178,9 @@ tr:hover td{background:rgba(255,255,255,.02)}
 .modal-body{max-height:64vh;overflow:auto}
 .copy-mini{background:none;border:none;color:var(--muted);cursor:pointer;font-size:11px;padding:0 3px}
 .copy-mini:hover{color:var(--blue)}
+.rt-scroll{max-height:480px;overflow:auto}
+.rt-scroll thead th{position:sticky;top:0;background:#1e293b;z-index:3}
+.rt-scroll tfoot td{position:sticky;bottom:0;background:#16233a;z-index:3;border-top:1px solid var(--border);font-size:11px;padding:9px 12px}
 
 @media(max-width:1100px){.kpi-grid{grid-template-columns:repeat(3,1fr)}.charts-row{grid-template-columns:1fr 1fr}}
 @media(max-width:768px){.kpi-grid{grid-template-columns:1fr 1fr}.charts-row,.tables-row{grid-template-columns:1fr}main,#filter-bar,header{padding-left:14px;padding-right:14px}}
@@ -503,6 +506,9 @@ function copyCell(text,btn){ navigator.clipboard.writeText(text).then(()=>{const
 function copyTbl(btn){ if(!_drillRows||!_drillCols)return; const h=_drillCols.map(c=>c[1]).join('\t'); const body=_drillRows.map(r=>_drillCols.map(c=>r[c[0]]==null?'':r[c[0]]).join('\t')).join('\n'); _copy(h+'\n'+body,btn); }
 function downloadCSV(){ if(!_drillRows||!_drillCols)return; const esc=s=>{s=(s==null?'':''+s);return /[",\n]/.test(s)?'"'+s.replace(/"/g,'""')+'"':s;}; const csv=[_drillCols.map(c=>esc(c[1])).join(',')].concat(_drillRows.map(r=>_drillCols.map(c=>esc(r[c[0]])).join(','))).join('\n'); const a=document.createElement('a'); a.href=URL.createObjectURL(new Blob([csv],{type:'text/csv'})); a.download='vin_list.csv'; a.click(); setTimeout(()=>URL.revokeObjectURL(a.href),1000); }
 
+function dlCSV(rows,filename){ if(!rows||!rows.length)return; const cols=Object.keys(rows[0]); const esc=s=>{s=(s==null?'':''+s);return /[",\n]/.test(s)?'"'+s.replace(/"/g,'""')+'"':s;}; const csv=[cols.map(esc).join(',')].concat(rows.map(r=>cols.map(c=>esc(r[c])).join(','))).join('\n'); const a=document.createElement('a'); a.href=URL.createObjectURL(new Blob([csv],{type:'text/csv'})); a.download=filename; a.click(); setTimeout(()=>URL.revokeObjectURL(a.href),1000); }
+function downloadRooftopCSV(){ dlCSV(window._rtCsv,'rooftop_summary.csv'); }
+
 function renderVinDrill(title,rows,cols){
   _drillRows=rows; _drillCols=cols;
   document.getElementById('modal-title').textContent=title;
@@ -685,6 +691,10 @@ async function loadAll(){
     const issTypes=issR.filter(r=>r.issue_type!=='OK'&&r.issue_type!=='Pending').map(r=>r.issue_type);
     const issByRt={};
     issVinsR.forEach(r=>{ if(r.issue_type==='OK'||r.issue_type==='Pending')return; if(!issByRt[r.rooftop]) issByRt[r.rooftop]={}; issByRt[r.rooftop][r.issue_type]=(issByRt[r.rooftop][r.issue_type]||0)+1; });
+    const rtTot={vins:0,total:0,iss:0,by:{}};
+    rtR.forEach(r=>{rtTot.vins+=N(r.vins);rtTot.total+=N(r.total);rtTot.iss+=N(r.issue_cnt);const c=issByRt[r.rooftop]||{};issTypes.forEach(it=>{rtTot.by[it]=(rtTot.by[it]||0)+(c[it]||0);});});
+    const rtTacc=100-pct(rtTot.iss,rtTot.total);
+    window._rtCsv=rtR.map((r,i)=>{const c=issByRt[r.rooftop]||{};const o={'#':i+1,Rooftop:r.rooftop,Enterprise:r.ent_name||r.enterprise||'','CS POC':r.cs_email||'',VINs:N(r.vins),'Times Reviewed':Math.round(N(r.vins)?N(r.total)/N(r.vins):0)};issTypes.forEach(it=>o[it]=(c[it]||0));o.Issues=N(r.issue_cnt);o.Accuracy=(100-pct(N(r.issue_cnt),N(r.total)))+'%';o['Last Review']=r.last_date||'';return o;});
     DRILL={rtR,issR,issVins:issVinsR};  // cache for instant drill-downs
 
     mc.innerHTML=`
@@ -716,9 +726,12 @@ async function loadAll(){
         <table><thead><tr><th>Reviewer</th><th>Total</th><th>OK</th><th>Issues</th><th>Accuracy</th><th>Last Active</th></tr></thead>
         <tbody>${rvR.map(r=>{const t=N(r.total),o=N(r.ok_cnt),iss=N(r.issue_cnt);const acc=100-pct(iss,t);return`<tr><td>${r.reviewer?.split('@')[0]||'—'}<br><span style="font-size:8px;color:var(--muted)">${r.reviewer}</span></td><td><b>${t}</b></td><td><span class="badge b-ok">${o}</span></td><td><span class="badge b-issue">${iss}</span></td><td><span style="font-weight:700;color:${acc>=90?'#10b981':acc>=70?'#eab308':'#f97316'}">${acc}%</span></td><td style="color:var(--muted);font-size:9px">${r.last_date||'—'}</td></tr>`;}).join('')}</tbody></table>
       </div>
-      <div class="tbl-card"><div class="tbl-head-bar"><div class="chart-title">Rooftop Summary</div></div>
-        <table><thead><tr><th>#</th><th>Rooftop</th><th>Enterprise</th><th>CS POC</th><th style="text-align:center">VINs</th><th style="text-align:center">Times Reviewed</th>${issTypes.map(t=>`<th style="text-align:center">${t}</th>`).join('')}<th style="text-align:center">Accuracy</th><th>Last Review</th></tr></thead>
-        <tbody>${rtR.map((r,i)=>{const iss=N(r.issue_cnt);const acc=100-pct(iss,N(r.total));const _p=N(r.vins)?N(r.total)/N(r.vins):0;const passes=Math.round(_p);const cs=r.cs_email?`<a href="mailto:${r.cs_email}" style="color:var(--blue)" onclick="event.stopPropagation()">${r.cs_email.split('@')[0]}</a>`:'—';const cnts=issByRt[r.rooftop]||{};return`<tr style="cursor:pointer" onclick="drillRooftop('${(r.rooftop||'').replace(/'/g,"\\'")}')"><td style="color:var(--muted)">${i+1}</td><td>${r.rooftop||'—'}</td><td style="font-size:9px;color:var(--muted)">${r.ent_name||r.enterprise||'—'}</td><td style="font-size:9px" title="${r.cs_email||''}">${cs}</td><td style="text-align:center"><b>${N(r.vins).toLocaleString()}</b></td><td style="text-align:center">${passes}×</td>${issTypes.map(it=>{const c=cnts[it]||0;return `<td style="text-align:center;color:var(--issue)">${c||''}</td>`;}).join('')}<td style="text-align:center"><span style="font-weight:700;color:${acc>=90?'#10b981':acc>=70?'#eab308':'#f97316'}">${acc}%</span></td><td style="color:var(--muted);font-size:9px">${r.last_date||'—'}</td></tr>`;}).join('')}</tbody></table>
+      <div class="tbl-card"><div class="tbl-head-bar" style="display:flex;justify-content:space-between;align-items:center"><div class="chart-title">Rooftop Summary</div><button class="btn" onclick="downloadRooftopCSV()">⬇ CSV</button></div>
+        <div class="rt-scroll">
+        <table><thead><tr><th>#</th><th>Rooftop</th><th>Enterprise</th><th>CS POC</th><th style="text-align:center">VINs</th><th style="text-align:center">Times Reviewed</th>${issTypes.map(t=>`<th style="text-align:center">${t}</th>`).join('')}<th style="text-align:center">Issues</th><th style="text-align:center">Accuracy</th><th>Last Review</th></tr></thead>
+        <tbody>${rtR.map((r,i)=>{const iss=N(r.issue_cnt);const acc=100-pct(iss,N(r.total));const _p=N(r.vins)?N(r.total)/N(r.vins):0;const passes=Math.round(_p);const cs=r.cs_email?`<a href="mailto:${r.cs_email}" style="color:var(--blue)" onclick="event.stopPropagation()">${r.cs_email.split('@')[0]}</a>`:'—';const cnts=issByRt[r.rooftop]||{};return`<tr style="cursor:pointer" onclick="drillRooftop('${(r.rooftop||'').replace(/'/g,"\\'")}')"><td style="color:var(--muted)">${i+1}</td><td>${r.rooftop||'—'}</td><td style="font-size:9px;color:var(--muted)">${r.ent_name||r.enterprise||'—'}</td><td style="font-size:9px" title="${r.cs_email||''}">${cs}</td><td style="text-align:center"><b>${N(r.vins).toLocaleString()}</b></td><td style="text-align:center">${passes}×</td>${issTypes.map(it=>{const c=cnts[it]||0;return `<td style="text-align:center;color:var(--issue)">${c||''}</td>`;}).join('')}<td style="text-align:center;font-weight:600">${iss.toLocaleString()}</td><td style="text-align:center"><span style="font-weight:700;color:${acc>=90?'#10b981':acc>=70?'#eab308':'#f97316'}">${acc}%</span></td><td style="color:var(--muted);font-size:9px">${r.last_date||'—'}</td></tr>`;}).join('')}</tbody>
+        <tfoot><tr><td></td><td style="font-weight:700">Total</td><td></td><td></td><td style="text-align:center;font-weight:700">${rtTot.vins.toLocaleString()}</td><td></td>${issTypes.map(it=>`<td style="text-align:center;font-weight:700;color:var(--issue)">${rtTot.by[it]||''}</td>`).join('')}<td style="text-align:center;font-weight:700">${rtTot.iss.toLocaleString()}</td><td style="text-align:center;font-weight:700;color:${rtTacc>=90?'#10b981':rtTacc>=70?'#eab308':'#f97316'}">${rtTacc}%</td><td></td></tr></tfoot></table>
+        </div>
       </div>
     </div>
 
