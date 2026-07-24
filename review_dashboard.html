@@ -669,17 +669,6 @@ async function loadAll(){
       <tbody>${issR.filter(r=>r.issue_type!=='OK'&&r.issue_type!=='Pending').map(r=>{const c=N(r.cnt);return `<tr style="cursor:pointer" onclick="drillIssue('${(r.issue_type||'').replace(/'/g,"\\'")}')"><td><span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:${ic(r.issue_type)};margin-right:7px"></span>${r.issue_type} <span style="color:var(--muted);font-size:9px">⤢</span></td><td><b>${c.toLocaleString()}</b></td><td>${pct(c,issues)}%</td><td>${pct(c,total)}%</td></tr>`;}).join('')}</tbody></table>
     </div>
 
-    <div class="sec-label">Issue Analytics</div>
-    <div class="charts-row" style="grid-template-columns:1fr 1fr 1fr">
-      <div class="chart-card"><div class="chart-title">Issues by Rooftop</div>${hbars([...rtR].sort((a,b)=>N(b.issue_cnt)-N(a.issue_cnt)).slice(0,8).map(r=>({l:r.rooftop,v:N(r.issue_cnt)})),()=>'#f97316')}</div>
-      <div class="chart-card"><div class="chart-title">Issue Rate by Rooftop</div>${hbars([...rtR].map(r=>({l:r.rooftop,v:pct(N(r.issue_cnt),N(r.total))})).sort((a,b)=>b.v-a.v).slice(0,8),()=>'#ef4444',v=>v+'%')}</div>
-      <div class="chart-card"><div class="chart-title">Issues by Reviewer</div>${hbars([...rvR].sort((a,b)=>N(b.issue_cnt)-N(a.issue_cnt)).slice(0,8).map(r=>({l:(r.reviewer||'').split('@')[0],v:N(r.issue_cnt)})),()=>'#8b5cf6')}</div>
-    </div>
-    <div class="charts-row" style="grid-template-columns:2fr 1fr">
-      <div class="chart-card"><div class="chart-title">Daily Issues Trend</div>${trendBars(trendR.map(r=>({review_date:r.review_date,cnt:r.iss})))}</div>
-      <div class="chart-card"><div class="chart-title">Issues by Segment</div>${hbars(segRows.map(r=>({l:r.customer_segment,v:N(r.issue_cnt)})),()=>'#f59e0b')}</div>
-    </div>
-
     <div class="sec-label">Performance</div>
     <div class="tables-row" style="grid-template-columns:1fr">
       <div class="tbl-card"><div class="tbl-head-bar"><div class="chart-title">Reviewer Stats</div></div>
