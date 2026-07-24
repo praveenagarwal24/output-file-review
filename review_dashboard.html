@@ -644,6 +644,9 @@ async function loadAll(){
     const topIssue=issR.filter(r=>r.issue_type!=='OK'&&r.issue_type!=='Pending')[0]||null;
     const worst=(worstTeamR&&worstTeamR[0])?worstTeamR[0]:null;
     const top3Issues=issR.filter(r=>r.issue_type!=='OK'&&r.issue_type!=='Pending').slice(0,3).map(r=>({name:r.issue_type,cnt:N(r.cnt),pct:pct(N(r.cnt),issues)}));
+    const issTypes=issR.filter(r=>r.issue_type!=='OK'&&r.issue_type!=='Pending').map(r=>r.issue_type);
+    const issByRt={};
+    issVinsR.forEach(r=>{ if(!issByRt[r.rooftop]) issByRt[r.rooftop]={}; issByRt[r.rooftop][r.issue_type]=(issByRt[r.rooftop][r.issue_type]||0)+1; });
     DRILL={rtR,issR,issVins:issVinsR};  // cache for instant drill-downs
 
     mc.innerHTML=`
@@ -676,8 +679,8 @@ async function loadAll(){
         <tbody>${rvR.map(r=>{const t=N(r.total),o=N(r.ok_cnt),iss=N(r.issue_cnt);const acc=100-pct(iss,t);return`<tr><td>${r.reviewer?.split('@')[0]||'—'}<br><span style="font-size:8px;color:var(--muted)">${r.reviewer}</span></td><td><b>${t}</b></td><td><span class="badge b-ok">${o}</span></td><td><span class="badge b-issue">${iss}</span></td><td><span style="font-weight:700;color:${acc>=90?'#10b981':acc>=70?'#eab308':'#f97316'}">${acc}%</span></td><td style="color:var(--muted);font-size:9px">${r.last_date||'—'}</td></tr>`;}).join('')}</tbody></table>
       </div>
       <div class="tbl-card"><div class="tbl-head-bar"><div class="chart-title">Rooftop Summary</div></div>
-        <table><thead><tr><th>Rooftop</th><th>Enterprise</th><th>Team</th><th>CS POC</th><th>Total</th><th>OK</th><th>Issues</th><th>Accuracy</th></tr></thead>
-        <tbody>${rtR.map(r=>{const t=N(r.total),o=N(r.ok_cnt),iss=N(r.issue_cnt);const acc=100-pct(iss,t);const cs=r.cs_email?`<a href="mailto:${r.cs_email}" style="color:var(--blue)">${r.cs_email.split('@')[0]}</a>`:'—';return`<tr><td>${r.rooftop||'—'}</td><td style="font-size:9px;color:var(--muted)">${r.ent_name||r.enterprise||'—'}</td><td style="font-size:9px;color:var(--muted)">${r.team_name||'—'}</td><td style="font-size:9px" title="${r.cs_email||''}">${cs}</td><td><b>${t}</b></td><td><span class="badge b-ok">${o}</span></td><td><span class="badge b-issue">${iss}</span></td><td><span style="font-weight:700;color:${acc>=90?'#10b981':acc>=70?'#eab308':'#f97316'}">${acc}%</span></td></tr>`;}).join('')}</tbody></table>
+        <table><thead><tr><th>Rooftop</th><th>Enterprise</th><th>CS POC</th><th>VINs</th>${issTypes.map(t=>`<th>${t}</th>`).join('')}<th>Accuracy</th></tr></thead>
+        <tbody>${rtR.map(r=>{const t=N(r.total),iss=N(r.issue_cnt);const acc=100-pct(iss,t);const cs=r.cs_email?`<a href="mailto:${r.cs_email}" style="color:var(--blue)">${r.cs_email.split('@')[0]}</a>`:'—';const cnts=issByRt[r.rooftop]||{};return`<tr><td>${r.rooftop||'—'}</td><td style="font-size:9px;color:var(--muted)">${r.ent_name||r.enterprise||'—'}</td><td style="font-size:9px" title="${r.cs_email||''}">${cs}</td><td><b>${N(r.vins).toLocaleString()}</b></td>${issTypes.map(it=>{const c=cnts[it]||0;return `<td style="color:${c?'var(--issue)':'var(--muted)'}">${c}</td>`;}).join('')}<td><span style="font-weight:700;color:${acc>=90?'#10b981':acc>=70?'#eab308':'#f97316'}">${acc}%</span></td></tr>`;}).join('')}</tbody></table>
       </div>
     </div>
 
