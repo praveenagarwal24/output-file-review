@@ -1,0 +1,1151 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Spyne — Input vs Output Review</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<script src="https://accounts.google.com/gsi/client" async defer></script>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<style>
+    :root { --spyne:#2b6cb0; }
+    body { font-family:'Inter',sans-serif; background:#f0f7ff; }
+    ::-webkit-scrollbar { width:8px; height:8px; }
+    ::-webkit-scrollbar-thumb { background:#cbd5e0; border-radius:10px; }
+
+    .spinner {
+        border:2px solid rgba(43,108,176,0.2); border-top:2px solid var(--spyne);
+        border-radius:50%; width:26px; height:26px; animation:spin .8s linear infinite;
+    }
+    @keyframes spin { to { transform:rotate(360deg); } }
+
+    /* Vehicle-type chips */
+    .type-chip {
+        display:inline-flex; align-items:center; gap:6px;
+        padding:5px 11px 5px 6px; border:1px solid #e2e8f0; border-radius:8px;
+        background:#fff; cursor:pointer; user-select:none;
+        font-size:12px; font-weight:600; color:#475569; transition:all .12s; white-space:nowrap;
+    }
+    .type-chip:hover { border-color:#93c5fd; background:#f8fafc; }
+    .type-chip .kbd {
+        display:inline-flex; align-items:center; justify-content:center;
+        width:18px; height:18px; background:#f1f5f9; color:#64748b;
+        font-family:ui-monospace,monospace; font-size:10px; font-weight:700; border-radius:4px;
+    }
+    .type-chip.active { background:#eff6ff; border-color:var(--spyne); color:#1d4ed8; box-shadow:0 0 0 1px var(--spyne); }
+    .type-chip.active .kbd { background:var(--spyne); color:#fff; }
+    .type-chip.ok.active { background:#ecfdf5; border-color:#10b981; color:#047857; box-shadow:0 0 0 1px #10b981; }
+    .type-chip.ok.active .kbd { background:#10b981; color:#fff; }
+
+    /* Top-bar summary pills */
+    .sum-pill {
+        display:inline-flex; align-items:center; gap:5px;
+        font-size:11px; font-weight:700; color:#334155;
+        background:#f8fafc; border:1px solid #e2e8f0; border-radius:9999px;
+        padding:2px 9px 2px 7px; white-space:nowrap;
+    }
+    .sum-pill .dot { width:7px; height:7px; border-radius:50%; flex-shrink:0; }
+    .sum-pill .n { color:#0f172a; }
+
+    .nav-btn {
+        width:40px; height:40px; border-radius:50%;
+        display:flex; align-items:center; justify-content:center;
+        background:rgba(255,255,255,0.14); color:#fff; cursor:pointer; transition:background .12s; flex-shrink:0;
+    }
+    .nav-btn:hover { background:rgba(255,255,255,0.28); }
+
+    .pane-label {
+        position:absolute; top:10px; left:10px; z-index:3;
+        font-size:10px; font-weight:800; letter-spacing:.08em;
+        padding:3px 9px; border-radius:6px; color:#fff;
+    }
+    .view { display:none; }
+    .view.active { display:flex; }
+
+    input[type=file] { display:none; }
+    kbd.hint { background:#e2e8f0; color:#475569; font-size:10px; padding:1px 6px; border-radius:4px; font-family:ui-monospace,monospace; }
+
+    @media (prefers-reduced-motion: reduce) { * { transition:none !important; animation-duration:.01ms !important; } }
+    .spyne-logo { background:url(data:image/png;base64,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) center/contain no-repeat; display:inline-block; }
+</style>
+</head>
+<body class="text-slate-800 h-screen flex flex-col overflow-hidden">
+
+<!-- Header -->
+<header class="text-white px-5 flex items-center justify-between flex-shrink-0 shadow-md" style="background:var(--spyne); height:54px;">
+    <div class="flex items-center space-x-3">
+        <span class="bg-white rounded-md px-2 py-1 flex items-center"><span class="spyne-logo" style="width:72px;height:28px;"></span></span>
+        <span class="text-white/50">/</span>
+        <span class="text-[13px] font-semibold text-white/90">Input vs Output Review</span>
+    </div>
+    <div class="flex items-center space-x-2">
+        <div id="header-actions" class="hidden items-center space-x-2">
+            <span id="file-name" class="text-[11px] text-white/70 max-w-[220px] truncate hidden sm:inline"></span>
+            <button id="submit-btn" class="bg-white text-blue-700 hover:bg-blue-50 px-3 py-1.5 rounded-md text-[11px] font-bold transition flex items-center space-x-1.5">
+                <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+                <span>Submit</span>
+            </button>
+            <button id="export-btn" class="bg-white/15 hover:bg-white/25 border border-white/20 px-3 py-1.5 rounded-md text-[11px] font-bold transition flex items-center space-x-1.5">
+                <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"/></svg>
+                <span id="export-label">Export CSV</span>
+            </button>
+            <button id="new-btn" class="bg-white/10 hover:bg-white/20 border border-white/20 px-3 py-1.5 rounded-md text-[11px] font-bold transition">New CSV</button>
+        </div>
+        <span id="user-chip" class="hidden items-center gap-1.5 bg-white/10 border border-white/20 rounded-md px-2.5 py-1">
+            <svg class="w-3.5 h-3.5 text-white/70" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z"/></svg>
+            <span id="user-email" class="text-[11px] font-semibold text-white/90 max-w-[180px] truncate"></span>
+        </span>
+        <button id="logout-btn" class="hidden bg-white/10 hover:bg-white/20 border border-white/20 px-3 py-1.5 rounded-md text-[11px] font-bold transition">Logout</button>
+    </div>
+</header>
+
+<!-- Login view -->
+<div id="login-view" class="view active flex-1 items-center justify-center p-6">
+    <div class="bg-white rounded-2xl shadow-xl border border-slate-100 w-full max-w-sm p-8 text-center">
+        <div class="flex items-center justify-center mb-5">
+            <span class="spyne-logo" style="width:132px;height:53px;"></span>
+        </div>
+        <h1 class="text-xl font-bold text-slate-800 mb-1">Sign in</h1>
+        <p class="text-slate-500 text-[13px] mb-6">Sign in with your Spyne Google account to continue.</p>
+
+        <div id="gsi-button" class="flex justify-center min-h-[44px]"></div>
+
+        <div id="login-hint" class="hidden mt-4 text-[12px] text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2 text-left leading-relaxed"></div>
+        <div id="login-error" class="hidden mt-4 text-[12px] text-rose-600 bg-rose-50 border border-rose-200 rounded-lg px-3 py-2"></div>
+    </div>
+</div>
+
+<!-- Upload view -->
+<div id="upload-view" class="view flex-1 items-center justify-center p-6">
+    <div class="bg-white rounded-2xl shadow-xl border border-slate-100 w-full max-w-lg p-8">
+        <h1 class="text-xl font-bold text-slate-800 mb-1">Load a review file</h1>
+        <p class="text-slate-500 text-[13px] mb-6 leading-relaxed">
+            Upload a CSV with one row per VIN. Each row shows its input, AI, and output images side by side for classification.
+        </p>
+
+        <div id="drop-zone" class="border-2 border-dashed border-slate-300 rounded-xl p-8 text-center cursor-pointer hover:border-blue-400 hover:bg-blue-50/50 transition">
+            <svg class="mx-auto mb-3 w-9 h-9 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M9 13h6m-3-3v6m5 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/></svg>
+            <p class="text-[13px] text-slate-600 font-medium">Drop CSV here or <span class="text-blue-600 font-semibold">browse</span></p>
+        </div>
+        <input id="file-input" type="file" accept=".csv">
+
+        <div id="upload-error" class="hidden mt-4 text-[12px] text-rose-600 bg-rose-50 border border-rose-200 rounded-lg px-3 py-2"></div>
+
+        <div class="mt-6 border-t border-slate-100 pt-4">
+            <p class="text-[11px] font-semibold text-slate-500 uppercase tracking-wider mb-2">Expected columns</p>
+            <div class="flex flex-wrap gap-1.5 text-[11px]">
+                <span class="bg-slate-100 text-slate-700 font-mono px-2 py-1 rounded">VIN</span>
+                <span class="bg-slate-100 text-slate-500 font-mono px-2 py-1 rounded">rooftop <span class="text-slate-400">(optional)</span></span>
+                <span class="bg-slate-100 text-slate-700 font-mono px-2 py-1 rounded">input_url</span>
+                <span class="bg-slate-100 text-slate-700 font-mono px-2 py-1 rounded">ai_url</span>
+                <span class="bg-slate-100 text-slate-700 font-mono px-2 py-1 rounded">output_url</span>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Rooftop selection view -->
+<div id="rooftop-view" class="view flex-1 flex-col min-h-0 overflow-auto p-6">
+    <div class="w-full max-w-5xl mx-auto">
+        <div class="flex items-end justify-between mb-1 flex-wrap gap-2">
+            <div>
+                <h1 class="text-xl font-bold text-slate-800">Select a rooftop</h1>
+                <p id="rooftop-sub" class="text-slate-500 text-[13px] mt-0.5"></p>
+            </div>
+            <div class="flex items-center gap-3">
+                <span id="rooftop-overall" class="text-[12px] font-semibold text-slate-500"></span>
+                <button id="clear-reviews-btn" class="flex items-center gap-1 text-[11px] font-semibold text-rose-600 hover:text-white hover:bg-rose-600 border border-rose-200 hover:border-rose-600 rounded-lg px-2.5 py-1 transition">
+                    <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg>
+                    <span>Clear reviews</span>
+                </button>
+            </div>
+        </div>
+        <div id="rooftop-grid" class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 mt-5"></div>
+    </div>
+</div>
+
+<!-- Review view -->
+<div id="review-view" class="view flex-1 flex-col min-h-0">
+
+    <!-- Toolbar -->
+    <div class="bg-white border-b px-4 py-2 flex items-center justify-between flex-shrink-0 shadow-sm">
+        <div class="flex items-center space-x-3 flex-wrap gap-y-1">
+            <button id="back-to-rooftops" class="flex items-center gap-1 text-[11px] font-semibold text-slate-500 hover:text-blue-600 border border-slate-200 rounded-lg px-2.5 py-1 transition" title="Back to rooftops">
+                <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M15 19l-7-7 7-7"/></svg>
+                <span>Rooftops</span>
+            </button>
+            <div class="flex items-center space-x-1.5 bg-slate-50 border border-slate-200 rounded-lg pl-2.5 pr-1 py-1">
+                <span class="text-[9px] font-bold text-slate-400 uppercase tracking-wider">VIN</span>
+                <span id="cur-vin" class="text-slate-800 font-bold text-[13px] font-mono tracking-tight leading-none">—</span>
+                <button id="copy-vin" class="text-slate-400 hover:text-blue-600 transition p-1 rounded hover:bg-white" title="Copy VIN">
+                    <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"/></svg>
+                </button>
+                <span id="copy-fb" class="text-[10px] font-semibold text-emerald-600 opacity-0 transition-opacity pr-1">Copied</span>
+            </div>
+            <span id="cur-rooftop" class="hidden text-[11px] font-semibold text-slate-600 bg-slate-100 px-2 py-1 rounded-lg"></span>
+            <span id="cur-counter" class="text-[12px] font-mono text-slate-500"></span>
+        </div>
+        <div class="flex items-center space-x-3">
+            <div id="timer-wrap" style="display:none" class="items-center space-x-1.5 bg-slate-100 hover:bg-slate-200 rounded-lg px-2.5 py-1 cursor-pointer select-none transition" onclick="toggleTimer()" title="Click to pause / resume">
+                <svg id="timer-icon" class="w-3.5 h-3.5 text-slate-500 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+                <span id="timer-display" class="text-[12px] font-mono font-bold text-slate-700">00:00</span>
+                <span id="timer-pause" class="text-[9px] font-semibold text-amber-500 hidden">PAUSED</span>
+            </div>
+            <span id="progress-pill" class="bg-blue-50 text-blue-700 px-2.5 py-1 rounded-full text-[11px] font-semibold"></span>
+            <button id="next-unrev" class="text-[11px] font-semibold text-slate-500 hover:text-blue-600 border border-slate-200 rounded-lg px-2.5 py-1 transition">Next pending</button>
+            <button id="clear-current-btn" class="text-[11px] font-semibold text-rose-600 hover:text-white hover:bg-rose-600 border border-rose-200 hover:border-rose-600 rounded-lg px-2.5 py-1 transition">Clear</button>
+        </div>
+    </div>
+
+    <!-- Count summary -->
+    <div id="summary-bar" class="bg-white border-b border-slate-100 px-4 py-1.5 flex items-center flex-wrap gap-1.5 flex-shrink-0"></div>
+
+    <!-- Image stage: INPUT | AI | OUTPUT -->
+    <div class="flex-1 min-h-0 relative bg-slate-900 flex flex-col md:flex-row">
+        <div class="nav-btn absolute left-3 top-1/2 -translate-y-1/2 z-10" id="prev-btn" title="Previous (left arrow)">
+            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M15 19l-7-7 7-7"/></svg>
+        </div>
+        <div class="nav-btn absolute right-3 top-1/2 -translate-y-1/2 z-10" id="next-btn" title="Next (right arrow / Enter)">
+            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M9 5l7 7-7 7"/></svg>
+        </div>
+
+        <!-- INPUT pane -->
+        <div id="in-pane" class="relative flex-1 min-h-0 flex items-center justify-center overflow-hidden md:border-r border-slate-700">
+            <span class="pane-label" style="background:#475569;">INPUT</span>
+            <div id="in-skel" class="absolute inset-0 flex items-center justify-center"><div class="spinner"></div></div>
+            <div id="in-none" class="absolute inset-0 hidden flex-col items-center justify-center text-slate-500 text-[13px]">No input image</div>
+            <img id="in-img" src="" referrerpolicy="no-referrer" decoding="async" class="max-w-full max-h-full object-contain cursor-zoom-in" style="opacity:0; transition:opacity .15s;">
+        </div>
+
+        <!-- AI pane -->
+        <div id="ai-pane" class="relative flex-1 min-h-0 flex items-center justify-center overflow-hidden border-t md:border-t-0 md:border-r border-slate-700">
+            <span class="pane-label" style="background:#7c3aed;">AI</span>
+            <div id="ai-skel" class="absolute inset-0 flex items-center justify-center"><div class="spinner"></div></div>
+            <div id="ai-none" class="absolute inset-0 hidden flex-col items-center justify-center text-slate-500 text-[13px]">No AI image</div>
+            <img id="ai-img" src="" referrerpolicy="no-referrer" decoding="async" class="max-w-full max-h-full object-contain cursor-zoom-in" style="opacity:0; transition:opacity .15s;">
+        </div>
+
+        <!-- OUTPUT pane -->
+        <div id="out-pane" class="relative flex-1 min-h-0 flex items-center justify-center overflow-hidden border-t md:border-t-0 border-slate-700">
+            <span class="pane-label" style="background:var(--spyne);">OUTPUT</span>
+            <div id="out-skel" class="absolute inset-0 flex items-center justify-center"><div class="spinner"></div></div>
+            <div id="out-none" class="absolute inset-0 hidden flex-col items-center justify-center text-slate-500 text-[13px]">No output image</div>
+            <img id="out-img" src="" referrerpolicy="no-referrer" decoding="async" class="max-w-full max-h-full object-contain cursor-zoom-in" style="opacity:0; transition:opacity .15s;">
+        </div>
+    </div>
+
+    <!-- Classification footer -->
+    <div class="bg-white border-t border-slate-200 px-4 py-2.5 flex-shrink-0">
+        <div class="flex items-center flex-wrap gap-2">
+            <span class="text-[10px] font-bold uppercase tracking-wider text-slate-400 mr-1">Issue:</span>
+            <div id="type-bar" class="flex items-center flex-wrap gap-1.5"></div>
+            <div class="flex-1"></div>
+            <input id="comment" type="text" placeholder="Comment (optional)…" class="w-64 p-1.5 border border-slate-200 rounded-lg text-xs outline-none focus:border-blue-400 focus:ring-1 focus:ring-blue-400 transition">
+            <span id="status" class="text-[11px] font-semibold min-w-[70px] text-right"></span>
+        </div>
+        <div class="mt-1.5 text-[10px] text-slate-400 flex items-center gap-3 flex-wrap">
+            <span><kbd class="hint">1</kbd> issue</span>
+            <span><kbd class="hint">&larr;</kbd> <kbd class="hint">&rarr;</kbd> prev / next</span>
+            <span><kbd class="hint">Enter</kbd> save &amp; next (OK if none picked)</span>
+            <span>click an image to zoom</span>
+        </div>
+    </div>
+</div>
+
+<!-- Summary modal -->
+<div id="summary-modal" class="fixed inset-0 z-50 bg-slate-900/50 items-center justify-center hidden p-4">
+    <div class="bg-white rounded-2xl shadow-2xl w-full max-w-lg">
+        <div class="px-6 py-4 border-b border-slate-100 flex items-center justify-between">
+            <div>
+                <h3 class="font-bold text-slate-800 text-[17px]">Review summary</h3>
+                <p id="sum-sub" class="text-[12px] text-slate-500 mt-0.5"></p>
+            </div>
+            <button id="sum-close" class="text-slate-400 hover:text-slate-600 text-xl leading-none">&times;</button>
+        </div>
+        <div class="p-6">
+            <div class="grid grid-cols-4 gap-2 mb-4 text-center">
+                <div class="bg-slate-50 rounded-lg p-2.5"><div class="text-[10px] font-bold text-slate-500 uppercase tracking-wider">Total</div><div id="sum-total" class="text-lg font-bold text-slate-800">0</div></div>
+                <div class="bg-blue-50 rounded-lg p-2.5"><div class="text-[10px] font-bold text-blue-600 uppercase tracking-wider">Reviewed</div><div id="sum-reviewed" class="text-lg font-bold text-blue-700">0</div></div>
+                <div class="bg-emerald-50 rounded-lg p-2.5"><div class="text-[10px] font-bold text-emerald-600 uppercase tracking-wider">OK</div><div id="sum-ok" class="text-lg font-bold text-emerald-700">0</div></div>
+                <div class="bg-amber-50 rounded-lg p-2.5"><div class="text-[10px] font-bold text-amber-600 uppercase tracking-wider">Pending</div><div id="sum-pending" class="text-lg font-bold text-amber-700">0</div></div>
+            </div>
+            <div class="border-t border-slate-100 pt-3">
+                <p class="text-[11px] font-semibold text-slate-500 uppercase tracking-wider mb-2">By issue</p>
+                <div id="sum-types" class="grid grid-cols-2 gap-x-6 gap-y-1"></div>
+            </div>
+            <div class="mt-4 text-[12px] text-slate-500">Time taken: <span id="sum-time" class="font-mono font-semibold text-slate-700">00:00</span></div>
+            <label id="mark-ok-wrap" class="flex items-start gap-2 mt-4 p-2.5 rounded-lg bg-amber-50 border border-amber-200 cursor-pointer select-none">
+                <input id="mark-pending-ok" type="checkbox" class="mt-0.5 w-4 h-4 accent-emerald-600 cursor-pointer">
+                <span class="text-[12px] text-amber-800 leading-snug">Mark all <b id="mark-ok-count">0</b> pending as <b>OK</b> before downloading</span>
+            </label>
+            <div class="mt-3 flex gap-2">
+                <button id="sum-keep" class="flex-1 border border-slate-200 text-slate-600 font-semibold py-2.5 rounded-lg hover:bg-slate-50 transition">Keep reviewing</button>
+                <button id="sum-download" class="flex-1 bg-blue-600 hover:bg-blue-700 text-white font-bold py-2.5 rounded-lg flex items-center justify-center space-x-2 transition">
+                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"/></svg>
+                    <span>Download CSV</span>
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Clear reviews modal (multi-select, rooftop page) -->
+<div id="clear-modal" class="fixed inset-0 z-50 bg-slate-900/50 items-center justify-center hidden p-4">
+    <div class="bg-white rounded-2xl shadow-2xl w-full max-w-md flex flex-col max-h-[85vh]">
+        <div class="px-6 py-4 border-b border-slate-100 flex items-start justify-between">
+            <div>
+                <h3 class="font-bold text-slate-800 text-[17px]">Clear reviews</h3>
+                <p class="text-[12px] text-slate-500 mt-0.5">Select which rooftops to reset. This can't be undone.</p>
+            </div>
+            <button id="clear-close" class="text-slate-400 hover:text-slate-600 text-xl leading-none">&times;</button>
+        </div>
+        <div class="px-6 py-2.5 border-b border-slate-100 flex items-center justify-between">
+            <label class="flex items-center gap-2 text-[12px] font-semibold text-slate-600 cursor-pointer select-none">
+                <input id="clear-all-toggle" type="checkbox" class="w-4 h-4 accent-rose-600 cursor-pointer"> Select all
+            </label>
+            <span id="clear-count" class="text-[11px] text-slate-400"></span>
+        </div>
+        <div id="clear-list" class="overflow-auto px-3 py-2"></div>
+        <div class="px-6 py-4 border-t border-slate-100 flex gap-2">
+            <button id="clear-cancel" class="flex-1 border border-slate-200 text-slate-600 font-semibold py-2.5 rounded-lg hover:bg-slate-50 transition">Cancel</button>
+            <button id="clear-confirm" class="flex-1 bg-rose-600 hover:bg-rose-700 text-white font-bold py-2.5 rounded-lg transition disabled:opacity-40 disabled:cursor-not-allowed">Clear selected</button>
+        </div>
+    </div>
+</div>
+
+<!-- Generic confirm modal -->
+<div id="confirm-modal" class="fixed inset-0 z-50 bg-slate-900/50 items-center justify-center hidden p-4">
+    <div class="bg-white rounded-2xl shadow-2xl w-full max-w-sm p-6">
+        <h3 id="confirm-title" class="font-bold text-slate-800 text-[16px] mb-1">Are you sure?</h3>
+        <p id="confirm-msg" class="text-[13px] text-slate-500 leading-relaxed mb-5"></p>
+        <div class="flex gap-2">
+            <button id="confirm-cancel" class="flex-1 border border-slate-200 text-slate-600 font-semibold py-2.5 rounded-lg hover:bg-slate-50 transition">Cancel</button>
+            <button id="confirm-ok" class="flex-1 bg-rose-600 hover:bg-rose-700 text-white font-bold py-2.5 rounded-lg transition">Clear</button>
+        </div>
+    </div>
+</div>
+
+<!-- Lightbox -->
+<div id="lightbox" class="fixed inset-0 z-50 bg-black/90 items-center justify-center hidden" style="cursor:zoom-out;">
+    <img id="lb-img" src="" referrerpolicy="no-referrer" style="max-width:94vw; max-height:94vh; object-fit:contain;">
+    <div class="absolute top-4 right-6 text-white text-3xl cursor-pointer">&times;</div>
+</div>
+
+<!-- Toast -->
+<div id="toast" class="fixed bottom-4 right-4 bg-slate-800 text-white px-4 py-2.5 rounded-lg shadow-xl text-[13px] font-medium translate-y-20 transition-transform duration-300 z-50"></div>
+
+<script>
+// Config
+const TYPES = [
+    { key:'1', code:'issue', label:'Issue' },
+];
+const LABEL_BY_CODE = Object.fromEntries(TYPES.map(t => [t.code, t.label]));
+LABEL_BY_CODE.ok = 'OK';
+
+// Status colors + compact labels for the top-bar summary
+const STAT_COLOR = {
+    pending:'#f59e0b', ok:'#10b981',
+    issue:'#ef4444'
+};
+const SHORT = {
+    pending:'Pending', ok:'OK',
+    issue:'Issue'
+};
+const SUMMARY_ORDER = ['pending','ok','issue'];
+
+// Image sizing — request small resized webp for display, larger for zoom
+const DISPLAY_W = 900,  DISPLAY_Q = 72;
+const ZOOM_W    = 1600, ZOOM_Q    = 85;
+const STORAGE_PREFIX = 'spyne_io_review_';
+
+// ── Auth (Google Sign-In) ──────────────────────────────────────────────────────
+// 1) Create a Google OAuth 2.0 "Web application" client ID (Google Cloud Console →
+//    APIs & Services → Credentials). 2) Under "Authorized JavaScript origins" add the
+//    site origin, e.g. https://nandmodi.github.io  (no path). 3) Paste the client ID below.
+const GOOGLE_CLIENT_ID = '108193022090-pqojr6seugmdmth5jrah9rgisjgn2q28.apps.googleusercontent.com';
+const AUTH_STORAGE_KEY = 'spyne_io_review_user';
+const AUTH_ALLOWED_EMAILS = [
+    'praveen@spyne.ai',
+    'kishor@spyne.ai',
+    'ajay.devrani@spyne.co.in',
+    'raj.tripathi@spyne.ai',
+    'ranbir.manoranjan@spyne.ai',
+    'khushi.gautam@spyne.co.in',
+    'shweta.gupta@spyne.co.in',
+    'tannu.singh@spyne.co.in',
+    'vijay.gautam@spyne.co.in',
+    'anup.gupta@spyne.co.in',
+    'sumit.rana@spyne.ai',
+    'karmendra.singh@spyne.co.in',
+    'dhruv.kumar@spyne.co.in',
+    // Add more authorized emails here
+];
+const ALLOWED = new Set(AUTH_ALLOWED_EMAILS.map(e => e.trim().toLowerCase()));
+let currentUser     = '';   // authorized email
+let currentUserName = '';   // Google display name
+
+// State
+let allRows        = [];     // every parsed row across all rooftops
+let groups         = [];     // [{ name, rows:[...] }] grouped by rooftop
+let currentRooftop = null;   // name of the rooftop currently under review
+let rows       = [];     // rows for the current rooftop [{ vin, rooftop, inputUrl, outputUrl }]
+let reviews    = {};     // { idx: { type, comment, at } } for the current rooftop
+let idx        = 0;
+let fileName   = '';
+let storageKey = '';
+
+// CSV parsing (RFC 4180)
+function parseCSV(text) {
+    const s = text.replace(/\r\n/g,'\n').replace(/\r/g,'\n');
+    const out = []; let row = [], field = '', inQ = false;
+    for (let i=0; i<s.length; i++) {
+        const c = s[i];
+        if (inQ) {
+            if (c === '"') { if (s[i+1] === '"') { field+='"'; i++; } else inQ=false; }
+            else field += c;
+        } else {
+            if      (c === '"')  inQ = true;
+            else if (c === ',')  { row.push(field); field=''; }
+            else if (c === '\n') { row.push(field); if (row.some(v=>v.trim())) out.push(row); row=[]; field=''; }
+            else field += c;
+        }
+    }
+    row.push(field);
+    if (row.some(v=>v.trim())) out.push(row);
+    if (!out.length) return { headers:[], rows:[] };
+    return { headers: out[0].map(h=>h.trim()), rows: out.slice(1) };
+}
+
+function findCol(headers, names) {
+    const low = headers.map(h => h.trim().toLowerCase());
+    for (const n of names) { const i = low.indexOf(n); if (i !== -1) return i; }
+    for (const n of names) { const i = low.findIndex(h => h.includes(n)); if (i !== -1) return i; }
+    return -1;
+}
+
+// Load
+function loadCsvText(text, name) {
+    const { headers, rows: raw } = parseCSV(text);
+    if (!headers.length) { return uploadError('That file looks empty.'); }
+
+    const vinC = findCol(headers, ['vin','vin_number','vehicle_vin']);
+    const rtC  = findCol(headers, ['rooftop','rooftop_name','dealer','dealership','dealer_name','store','location']);
+    const inC  = findCol(headers, ['input_url','input','input_image','input_image_url','raw_url','raw','source_url','before_url','before']);
+    const aiC  = findCol(headers, ['ai_url','ai','ai_image','ai_image_url','ai_output','ai_output_url','ai_generated','generated_url','generated']);
+    const outC = findCol(headers, ['output_url','output','output_image','output_image_url','result_url','processed_url','processed','after_url','after','final_url','final']);
+
+    if (vinC === -1) return uploadError('No VIN column found. Add a column named "VIN".');
+    if (inC === -1 && aiC === -1 && outC === -1)
+        return uploadError('No image column found. Add at least one of: input_url, ai_url, output_url.');
+
+    const parsed = [];
+    for (const r of raw) {
+        const vin = (r[vinC] || '').trim();
+        if (!vin || vin.toLowerCase() === 'vin') continue;
+        parsed.push({
+            vin,
+            rooftop:   rtC  !== -1 ? (r[rtC] || '').trim() : '',
+            inputUrl:  inC  !== -1 ? (r[inC]  || '').trim() : '',
+            aiUrl:     aiC  !== -1 ? (r[aiC]  || '').trim() : '',
+            outputUrl: outC !== -1 ? (r[outC] || '').trim() : '',
+        });
+    }
+    if (!parsed.length) return uploadError('No VIN rows found in that file.');
+
+    // Only show panes for URL columns that exist in the file
+    document.getElementById('in-pane').style.display  = inC  !== -1 ? '' : 'none';
+    document.getElementById('ai-pane').style.display  = aiC  !== -1 ? '' : 'none';
+    document.getElementById('out-pane').style.display = outC !== -1 ? '' : 'none';
+
+    allRows  = parsed;
+    fileName = name;
+    groups   = buildGroups(allRows);
+
+    document.getElementById('file-name').textContent =
+        name + ' · ' + allRows.length + ' VINs · ' + groups.length + ' rooftop' + (groups.length === 1 ? '' : 's');
+    document.getElementById('header-actions').classList.replace('hidden','flex');
+    renderTypeBar();
+    renderRooftopView();
+    setHeaderMode('rooftop');
+    show('rooftop-view');
+}
+
+// Group parsed rows by rooftop, preserving first-seen order
+function buildGroups(list) {
+    const map = new Map();
+    list.forEach(r => {
+        const key = (r.rooftop || '').trim() || 'All VINs';
+        if (!map.has(key)) map.set(key, []);
+        map.get(key).push(r);
+    });
+    return [...map.entries()].map(([name, rws]) => ({ name, rows: rws }));
+}
+
+function rooftopStorageKey(name, count) { return STORAGE_PREFIX + fileName + '::' + name + '_' + count; }
+
+function readRooftopReviews(g) {
+    if (g.name === currentRooftop) return reviews;
+    try { return JSON.parse(localStorage.getItem(rooftopStorageKey(g.name, g.rows.length)) || '{}'); }
+    catch(e) { return {}; }
+}
+
+function setHeaderMode(mode) {
+    // Submit opens the per-rooftop summary, so it only applies inside review
+    document.getElementById('submit-btn').style.display = (mode === 'review') ? '' : 'none';
+    const lbl = document.getElementById('export-label');
+    if (lbl) lbl.textContent = (mode === 'review') ? 'Export rooftop' : 'Export all';
+}
+
+function renderRooftopView() {
+    document.getElementById('rooftop-sub').textContent =
+        fileName + ' · ' + allRows.length + ' VINs across ' + groups.length + ' rooftop' + (groups.length === 1 ? '' : 's');
+    const grid = document.getElementById('rooftop-grid');
+    grid.innerHTML = '';
+    let totalDone = 0;
+    groups.forEach(g => {
+        const rev = readRooftopReviews(g);
+        const done = Math.min(Object.values(rev).filter(x => x && x.type).length, g.rows.length);
+        totalDone += done;
+        const pct = g.rows.length ? Math.round(done / g.rows.length * 100) : 0;
+        const complete = g.rows.length > 0 && done >= g.rows.length;
+
+        const card = document.createElement('button');
+        card.className = 'text-left bg-white border border-slate-200 rounded-xl p-4 hover:border-blue-400 hover:shadow-md transition';
+        card.innerHTML =
+            '<div class="flex items-start justify-between gap-2">' +
+                '<span class="font-bold text-slate-800 text-[14px] leading-snug break-words">' + escapeHtml(g.name) + '</span>' +
+                (complete
+                    ? '<span class="text-[10px] font-bold text-emerald-700 bg-emerald-50 border border-emerald-200 px-2 py-0.5 rounded-full flex-shrink-0">Done</span>'
+                    : '<span class="text-[10px] font-bold text-slate-500 bg-slate-100 px-2 py-0.5 rounded-full flex-shrink-0">' + (g.rows.length - done) + ' left</span>') +
+            '</div>' +
+            '<div class="mt-3 flex items-center justify-between text-[11px] text-slate-500">' +
+                '<span><span class="font-bold text-slate-700">' + g.rows.length + '</span> VINs</span>' +
+                '<span>' + done + ' / ' + g.rows.length + ' reviewed</span>' +
+            '</div>' +
+            '<div class="mt-2 h-1.5 bg-slate-100 rounded-full overflow-hidden">' +
+                '<div class="h-full rounded-full" style="width:' + pct + '%;background:' + (complete ? '#10b981' : 'var(--spyne)') + '"></div>' +
+            '</div>';
+        card.addEventListener('click', () => openRooftop(g.name));
+        grid.appendChild(card);
+    });
+    document.getElementById('rooftop-overall').textContent = totalDone + ' / ' + allRows.length + ' VINs reviewed';
+}
+
+function openRooftop(name) {
+    const g = groups.find(x => x.name === name);
+    if (!g) return;
+    currentRooftop = name;
+    rows       = g.rows;
+    storageKey = rooftopStorageKey(name, rows.length);
+    restoreReviews();
+    setHeaderMode('review');
+    show('review-view');
+    idx = firstUnreviewed();
+    render();
+    startTimer();
+}
+
+function backToRooftops() {
+    persist();
+    stopTimer();
+    currentRooftop = null;
+    renderRooftopView();          // refresh progress from what was just reviewed
+    setHeaderMode('rooftop');
+    show('rooftop-view');
+}
+
+function escapeHtml(s) {
+    return String(s).replace(/[&<>"']/g, c => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[c]));
+}
+
+function uploadError(msg) {
+    const el = document.getElementById('upload-error');
+    el.textContent = msg;
+    el.classList.remove('hidden');
+}
+
+function firstUnreviewed() {
+    const i = rows.findIndex((_, j) => !reviews[j] || !reviews[j].type);
+    return i === -1 ? 0 : i;
+}
+
+// Persistence
+function persist() { try { localStorage.setItem(storageKey, JSON.stringify(reviews)); } catch(e){} }
+function restoreReviews() { try { reviews = JSON.parse(localStorage.getItem(storageKey) || '{}'); } catch(e){ reviews = {}; } }
+
+// Image loading with proxy fallback
+// Image loading — request a small resized WebP first so big dealer photos load fast.
+//  • Spyne / S3 / CloudFront  → Thumbor (media.spyneai.com) resize+webp, then wsrv, then direct
+//  • Anything else            → wsrv.nl resize+webp, then direct
+function isSpyneHosted(url) {
+    try { const h = new URL(url).hostname.toLowerCase();
+        return h.includes('spyne') || h.includes('amazonaws.com') || h.includes('cloudfront.net'); }
+    catch(e){ return false; }
+}
+function thumborUrl(u, w, q) { return 'https://media.spyneai.com/unsafe/' + w + 'x0/filters:format(webp):quality(' + q + ')/' + u; }
+function wsrvUrl(u, w, q)    { return 'https://wsrv.nl/?url=' + encodeURIComponent(u.replace(/^https?:\/\//,'')) + '&w=' + w + '&q=' + q + '&output=webp'; }
+
+function getFallbacks(url, w, q) {
+    if (!url) return [];
+    const seen = new Set(), chain = [];
+    const add = u => { if (u && !seen.has(u)) { seen.add(u); chain.push(u); } };
+    if (isSpyneHosted(url)) { add(thumborUrl(url, w, q)); add(wsrvUrl(url, w, q)); add(url); }
+    else                    { add(wsrvUrl(url, w, q));    add(url); }
+    return chain;
+}
+
+const _preloadCache = new Set();
+function preload(url) {
+    if (!url) return;
+    const first = getFallbacks(url, DISPLAY_W, DISPLAY_Q)[0];
+    if (!first || _preloadCache.has(first)) return;
+    _preloadCache.add(first);
+    const i = new Image(); i.referrerPolicy = 'no-referrer'; i.decoding = 'async'; i.src = first;
+}
+
+function loadImage(imgEl, skelEl, noneEl, url) {
+    imgEl.onload = imgEl.onerror = null;
+    imgEl.src = ''; imgEl.style.opacity = '0';
+    noneEl.style.display = 'none';
+    if (!url) { skelEl.style.display = 'none'; noneEl.style.display = 'flex'; return; }
+    const fb = getFallbacks(url, DISPLAY_W, DISPLAY_Q); let step = 0;
+    skelEl.style.display = 'flex';
+    imgEl.decoding = 'async';
+    imgEl.onload  = () => { imgEl.style.opacity = '1'; skelEl.style.display = 'none'; };
+    imgEl.onerror = () => { step++; if (step < fb.length) { imgEl.src = fb[step]; } else { skelEl.style.display = 'none'; noneEl.style.display = 'flex'; } };
+    imgEl.src = fb[0];
+}
+
+// Render
+function renderTypeBar() {
+    const bar = document.getElementById('type-bar');
+    bar.innerHTML = '';
+    TYPES.forEach(t => {
+        const chip = document.createElement('button');
+        chip.className = 'type-chip';
+        chip.dataset.code = t.code;
+        chip.innerHTML = '<span class="kbd">' + t.key + '</span><span>' + t.label + '</span>';
+        chip.addEventListener('click', () => selectType(t.code));
+        bar.appendChild(chip);
+    });
+}
+
+function render() {
+    if (!rows.length) return;
+    idx = Math.max(0, Math.min(rows.length - 1, idx));
+    const r   = rows[idx];
+    const rev = reviews[idx] || {};
+
+    document.getElementById('cur-vin').textContent = r.vin;
+    document.getElementById('cur-counter').textContent = (idx + 1) + ' / ' + rows.length;
+
+    const rt = document.getElementById('cur-rooftop');
+    if (r.rooftop) { rt.textContent = r.rooftop; rt.classList.remove('hidden'); }
+    else rt.classList.add('hidden');
+
+    // Images
+    loadImage(document.getElementById('in-img'),  document.getElementById('in-skel'),  document.getElementById('in-none'),  r.inputUrl);
+    loadImage(document.getElementById('ai-img'),  document.getElementById('ai-skel'),  document.getElementById('ai-none'),  r.aiUrl);
+    loadImage(document.getElementById('out-img'), document.getElementById('out-skel'), document.getElementById('out-none'), r.outputUrl);
+    document.getElementById('in-img').onclick  = () => openLightbox(r.inputUrl);
+    document.getElementById('ai-img').onclick  = () => openLightbox(r.aiUrl);
+    document.getElementById('out-img').onclick = () => openLightbox(r.outputUrl);
+
+    // Type chips
+    document.querySelectorAll('.type-chip').forEach(c =>
+        c.classList.toggle('active', c.dataset.code === rev.type));
+
+    // Comment
+    document.getElementById('comment').value = rev.comment || '';
+
+    // Status
+    const st = document.getElementById('status');
+    if (rev.type) { st.textContent = '✓ ' + LABEL_BY_CODE[rev.type]; st.style.color = (rev.type === 'ok') ? '#047857' : '#059669'; }
+    else          { st.textContent = 'Pending';                      st.style.color = '#f59e0b'; }
+
+    updateProgress();
+    renderSummary();
+
+    // Preload neighbours (more ahead than behind) for snappy navigation
+    for (let d=1; d<=4; d++) {
+        const nx = rows[idx+d]; if (nx) { preload(nx.inputUrl); preload(nx.aiUrl); preload(nx.outputUrl); }
+    }
+    for (let d=1; d<=2; d++) {
+        const pv = rows[idx-d]; if (pv) { preload(pv.inputUrl); preload(pv.aiUrl); preload(pv.outputUrl); }
+    }
+}
+
+function updateProgress() {
+    const done = Object.values(reviews).filter(x => x && x.type).length;
+    document.getElementById('progress-pill').textContent = done + ' / ' + rows.length + ' reviewed';
+}
+
+function computeCounts() {
+    const counts = { pending:0, ok:0, issue:0 };
+    rows.forEach((_, i) => {
+        const t = reviews[i] && reviews[i].type;
+        if (t && counts.hasOwnProperty(t)) counts[t]++;
+        else counts.pending++;
+    });
+    return counts;
+}
+
+function renderSummary() {
+    const counts = computeCounts();
+    const bar = document.getElementById('summary-bar');
+    bar.innerHTML = '';
+    const lbl = document.createElement('span');
+    lbl.className = 'text-[10px] font-bold text-slate-400 uppercase tracking-wider mr-1';
+    lbl.textContent = 'Summary';
+    bar.appendChild(lbl);
+    SUMMARY_ORDER.forEach(code => {
+        const n = counts[code];
+        if (n === 0 && code !== 'pending' && code !== 'ok') return;   // always show Pending + OK
+        const pill = document.createElement('span');
+        pill.className = 'sum-pill';
+        pill.title = LABEL_BY_CODE[code] || SHORT[code];
+        pill.innerHTML = '<span class="dot" style="background:' + STAT_COLOR[code] + '"></span>' +
+                         '<span>' + SHORT[code] + '</span><span class="n">' + n + '</span>';
+        bar.appendChild(pill);
+    });
+}
+
+// Actions
+function selectType(code) {
+    if (!reviews[idx]) reviews[idx] = {};
+    reviews[idx].type = (reviews[idx].type === code) ? null : code;   // toggle off if same
+    reviews[idx].at   = new Date().toISOString();
+    persist();
+    render();
+}
+
+let commentTimer = null;
+document.getElementById('comment').addEventListener('input', e => {
+    const val = e.target.value;
+    if (!reviews[idx]) reviews[idx] = {};
+    reviews[idx].comment = val;
+    reviews[idx].at = new Date().toISOString();
+    clearTimeout(commentTimer);
+    commentTimer = setTimeout(persist, 400);
+});
+
+function nav(dir) { idx += dir; render(); }
+
+function gotoNextUnreviewed() {
+    for (let step=1; step<=rows.length; step++) {
+        const j = (idx + step) % rows.length;
+        if (!reviews[j] || !reviews[j].type) { idx = j; render(); return; }
+    }
+    toast('Nothing pending — all VINs reviewed');
+}
+
+// Enter = accept & advance. If nothing is selected on the current VIN, mark it OK.
+function submitAdvance() {
+    if (!reviews[idx] || !reviews[idx].type) {
+        reviews[idx] = reviews[idx] || {};
+        reviews[idx].type = 'ok';
+        reviews[idx].at = new Date().toISOString();
+        persist();
+    }
+    if (idx >= rows.length - 1) { render(); openSummary(); }   // last VIN → show summary
+    else nav(1);
+}
+
+// ── Timer ────────────────────────────────────────────────────────────────────
+let timerStart = null, timerAccum = 0, timerInt = null, timerPaused = false;
+function elapsedMs() { return timerAccum + (timerStart ? Date.now() - timerStart : 0); }
+function fmtDur(ms) {
+    const s = Math.floor(ms/1000), h = Math.floor(s/3600), m = Math.floor(s%3600/60), ss = s%60;
+    const p = n => String(n).padStart(2,'0');
+    return (h > 0 ? p(h) + ':' : '') + p(m) + ':' + p(ss);
+}
+function tickTimer() { const d = document.getElementById('timer-display'); if (d) d.textContent = fmtDur(elapsedMs()); }
+function startTimer() {
+    timerAccum = 0; timerPaused = false; timerStart = Date.now();
+    document.getElementById('timer-wrap').style.display = 'flex';
+    document.getElementById('timer-pause').classList.add('hidden');
+    clearInterval(timerInt); timerInt = setInterval(tickTimer, 1000); tickTimer();
+}
+function stopTimer() {
+    clearInterval(timerInt); timerInt = null; timerStart = null; timerAccum = 0; timerPaused = false;
+    const w = document.getElementById('timer-wrap'); if (w) w.style.display = 'none';
+}
+function toggleTimer() {
+    if (timerPaused) {
+        timerPaused = false; timerStart = Date.now();
+        timerInt = setInterval(tickTimer, 1000);
+        document.getElementById('timer-pause').classList.add('hidden');
+        document.getElementById('timer-icon').style.color = '';
+    } else {
+        timerAccum = elapsedMs(); timerStart = null; timerPaused = true;
+        clearInterval(timerInt);
+        document.getElementById('timer-pause').classList.remove('hidden');
+        document.getElementById('timer-icon').style.color = '#f59e0b';
+    }
+}
+
+// ── Summary modal ────────────────────────────────────────────────────────────
+function openSummary() {
+    if (!rows.length) return;
+    const counts = computeCounts();
+    const total = rows.length;
+    document.getElementById('sum-sub').textContent = fileName + (currentRooftop ? ' · ' + currentRooftop : '');
+    document.getElementById('sum-total').textContent    = total;
+    document.getElementById('sum-reviewed').textContent = total - counts.pending;
+    document.getElementById('sum-ok').textContent       = counts.ok;
+    document.getElementById('sum-pending').textContent  = counts.pending;
+    document.getElementById('sum-time').textContent     = fmtDur(elapsedMs());
+
+    const list = document.getElementById('sum-types');
+    list.innerHTML = '';
+    TYPES.forEach(t => {
+        const row = document.createElement('div');
+        row.className = 'flex items-center justify-between text-[12px]';
+        row.innerHTML = '<span class="flex items-center gap-2 text-slate-600">' +
+            '<span style="width:8px;height:8px;border-radius:50%;background:' + STAT_COLOR[t.code] + '"></span>' +
+            t.label + '</span><span class="font-bold text-slate-800">' + counts[t.code] + '</span>';
+        list.appendChild(row);
+    });
+    document.getElementById('summary-modal').style.display = 'flex';
+
+    // Reset the "mark pending as OK" checkbox each time; hide it if nothing is pending
+    const wrap = document.getElementById('mark-ok-wrap');
+    const cb   = document.getElementById('mark-pending-ok');
+    cb.checked = false;
+    document.getElementById('mark-ok-count').textContent = counts.pending;
+    wrap.style.display = counts.pending > 0 ? 'flex' : 'none';
+}
+function markCurrentPendingAsOk() {
+    const now = new Date().toISOString();
+    let changed = 0;
+    for (let i = 0; i < rows.length; i++) {
+        if (!reviews[i] || !reviews[i].type) {
+            reviews[i] = reviews[i] || {};
+            reviews[i].type = 'ok';
+            reviews[i].at = now;
+            changed++;
+        }
+    }
+    if (changed) { persist(); render(); }
+    return changed;
+}
+function closeSummary() { document.getElementById('summary-modal').style.display = 'none'; }
+function summaryOpen() { return document.getElementById('summary-modal').style.display === 'flex'; }
+
+document.getElementById('submit-btn').addEventListener('click', openSummary);
+document.getElementById('sum-close').addEventListener('click', closeSummary);
+document.getElementById('sum-keep').addEventListener('click', closeSummary);
+document.getElementById('sum-download').addEventListener('click', () => {
+    if (document.getElementById('mark-pending-ok').checked) markCurrentPendingAsOk();
+    exportCSV();
+    closeSummary();
+});
+
+// Copy VIN
+document.getElementById('copy-vin').addEventListener('click', async () => {
+    const vin = rows[idx] && rows[idx].vin; if (!vin) return;
+    try { await navigator.clipboard.writeText(vin); }
+    catch(e){ const ta=document.createElement('textarea'); ta.value=vin; document.body.appendChild(ta); ta.select(); try{document.execCommand('copy');}catch(_){} document.body.removeChild(ta); }
+    const fb = document.getElementById('copy-fb');
+    fb.style.opacity = '1'; setTimeout(() => fb.style.opacity = '0', 1200);
+});
+
+// Back to rooftop selection
+document.getElementById('back-to-rooftops').addEventListener('click', backToRooftops);
+
+// Nav buttons
+document.getElementById('prev-btn').addEventListener('click', () => nav(-1));
+document.getElementById('next-btn').addEventListener('click', () => nav(1));
+document.getElementById('next-unrev').addEventListener('click', gotoNextUnreviewed);
+
+// Lightbox
+function openLightbox(url) {
+    if (!url) return;
+    const box = document.getElementById('lightbox');
+    const img = document.getElementById('lb-img');
+    const fb = getFallbacks(url, ZOOM_W, ZOOM_Q); let step = 0;
+    img.onerror = () => { step++; if (step < fb.length) img.src = fb[step]; };
+    img.src = fb[0];
+    box.style.display = 'flex';
+}
+function closeLightbox() { document.getElementById('lightbox').style.display = 'none'; }
+document.getElementById('lightbox').addEventListener('click', closeLightbox);
+
+// Export
+function csvCell(v) { const s = String(v == null ? '' : v); return /[",\n\r]/.test(s) ? '"' + s.replace(/"/g,'""') + '"' : s; }
+function exportCSV() {
+    if (!groups.length) return;
+    // In a specific rooftop → export just that rooftop; on the rooftop page → consolidated (all)
+    const scope = currentRooftop ? groups.filter(g => g.name === currentRooftop) : groups;
+    if (!scope.length) return;
+    const header = ['#','VIN','Rooftop','Issue','Comment','Input URL','AI URL','Output URL','Reviewed At','User'];
+    const lines = [header.join(',')];
+    let n = 0;
+    scope.forEach(g => {
+        const rev = readRooftopReviews(g);
+        g.rows.forEach((r, i) => {
+            const rv = rev[i] || {};
+            n++;
+            lines.push([
+                n,
+                csvCell(r.vin),
+                csvCell(r.rooftop),
+                csvCell(rv.type ? LABEL_BY_CODE[rv.type] : ''),
+                csvCell(rv.comment || ''),
+                csvCell(r.inputUrl),
+                csvCell(r.aiUrl),
+                csvCell(r.outputUrl),
+                csvCell(rv.at || ''),
+                csvCell(currentUserName || currentUser),
+            ].join(','));
+        });
+    });
+    const blob = new Blob([lines.join('\n')], { type:'text/csv;charset=utf-8' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    const base = (fileName.replace(/\.csv$/i,'') || 'review').replace(/[^a-z0-9_-]/gi,'_');
+    const tag  = currentRooftop ? currentRooftop.replace(/[^a-z0-9_-]/gi,'_') : 'all_rooftops';
+    a.download = base + '_' + tag + '_reviewed_' + new Date().toISOString().slice(0,10) + '.csv';
+    document.body.appendChild(a); a.click(); document.body.removeChild(a);
+    URL.revokeObjectURL(a.href);
+}
+document.getElementById('export-btn').addEventListener('click', exportCSV);
+
+// ── Clear reviews ────────────────────────────────────────────────────────────
+function groupReviewedCount(g) {
+    const rev = readRooftopReviews(g);
+    return Math.min(Object.values(rev).filter(x => x && x.type).length, g.rows.length);
+}
+function clearGroup(g) {
+    try { localStorage.removeItem(rooftopStorageKey(g.name, g.rows.length)); } catch(e){}
+    if (g.name === currentRooftop) { reviews = {}; idx = 0; render(); }
+}
+
+// Generic confirm dialog
+let _confirmCb = null;
+function openConfirm(title, msg, okLabel, onOk) {
+    document.getElementById('confirm-title').textContent = title;
+    document.getElementById('confirm-msg').textContent = msg;
+    document.getElementById('confirm-ok').textContent = okLabel || 'Clear';
+    _confirmCb = onOk;
+    document.getElementById('confirm-modal').style.display = 'flex';
+}
+function closeConfirm() { document.getElementById('confirm-modal').style.display = 'none'; _confirmCb = null; }
+function confirmOpen() { return document.getElementById('confirm-modal').style.display === 'flex'; }
+document.getElementById('confirm-cancel').addEventListener('click', closeConfirm);
+document.getElementById('confirm-modal').addEventListener('click', e => { if (e.target.id === 'confirm-modal') closeConfirm(); });
+document.getElementById('confirm-ok').addEventListener('click', () => { const cb = _confirmCb; closeConfirm(); if (cb) cb(); });
+
+// Single rooftop → confirmation popup
+document.getElementById('clear-current-btn').addEventListener('click', () => {
+    const g = groups.find(x => x.name === currentRooftop);
+    if (!g) return;
+    const done = groupReviewedCount(g);
+    if (!done) { toast('Nothing to clear in this rooftop'); return; }
+    openConfirm('Clear reviews?', 'This resets all ' + done + ' reviewed VIN' + (done===1?'':'s') + ' in "' + g.name + '" back to pending. This can\u2019t be undone.', 'Clear rooftop', () => {
+        clearGroup(g);
+        toast('Cleared ' + done + ' review' + (done===1?'':'s') + ' in ' + g.name);
+    });
+});
+
+// Rooftop page → multi-select modal
+function openClearModal() {
+    if (!groups.length) return;
+    const list = document.getElementById('clear-list');
+    list.innerHTML = '';
+    groups.forEach((g, gi) => {
+        const done = groupReviewedCount(g);
+        const row = document.createElement('label');
+        row.className = 'flex items-center justify-between gap-2 px-3 py-2 rounded-lg cursor-pointer hover:bg-slate-50' + (done ? '' : ' opacity-50');
+        row.innerHTML =
+            '<span class="flex items-center gap-2.5 min-w-0">' +
+                '<input type="checkbox" class="clear-cb w-4 h-4 accent-rose-600 cursor-pointer flex-shrink-0" data-gi="' + gi + '"' + (done ? '' : ' disabled') + '>' +
+                '<span class="text-[13px] font-semibold text-slate-700 truncate">' + escapeHtml(g.name) + '</span>' +
+            '</span>' +
+            '<span class="text-[11px] text-slate-400 flex-shrink-0">' + done + ' / ' + g.rows.length + ' reviewed</span>';
+        list.appendChild(row);
+    });
+    list.querySelectorAll('.clear-cb').forEach(cb => cb.addEventListener('change', updateClearState));
+    document.getElementById('clear-all-toggle').checked = false;
+    updateClearState();
+    document.getElementById('clear-modal').style.display = 'flex';
+}
+function closeClearModal() { document.getElementById('clear-modal').style.display = 'none'; }
+function clearModalOpen() { return document.getElementById('clear-modal').style.display === 'flex'; }
+function selectedClearBoxes() { return [...document.querySelectorAll('#clear-list .clear-cb')].filter(cb => cb.checked && !cb.disabled); }
+function updateClearState() {
+    const sel = selectedClearBoxes();
+    document.getElementById('clear-confirm').disabled = sel.length === 0;
+    document.getElementById('clear-count').textContent = sel.length + ' selected';
+}
+document.getElementById('clear-reviews-btn').addEventListener('click', openClearModal);
+document.getElementById('clear-close').addEventListener('click', closeClearModal);
+document.getElementById('clear-cancel').addEventListener('click', closeClearModal);
+document.getElementById('clear-modal').addEventListener('click', e => { if (e.target.id === 'clear-modal') closeClearModal(); });
+document.getElementById('clear-all-toggle').addEventListener('change', e => {
+    document.querySelectorAll('#clear-list .clear-cb').forEach(cb => { if (!cb.disabled) cb.checked = e.target.checked; });
+    updateClearState();
+});
+document.getElementById('clear-confirm').addEventListener('click', () => {
+    const boxes = selectedClearBoxes();
+    if (!boxes.length) return;
+    const names = boxes.map(cb => groups[+cb.dataset.gi].name);
+    openConfirm('Clear ' + names.length + ' rooftop' + (names.length===1?'':'s') + '?',
+        'This resets all reviews in: ' + names.join(', ') + '. This can\u2019t be undone.', 'Clear selected', () => {
+        boxes.forEach(cb => clearGroup(groups[+cb.dataset.gi]));
+        closeClearModal();
+        renderRooftopView();
+        toast('Cleared reviews in ' + names.length + ' rooftop' + (names.length===1?'':'s'));
+    });
+});
+
+// New CSV
+document.getElementById('new-btn').addEventListener('click', () => {
+    rows = []; reviews = {}; idx = 0;
+    allRows = []; groups = []; currentRooftop = null;
+    stopTimer();
+    closeSummary();
+    document.getElementById('file-input').value = '';
+    document.getElementById('upload-error').classList.add('hidden');
+    document.getElementById('header-actions').classList.replace('flex','hidden');
+    show('upload-view');
+});
+
+// Keyboard
+document.addEventListener('keydown', e => {
+    // Confirm/clear dialogs take priority: Escape closes them, other keys are swallowed
+    if (confirmOpen() || clearModalOpen()) {
+        if (e.key === 'Escape') { e.preventDefault(); if (confirmOpen()) closeConfirm(); else closeClearModal(); }
+        return;
+    }
+    if (!document.getElementById('review-view').classList.contains('active')) return;
+    if (e.key === 'Escape') {
+        if (summaryOpen()) { closeSummary(); return; }
+        if (document.getElementById('lightbox').style.display === 'flex') { closeLightbox(); return; }
+        backToRooftops(); return;
+    }
+    const typing = ['INPUT','TEXTAREA'].includes(document.activeElement && document.activeElement.tagName);
+    if (typing) { if (e.key === 'Enter') { e.preventDefault(); document.activeElement.blur(); submitAdvance(); } return; }
+
+    if (['ArrowLeft','ArrowUp'].includes(e.key))    { e.preventDefault(); nav(-1); return; }
+    if (['ArrowRight','ArrowDown'].includes(e.key)) { e.preventDefault(); nav(1);  return; }
+    if (e.key === 'Enter') { e.preventDefault(); submitAdvance(); return; }
+    const t = TYPES.find(x => x.key === e.key);
+    if (t) { e.preventDefault(); selectType(t.code); }
+});
+
+// Upload wiring
+function readFile(file) {
+    if (!file) return;
+    if (!file.name.toLowerCase().endsWith('.csv')) { uploadError('Please choose a .csv file.'); return; }
+    document.getElementById('upload-error').classList.add('hidden');
+    const reader = new FileReader();
+    reader.onload = ev => { try { loadCsvText(ev.target.result, file.name); } catch(err){ uploadError('Could not parse CSV: ' + err.message); } };
+    reader.readAsText(file);
+}
+const dz = document.getElementById('drop-zone');
+dz.addEventListener('click', () => document.getElementById('file-input').click());
+dz.addEventListener('dragover', e => { e.preventDefault(); dz.classList.add('border-blue-400','bg-blue-50/50'); });
+dz.addEventListener('dragleave', () => dz.classList.remove('border-blue-400','bg-blue-50/50'));
+dz.addEventListener('drop', e => { e.preventDefault(); dz.classList.remove('border-blue-400','bg-blue-50/50'); readFile(e.dataTransfer.files[0]); });
+document.getElementById('file-input').addEventListener('change', e => readFile(e.target.files[0]));
+
+// Helpers
+function show(id) {
+    document.querySelectorAll('.view').forEach(v => v.classList.remove('active'));
+    document.getElementById(id).classList.add('active');
+}
+let toastTimer = null;
+function toast(msg) {
+    const el = document.getElementById('toast');
+    el.textContent = msg;
+    el.classList.remove('translate-y-20');
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => el.classList.add('translate-y-20'), 2200);
+}
+
+// ── Auth logic (Google Identity Services) ──────────────────────────────────────
+function showLoginError(msg) {
+    const e = document.getElementById('login-error');
+    e.textContent = msg; e.classList.remove('hidden');
+}
+function decodeJwt(token) {
+    try {
+        const b = token.split('.')[1].replace(/-/g,'+').replace(/_/g,'/');
+        const json = decodeURIComponent(atob(b).split('').map(c => '%' + ('00' + c.charCodeAt(0).toString(16)).slice(-2)).join(''));
+        return JSON.parse(json);
+    } catch(e) { return null; }
+}
+function setLoggedIn(email, name) {
+    currentUser = email; currentUserName = name || '';
+    try { localStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify({ email, name: currentUserName })); } catch(e){}
+    document.getElementById('user-email').textContent = currentUserName ? (currentUserName + ' · ' + email) : email;
+    const chip = document.getElementById('user-chip');
+    chip.classList.remove('hidden'); chip.classList.add('flex');
+    document.getElementById('logout-btn').classList.remove('hidden');
+}
+function handleCredentialResponse(resp) {
+    const payload = resp && resp.credential ? decodeJwt(resp.credential) : null;
+    if (!payload || !payload.email) { showLoginError('Could not read your Google sign-in. Try again.'); return; }
+    if (payload.email_verified === false) { showLoginError('Your Google email is not verified.'); return; }
+    const email = String(payload.email).trim().toLowerCase();
+    if (!ALLOWED.has(email)) { showLoginError('This Google account (' + email + ') is not authorized for this tool.'); return; }
+    document.getElementById('login-error').classList.add('hidden');
+    setLoggedIn(email, payload.name || '');
+    show('upload-view');
+}
+function logout() {
+    currentUser = ''; currentUserName = '';
+    try { localStorage.removeItem(AUTH_STORAGE_KEY); } catch(e){}
+    try { if (window.google && google.accounts && google.accounts.id) google.accounts.id.disableAutoSelect(); } catch(e){}
+    const chip = document.getElementById('user-chip');
+    chip.classList.add('hidden'); chip.classList.remove('flex');
+    document.getElementById('logout-btn').classList.add('hidden');
+    // reset app state back to a clean slate
+    rows = []; reviews = {}; idx = 0;
+    allRows = []; groups = []; currentRooftop = null;
+    stopTimer(); closeSummary();
+    document.getElementById('header-actions').classList.replace('flex','hidden');
+    show('login-view');
+}
+document.getElementById('logout-btn').addEventListener('click', logout);
+
+// Wait for the async-loaded GSI library, then render the button
+function whenGsiReady(cb, tries) {
+    tries = tries || 0;
+    if (window.google && google.accounts && google.accounts.id) { cb(); return; }
+    if (tries > 100) { showLoginError('Google sign-in failed to load. Check your connection and refresh.'); return; }
+    setTimeout(() => whenGsiReady(cb, tries + 1), 100);
+}
+function initGoogleSignIn() {
+    if (!GOOGLE_CLIENT_ID || GOOGLE_CLIENT_ID.indexOf('YOUR_GOOGLE_CLIENT_ID') === 0) {
+        const h = document.getElementById('login-hint');
+        h.innerHTML = 'Setup needed: add your Google OAuth <b>Client ID</b> to <code>GOOGLE_CLIENT_ID</code> in this file, and add this site to the client\u2019s <b>Authorized JavaScript origins</b>.';
+        h.classList.remove('hidden');
+        return;
+    }
+    whenGsiReady(() => {
+        google.accounts.id.initialize({ client_id: GOOGLE_CLIENT_ID, callback: handleCredentialResponse, auto_select: false });
+        google.accounts.id.renderButton(
+            document.getElementById('gsi-button'),
+            { theme:'outline', size:'large', type:'standard', shape:'pill', text:'signin_with', logo_alignment:'left', width: 260 }
+        );
+    });
+}
+
+// Restore session on load
+(function initAuth() {
+    let saved = null;
+    try { saved = JSON.parse(localStorage.getItem(AUTH_STORAGE_KEY) || 'null'); } catch(e) { saved = null; }
+    if (typeof saved === 'string') saved = { email: saved, name: '' };   // migrate old format
+    if (saved && saved.email && ALLOWED.has(String(saved.email).toLowerCase())) {
+        setLoggedIn(String(saved.email).toLowerCase(), saved.name || '');
+        show('upload-view');
+    } else {
+        show('login-view');
+    }
+    initGoogleSignIn();
+})();
+</script>
+</body>
+</html>
