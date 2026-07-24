@@ -278,6 +278,13 @@
                 <input id="mark-pending-ok" type="checkbox" class="mt-0.5 w-4 h-4 accent-emerald-600 cursor-pointer">
                 <span class="text-[12px] text-amber-800 leading-snug">Mark all <b id="mark-ok-count">0</b> pending as <b>OK</b> before downloading</span>
             </label>
+            <div class="mt-3 flex items-start gap-2 p-2.5 rounded-lg bg-slate-50 border border-slate-200">
+                <svg class="w-4 h-4 text-slate-400 mt-0.5 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+                <span class="text-[12px] text-slate-600 leading-snug">Downloading also marks all <b>OK</b> VINs in this rooftop as <b>qc_done</b> in Spyne.</span>
+            </div>
+            <!-- qc_done push status -->
+            <div id="qc-status" class="hidden mt-3 text-[12px] rounded-lg px-3 py-2.5 leading-snug"></div>
+            <button id="qc-retry" class="hidden mt-2 w-full border border-blue-200 text-blue-700 font-semibold py-2 rounded-lg hover:bg-blue-50 transition text-[12px]">Retry qc_done push</button>
             <div class="mt-3 flex gap-2">
                 <button id="sum-keep" class="flex-1 border border-slate-200 text-slate-600 font-semibold py-2.5 rounded-lg hover:bg-slate-50 transition">Keep reviewing</button>
                 <button id="sum-download" class="flex-1 bg-blue-600 hover:bg-blue-700 text-white font-bold py-2.5 rounded-lg flex items-center justify-center space-x-2 transition">
@@ -325,6 +332,34 @@
     </div>
 </div>
 
+<!-- API token modal (shown after Google sign-in) -->
+<div id="token-modal" class="fixed inset-0 z-50 bg-slate-900/60 items-center justify-center hidden p-4">
+    <div class="bg-white rounded-2xl shadow-2xl w-full max-w-md p-6">
+        <h3 class="font-bold text-slate-800 text-[17px] mb-1">Enter your API token</h3>
+        <p class="text-[12px] text-slate-500 leading-relaxed mb-4">Paste your Spyne Bearer token (the part after <code>Bearer</code> in the console request). It stays only in this browser tab and is used to mark VINs as <b>qc_done</b>.</p>
+        <textarea id="token-input" rows="4" placeholder="eyJhdXRoS2V5Ijoi…" class="w-full p-2.5 border border-slate-200 rounded-lg text-[12px] font-mono outline-none focus:border-blue-400 focus:ring-1 focus:ring-blue-400 transition resize-none"></textarea>
+        <div id="token-error" class="hidden mt-2 text-[12px] text-rose-600 bg-rose-50 border border-rose-200 rounded-lg px-3 py-2"></div>
+        <div class="mt-4 flex gap-2">
+            <button id="token-logout" class="flex-1 border border-slate-200 text-slate-600 font-semibold py-2.5 rounded-lg hover:bg-slate-50 transition">Sign out</button>
+            <button id="token-continue" class="flex-1 bg-blue-600 hover:bg-blue-700 text-white font-bold py-2.5 rounded-lg transition">Continue</button>
+        </div>
+    </div>
+</div>
+
+<!-- Enterprise ID modal (shown after CSV upload) -->
+<div id="ent-modal" class="fixed inset-0 z-50 bg-slate-900/60 items-center justify-center hidden p-4">
+    <div class="bg-white rounded-2xl shadow-2xl w-full max-w-md p-6">
+        <h3 class="font-bold text-slate-800 text-[17px] mb-1">Enterprise ID</h3>
+        <p class="text-[12px] text-slate-500 leading-relaxed mb-4">Enter the <b>enterpriseId</b> for this file. It applies to every rooftop and is sent when marking VINs as qc_done.</p>
+        <input id="ent-input" type="text" placeholder="e.g. 00d2aafe9" class="w-full p-2.5 border border-slate-200 rounded-lg text-[13px] font-mono outline-none focus:border-blue-400 focus:ring-1 focus:ring-blue-400 transition">
+        <div id="ent-error" class="hidden mt-2 text-[12px] text-rose-600 bg-rose-50 border border-rose-200 rounded-lg px-3 py-2"></div>
+        <div class="mt-4 flex gap-2">
+            <button id="ent-cancel" class="flex-1 border border-slate-200 text-slate-600 font-semibold py-2.5 rounded-lg hover:bg-slate-50 transition">Back</button>
+            <button id="ent-continue" class="flex-1 bg-blue-600 hover:bg-blue-700 text-white font-bold py-2.5 rounded-lg transition">Continue</button>
+        </div>
+    </div>
+</div>
+
 <!-- Lightbox -->
 <div id="lightbox" class="fixed inset-0 z-50 bg-black/90 items-center justify-center hidden" style="cursor:zoom-out;">
     <img id="lb-img" src="" referrerpolicy="no-referrer" style="max-width:94vw; max-height:94vh; object-fit:contain;">
@@ -357,6 +392,17 @@ const SUMMARY_ORDER = ['pending','ok','issue'];
 const DISPLAY_W = 900,  DISPLAY_Q = 72;
 const ZOOM_W    = 1600, ZOOM_Q    = 85;
 const STORAGE_PREFIX = 'spyne_io_review_';
+
+// ── qc_done API config ─────────────────────────────────────────────────────────
+// The tool runs cross-origin (GitHub Pages) → only the Bearer token is sent, the
+// sails.sid cookie cannot be. The endpoint must accept token-only auth and return
+// CORS headers for this site's origin, otherwise the browser blocks the call.
+const QC_API_URL   = 'https://api.spyne.ai/console/v1/sku/update-sku-crm-status';
+const QC_STATUS    = 'qc_done';
+const QC_CHUNK      = 200;   // max skuIds per request
+const TOKEN_STORAGE_KEY = 'spyne_io_review_token';   // sessionStorage (per tab)
+let apiToken     = '';   // Bearer token, entered at login
+let enterpriseId = '';   // one enterprise per file, entered after upload
 
 // ── Auth (Google Sign-In) ──────────────────────────────────────────────────────
 // 1) Create a Google OAuth 2.0 "Web application" client ID (Google Cloud Console →
@@ -468,6 +514,7 @@ function loadCsvText(text, name) {
     renderRooftopView();
     setHeaderMode('rooftop');
     show('rooftop-view');
+    openEntModal();   // ask for the enterpriseId that applies to this file
 }
 
 // Group parsed rows by rooftop, preserving first-seen order
@@ -814,6 +861,10 @@ function openSummary() {
     cb.checked = false;
     document.getElementById('mark-ok-count').textContent = counts.pending;
     wrap.style.display = counts.pending > 0 ? 'flex' : 'none';
+
+    // Reset the qc_done push status each time the summary opens
+    document.getElementById('qc-status').classList.add('hidden');
+    document.getElementById('qc-retry').classList.add('hidden');
 }
 function markCurrentPendingAsOk() {
     const now = new Date().toISOString();
@@ -838,8 +889,70 @@ document.getElementById('sum-keep').addEventListener('click', closeSummary);
 document.getElementById('sum-download').addEventListener('click', () => {
     if (document.getElementById('mark-pending-ok').checked) markCurrentPendingAsOk();
     exportCSV();
-    closeSummary();
+    // Modal stays open to show the qc_done push result; do not auto-close.
+    runQcPush(collectOkVins());
 });
+document.getElementById('qc-retry').addEventListener('click', () => runQcPush(_lastOkVins));
+
+// ── qc_done push ───────────────────────────────────────────────────────────────
+// Collect the current rooftop's VINs tagged OK (VIN == sku_id). Excludes Issue/pending.
+function collectOkVins() {
+    const out = [];
+    rows.forEach((r, i) => { if (reviews[i] && reviews[i].type === 'ok' && r.vin) out.push(r.vin.trim()); });
+    return [...new Set(out)];
+}
+function setQcStatus(kind, msg) {
+    const styles = {
+        pending: 'bg-blue-50 text-blue-700 border border-blue-200',
+        ok:      'bg-emerald-50 text-emerald-700 border border-emerald-200',
+        error:   'bg-rose-50 text-rose-700 border border-rose-200',
+        info:    'bg-slate-50 text-slate-600 border border-slate-200'
+    };
+    const el = document.getElementById('qc-status');
+    el.className = 'mt-3 text-[12px] rounded-lg px-3 py-2.5 leading-snug ' + (styles[kind] || styles.info);
+    el.textContent = msg;
+    el.classList.remove('hidden');
+}
+async function pushQcDone(skuIds) {
+    let sent = 0;
+    for (let i = 0; i < skuIds.length; i += QC_CHUNK) {
+        const chunk = skuIds.slice(i, i + QC_CHUNK);
+        const resp = await fetch(QC_API_URL, {
+            method: 'POST',
+            headers: { 'Authorization': 'Bearer ' + apiToken, 'Content-Type': 'application/json', 'Accept': 'application/json' },
+            body: JSON.stringify({ enterpriseId: enterpriseId, emailId: currentUser, crmStatus: QC_STATUS, skuIdList: chunk })
+        });
+        if (!resp.ok) {
+            let detail = '';
+            try { detail = (await resp.text()).slice(0, 200); } catch (e) {}
+            throw new Error('HTTP ' + resp.status + (detail ? ' — ' + detail : ''));
+        }
+        sent += chunk.length;
+    }
+    return { sent: sent };
+}
+let _lastOkVins = [];
+async function runQcPush(okVins) {
+    _lastOkVins = okVins;
+    const retryEl = document.getElementById('qc-retry');
+    retryEl.classList.add('hidden');
+    if (!okVins.length)   { setQcStatus('info',  'No OK VINs in this rooftop to mark qc_done.'); return; }
+    if (!apiToken)        { setQcStatus('error', 'No API token found — sign out and sign in again to enter it.'); return; }
+    if (!enterpriseId)    { setQcStatus('error', 'No enterprise ID set for this file.'); openEntModal(); return; }
+    setQcStatus('pending', 'Marking ' + okVins.length + ' OK VIN' + (okVins.length === 1 ? '' : 's') + ' as qc_done…');
+    document.getElementById('sum-download').disabled = true;
+    try {
+        const res = await pushQcDone(okVins);
+        setQcStatus('ok', '✓ Marked ' + res.sent + ' VIN' + (res.sent === 1 ? '' : 's') + ' as qc_done.');
+    } catch (err) {
+        let m = err && err.message ? err.message : String(err);
+        if (/failed to fetch|networkerror/i.test(m)) m += ' (likely a CORS/network block — the API origin may not allow this site, or the token was rejected before CORS headers were returned)';
+        setQcStatus('error', 'qc_done push failed: ' + m + '. The CSV was still downloaded — use Retry below.');
+        retryEl.classList.remove('hidden');
+    } finally {
+        document.getElementById('sum-download').disabled = false;
+    }
+}
 
 // Copy VIN
 document.getElementById('copy-vin').addEventListener('click', async () => {
@@ -1003,6 +1116,7 @@ document.getElementById('clear-confirm').addEventListener('click', () => {
 document.getElementById('new-btn').addEventListener('click', () => {
     rows = []; reviews = {}; idx = 0;
     allRows = []; groups = []; currentRooftop = null;
+    enterpriseId = '';
     stopTimer();
     closeSummary();
     document.getElementById('file-input').value = '';
@@ -1064,6 +1178,51 @@ function toast(msg) {
     toastTimer = setTimeout(() => el.classList.add('translate-y-20'), 2200);
 }
 
+// ── API token modal (shown after Google sign-in) ───────────────────────────────
+let _afterToken = null;
+function requireTokenThen(next) {
+    _afterToken = next;
+    if (apiToken) { const cb = _afterToken; _afterToken = null; cb(); return; }
+    openTokenModal();
+}
+function openTokenModal() {
+    document.getElementById('token-error').classList.add('hidden');
+    const ti = document.getElementById('token-input');
+    ti.value = apiToken || '';
+    document.getElementById('token-modal').style.display = 'flex';
+    setTimeout(() => ti.focus(), 50);
+}
+function closeTokenModal() { document.getElementById('token-modal').style.display = 'none'; }
+function tokenModalOpen() { return document.getElementById('token-modal').style.display === 'flex'; }
+document.getElementById('token-continue').addEventListener('click', () => {
+    const val = document.getElementById('token-input').value.trim().replace(/^Bearer\s+/i, '');
+    if (!val) { const e = document.getElementById('token-error'); e.textContent = 'Please paste your Bearer token.'; e.classList.remove('hidden'); return; }
+    apiToken = val;
+    try { sessionStorage.setItem(TOKEN_STORAGE_KEY, val); } catch (e) {}
+    closeTokenModal();
+    const cb = _afterToken; _afterToken = null; if (cb) cb();
+});
+document.getElementById('token-logout').addEventListener('click', () => { closeTokenModal(); logout(); });
+
+// ── Enterprise ID modal (shown after CSV upload) ────────────────────────────────
+function openEntModal() {
+    document.getElementById('ent-error').classList.add('hidden');
+    const ei = document.getElementById('ent-input');
+    ei.value = enterpriseId || '';
+    document.getElementById('ent-modal').style.display = 'flex';
+    setTimeout(() => ei.focus(), 50);
+}
+function closeEntModal() { document.getElementById('ent-modal').style.display = 'none'; }
+function entModalOpen() { return document.getElementById('ent-modal').style.display === 'flex'; }
+document.getElementById('ent-continue').addEventListener('click', () => {
+    const val = document.getElementById('ent-input').value.trim();
+    if (!val) { const e = document.getElementById('ent-error'); e.textContent = 'Please enter the enterprise ID.'; e.classList.remove('hidden'); return; }
+    enterpriseId = val;
+    closeEntModal();
+});
+document.getElementById('ent-cancel').addEventListener('click', () => { closeEntModal(); show('upload-view'); });
+document.getElementById('ent-input').addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); document.getElementById('ent-continue').click(); } });
+
 // ── Auth logic (Google Identity Services) ──────────────────────────────────────
 function showLoginError(msg) {
     const e = document.getElementById('login-error');
@@ -1092,10 +1251,12 @@ function handleCredentialResponse(resp) {
     if (!ALLOWED.has(email)) { showLoginError('This Google account (' + email + ') is not authorized for this tool.'); return; }
     document.getElementById('login-error').classList.add('hidden');
     setLoggedIn(email, payload.name || '');
-    show('upload-view');
+    requireTokenThen(() => show('upload-view'));
 }
 function logout() {
     currentUser = ''; currentUserName = '';
+    apiToken = ''; enterpriseId = '';
+    try { sessionStorage.removeItem(TOKEN_STORAGE_KEY); } catch(e){}
     try { localStorage.removeItem(AUTH_STORAGE_KEY); } catch(e){}
     try { if (window.google && google.accounts && google.accounts.id) google.accounts.id.disableAutoSelect(); } catch(e){}
     const chip = document.getElementById('user-chip');
@@ -1138,9 +1299,11 @@ function initGoogleSignIn() {
     let saved = null;
     try { saved = JSON.parse(localStorage.getItem(AUTH_STORAGE_KEY) || 'null'); } catch(e) { saved = null; }
     if (typeof saved === 'string') saved = { email: saved, name: '' };   // migrate old format
+    try { apiToken = sessionStorage.getItem(TOKEN_STORAGE_KEY) || ''; } catch(e) { apiToken = ''; }
     if (saved && saved.email && ALLOWED.has(String(saved.email).toLowerCase())) {
         setLoggedIn(String(saved.email).toLowerCase(), saved.name || '');
         show('upload-view');
+        if (!apiToken) openTokenModal();   // session restored but token cleared (new tab) → ask again
     } else {
         show('login-view');
     }
