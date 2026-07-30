@@ -1972,7 +1972,7 @@
             if (issueBar) issueBar.style.display = 'flex';
             if (zoomWrap) zoomWrap.style.visibility = 'hidden';
             const idx = currentImg1Idx >= 0 ? currentImg1Idx : 0;
-            svPreloadWindow(idx, 15);
+            svPreloadWindow(idx, 8);
             svShow(idx);
         } else if (mode === 'all') {
             gridArea.style.display   = 'none';
@@ -2269,16 +2269,33 @@
     // Cache keyed by RESOLVED url (same as what svShow will use) to guarantee browser cache hit
     const _svPreloadCache = new Set();
 
+    // Concurrency-capped preload queue — keeps the network from being flooded
+    // (which caused lag + proxy rate-limiting). At most PRELOAD_MAX in flight.
+    const PRELOAD_MAX = 6;
+    let _preloadInFlight = 0;
+    const _preloadQueue = [];
+    function _preloadPump() {
+        while (_preloadInFlight < PRELOAD_MAX && _preloadQueue.length) {
+            const resolvedUrl = _preloadQueue.shift();
+            _preloadInFlight++;
+            const p = new Image();
+            p.referrerPolicy = 'no-referrer';
+            p.decoding = 'async';
+            const done = () => { _preloadInFlight--; _preloadPump(); };
+            p.onload = done;
+            p.onerror = done;
+            p.src = resolvedUrl;
+        }
+    }
+
     function preloadUrl(url) {
         if (!url) return;
         const chain = getFallbacks(url, 800, 82);  // MUST match svShow params exactly
         const resolvedUrl = chain[0];
         if (_svPreloadCache.has(resolvedUrl)) return;
         _svPreloadCache.add(resolvedUrl);
-        const p = new Image();
-        p.referrerPolicy = 'no-referrer';
-        p.decoding = 'async';
-        p.src = resolvedUrl;
+        _preloadQueue.push(resolvedUrl);
+        _preloadPump();
     }
 
     function svPreloadAhead(currentIdx, count = 8) {
@@ -3084,9 +3101,10 @@
                 const chain = getFallbacks(u, 800, 82);
                 if (!_svPreloadCache.has(chain[0])) {
                     _svPreloadCache.add(chain[0]);
-                    const p = new Image(); p.referrerPolicy = 'no-referrer'; p.decoding = 'async'; p.src = chain[0];
+                    _preloadQueue.push(chain[0]);
                 }
             });
+            _preloadPump();
         }
     }
 
@@ -3116,6 +3134,26 @@
         if (!originalUrl) return '';
         const stripped = originalUrl.replace(/^https?:\/\//, '');
         return 'https://wsrv.nl/?url=' + encodeURIComponent(stripped) + '&w=' + widthPx + '&q=' + quality + '&output=webp';
+    }
+
+    // DealerEProcess (Cloudinary-backed) CDN — used by Moses Nissan/BMW inventory.
+    // These URLs use `w_auto`, which only returns a valid image when the browser
+    // sends client-hint headers. From github.io with referrerPolicy=no-referrer
+    // those hints are missing, so w_auto fails intermittently. Rewriting w_auto to
+    // a fixed pixel width makes every request deterministic (and smaller/faster).
+    function isDealerEProcessUrl(url) {
+        if (!url) return false;
+        try { return new URL(url).hostname.toLowerCase().includes('dealereprocess.com'); }
+        catch(e) { return false; }
+    }
+
+    function deprocessThumbUrl(originalUrl, widthPx = 500) {
+        if (!originalUrl) return '';
+        // Replace w_auto (or an existing w_NNN) with a fixed pixel width.
+        if (/(^|[,/])w_(auto|\d+)/.test(originalUrl)) {
+            return originalUrl.replace(/(^|[,/])w_(auto|\d+)/, '$1w_' + widthPx);
+        }
+        return originalUrl; // no width transform present — leave untouched
     }
 
     function extractSourceUrl(url) {
@@ -3175,7 +3213,10 @@
         let result;
         const srcUrl = extractSourceUrl(originalUrl);
 
-        if (isDealerCdnUrl(srcUrl)) {
+        if (isDealerEProcessUrl(srcUrl)) {
+            // Fixed-width direct load — reliable and fast (no client-hints needed)
+            result = deprocessThumbUrl(srcUrl, widthPx);
+        } else if (isDealerCdnUrl(srcUrl)) {
             // For hotlink-protected dealer CDNs, use wsrv.nl proxy as primary
             // (bypasses hotlink protection by fetching server-side)
             result = needsProxy(srcUrl) ? wsrvThumbUrl(srcUrl, widthPx, quality) : srcUrl;
@@ -3198,7 +3239,13 @@
         const chain = [];
         const add = (u) => { if (u && !seen.has(u)) { seen.add(u); chain.push(u); } };
 
-        if (isDealerCdnUrl(srcUrl)) {
+        if (isDealerEProcessUrl(srcUrl)) {
+            // 1) fixed-width direct (fast, reliable)  2) original w_auto direct
+            // 3) proxy the fixed-width URL through wsrv.nl only as a last resort
+            add(deprocessThumbUrl(srcUrl, widthPx));
+            add(srcUrl);
+            add(wsrvThumbUrl(deprocessThumbUrl(srcUrl, widthPx), widthPx, quality));
+        } else if (isDealerCdnUrl(srcUrl)) {
             if (needsProxy(srcUrl)) {
                 // Hotlink-protected CDN — proxy first, direct as fallback
                 add(wsrvThumbUrl(srcUrl, widthPx, quality));
@@ -3295,19 +3342,20 @@
     }
 
     function prefetchNextVINs() {
-        for (let offset = 1; offset <= 4; offset++) {
+        for (let offset = 1; offset <= 2; offset++) {
             const nxt = currentTeamVINs[currentVINIndex + offset];
             if (!nxt) break;
-            const limit = offset === 1 ? nxt.urls.length : Math.min(nxt.urls.length, 6);
+            const limit = offset === 1 ? Math.min(nxt.urls.length, 12) : Math.min(nxt.urls.length, 6);
             nxt.urls.slice(0, limit).forEach(u => {
                 [getFallbacks(u, 500, 75), getFallbacks(u, 800, 82)].forEach(chain => {
                     if (!_svPreloadCache.has(chain[0])) {
                         _svPreloadCache.add(chain[0]);
-                        const p = new Image(); p.referrerPolicy = 'no-referrer'; p.decoding = 'async'; p.src = chain[0];
+                        _preloadQueue.push(chain[0]);
                     }
                 });
             });
         }
+        _preloadPump();
     }
 
     // ── VIN Review zoom + single view ─────────────────────────────────────────
