@@ -2298,6 +2298,17 @@
         _preloadPump();
     }
 
+    // Drop any queued (not-yet-started) preloads. Called on VIN change so the
+    // previous VIN's preloads stop competing with the new VIN's visible images.
+    function resetPreloadQueue() { _preloadQueue.length = 0; }
+
+    // Run background preload work only after the browser is idle, i.e. after the
+    // currently-visible grid images have had first claim on the CDN connections.
+    function deferPreload(fn) {
+        if (typeof requestIdleCallback === 'function') requestIdleCallback(fn, { timeout: 1500 });
+        else setTimeout(fn, 700);
+    }
+
     function svPreloadAhead(currentIdx, count = 8) {
         if (!currentImg1VINs) return;
         // Preload next `count` VINs ahead
@@ -3073,6 +3084,9 @@
 
     function selectVIN(idx) {
         if (idx < 0 || idx >= currentTeamVINs.length) return;
+        // Drop the previous VIN's queued preloads so they don't compete with the
+        // new VIN's visible thumbnails for the CDN's limited connections.
+        resetPreloadQueue();
         currentVINIndex = idx;
         const v = currentTeamVINs[idx];
         document.getElementById('current-vin-text').innerText = v.vin;
@@ -3095,16 +3109,19 @@
         setCheckedIssues(r?.issues || []);
         renderImages(v);
         renderVINSidebar();
-        // Preload single-view size (800/82) immediately on VIN select
+        // Preload single-view size (800/82) AFTER the grid thumbnails load — deferred
+        // so the larger single-view images don't slow down the visible grid.
         if (v.urls) {
-            v.urls.slice(0, 8).forEach(u => {
-                const chain = getFallbacks(u, 800, 82);
-                if (!_svPreloadCache.has(chain[0])) {
-                    _svPreloadCache.add(chain[0]);
-                    _preloadQueue.push(chain[0]);
-                }
+            deferPreload(() => {
+                v.urls.slice(0, 8).forEach(u => {
+                    const chain = getFallbacks(u, 800, 82);
+                    if (!_svPreloadCache.has(chain[0])) {
+                        _svPreloadCache.add(chain[0]);
+                        _preloadQueue.push(chain[0]);
+                    }
+                });
+                _preloadPump();
             });
-            _preloadPump();
         }
     }
 
@@ -3283,6 +3300,12 @@
         noVin.classList.add('hidden');
         footer.classList.remove('hidden');
 
+        // Always start a new VIN scrolled to the top — otherwise the pane keeps the
+        // previous VIN's scroll position and the new (lazy) images below the fold
+        // don't load, which looks like "images didn't refresh".
+        const imgArea = document.getElementById('image-area');
+        if (imgArea) imgArea.scrollTop = 0;
+
         if (!v.urls.length) {
             grid.classList.add('hidden');
             noImg.classList.remove('hidden');
@@ -3337,7 +3360,9 @@
         });
         grid.appendChild(frag);
 
-        prefetchNextVINs();
+        // Defer next-VIN prefetch so it doesn't steal connections from the images
+        // the user is looking at right now.
+        deferPreload(prefetchNextVINs);
         vrOnVinChange(v);
     }
 
