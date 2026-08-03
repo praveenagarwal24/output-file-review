@@ -4332,6 +4332,7 @@
         }
         const okBtn = document.getElementById('complete-ok-btn');
         okBtn.__1imgMode = true;
+        resetCompleteOkBtn();
         document.getElementById('complete-modal').classList.add('active');
     }
 
@@ -4499,6 +4500,17 @@
         document.getElementById('complete-modal').classList.add('active');
     }
     function closeCompleteModal() { document.getElementById('complete-modal').classList.remove('active'); }
+    // Capture the OK button's original look ONCE so we can restore it before
+    // every completion modal (otherwise it keeps a previous review's
+    // "Saved N rows" text + green background + disabled state).
+    const COMPLETE_OK_ORIG_HTML = document.getElementById('complete-ok-btn').innerHTML;
+    function resetCompleteOkBtn() {
+        const b = document.getElementById('complete-ok-btn');
+        if (!b) return;
+        b.innerHTML = COMPLETE_OK_ORIG_HTML;
+        b.style.background = '';
+        b.disabled = false;
+    }
     document.getElementById('complete-ok-btn').addEventListener('click', async () => {
         const btn = document.getElementById('complete-ok-btn');
         if (btn.__1imgMode) {
