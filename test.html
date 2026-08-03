@@ -4381,16 +4381,21 @@
     async function pushToBigQuery(rows) {
         if (!rows || !rows.length) return { ok: true, inserted: 0 };
         const CHUNK_SIZE  = 500;
-        const MAX_RETRIES = 3;
+        const MAX_RETRIES = 4;
         const chunks = [];
         for (let i = 0; i < rows.length; i += CHUNK_SIZE) chunks.push(rows.slice(i, i + CHUNK_SIZE));
 
         let totalInserted = 0;
         const errors = [];
 
-        // Send all chunks in parallel
-        await Promise.all(chunks.map(async (chunk, ci) => {
+        // Send chunks SEQUENTIALLY (concurrent requests can overload the Apps
+        // Script web app; the server also serialises its BigQuery work).
+        // The server de-dups every row by insertId, so re-sending a chunk after
+        // a partial/failed response NEVER creates duplicate rows.
+        for (let ci = 0; ci < chunks.length; ci++) {
+            const chunk = chunks[ci];
             let lastErr = '';
+            let chunkDone = false;
             for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
                 try {
                     const res = await fetch(BQ_WEBAPP_URL, {
@@ -4400,23 +4405,30 @@
                     });
                     const txt    = await res.text();
                     const result = JSON.parse(txt);
-                    if (result.ok) {
+                    // Only accept the chunk when EVERY row it contains was saved.
+                    if (result.ok && result.inserted === chunk.length) {
                         totalInserted += result.inserted;
-                        return;  // chunk done
+                        chunkDone = true;
+                        break;
                     }
-                    lastErr = result.error || JSON.stringify(result.errors);
+                    // Partial or failed -> retry the whole chunk (dedup keeps it safe).
+                    lastErr = 'saved ' + (result.inserted || 0) + '/' + chunk.length +
+                              (result.errors ? ' \u2014 ' + JSON.stringify(result.errors).slice(0, 300) : '') +
+                              (result.error  ? ' \u2014 ' + result.error : '');
                 } catch (err) {
                     lastErr = err.message;
                 }
                 if (attempt < MAX_RETRIES) await new Promise(r => setTimeout(r, 1000 * attempt));
             }
-            errors.push('Chunk ' + (ci+1) + ': ' + lastErr);
-        }));
+            if (!chunkDone) errors.push('Chunk ' + (ci + 1) + ': ' + lastErr);
+        }
 
-        if (errors.length > 0) {
-            console.error('[BQ] errors:', errors);
-            alert('BigQuery upload partially failed:\n' + errors.join('\n') + '\nCSV downloaded — data not lost.');
-            return { ok: false, error: errors.join('; ') };
+        // Success ONLY if every row was confirmed saved.
+        if (errors.length > 0 || totalInserted !== rows.length) {
+            console.error('[BQ] incomplete save', { totalInserted, expected: rows.length, errors });
+            alert('BigQuery save INCOMPLETE: ' + totalInserted + '/' + rows.length + ' rows saved.\n' +
+                  errors.join('\n') + '\nCSV downloaded \u2014 data not lost. Please retry or report this.');
+            return { ok: false, inserted: totalInserted, error: errors.join('; ') };
         }
         return { ok: true, inserted: totalInserted };
     }
@@ -4545,7 +4557,7 @@
                     okBtnEl.style.background = '#10b981';
                     await new Promise(r => setTimeout(r, 800));
                 } else {
-                    okBtnEl.innerHTML = '<span>⚠ BQ failed — downloading CSV...</span>';
+                    okBtnEl.innerHTML = '<span>⚠ Saved ' + (result.inserted || 0) + '/' + bqRows.length + ' — CSV downloaded</span>';
                     okBtnEl.style.background = '#f59e0b';
                     await new Promise(r => setTimeout(r, 800));
                 }
