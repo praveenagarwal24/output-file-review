@@ -112,7 +112,7 @@ main{padding:22px 28px;max-width:1440px;margin:0 auto}
 /* trend bars */
 .trend-bars{display:flex;align-items:flex-end;gap:2px;height:110px}
 .trend-bar-wrap{display:flex;flex-direction:column;align-items:center;flex:1;min-width:0}
-.trend-bar{width:100%;border-radius:4px 4px 0 0;min-height:3px;transition:height .5s ease}
+.trend-bar{width:100%;max-width:14px;margin:0 auto;border-radius:4px 4px 0 0;min-height:3px;transition:height .5s ease}
 .trend-bar:hover{filter:brightness(1.18)}
 .trend-bar-val{font-size:9px;color:var(--muted);margin-bottom:3px;font-weight:600}
 .trend-date{font-size:8px;color:var(--muted);margin-top:3px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:100%;text-align:center}
@@ -589,8 +589,8 @@ function renderBreakdown(title, rows, issTypes){
 }
 
 // Fetch rooftop-level aggregates (base + issue-type breakdown) filtered to a dimension value.
-async function _breakdownFetch(condField, val){
-  const W=buildWhere();
+async function _breakdownFetch(condField, val, opts={}){
+  const W=opts.noDate?buildWhere({noDate:true}):buildWhere();
   const cond=`${W?'AND':'WHERE'} ${condField}='${(val||'').replace(/'/g,"\\'")}'`;
   const [baseR, brk] = await Promise.all([
     query(`SELECT rooftop, ANY_VALUE(COALESCE(enterprise_name, enterprise)) as enterprise, COUNT(DISTINCT vin) as vins, COUNT(*) as total, COUNTIF(issue_type NOT IN ('OK','Pending')) as issue_cnt FROM ${SRC} ${W} ${cond} GROUP BY rooftop ORDER BY total DESC`),
@@ -600,6 +600,12 @@ async function _breakdownFetch(condField, val){
   return baseR.map(r=>({rooftop:r.rooftop, enterprise:r.enterprise, vins:r.vins, total:r.total, issue_cnt:r.issue_cnt, by:by[r.rooftop]||{}}));
 }
 
+async function drillDayBreakdown(dateStr){
+  openDrillLoading('Day · '+dateStr+' — loading rooftops…');
+  try{ const rows=await _breakdownFetch('review_date', dateStr, {noDate:true});
+    renderBreakdown('Day · '+dateStr+' · rooftops ('+rows.length.toLocaleString()+')', rows, window._issTypes||[]);
+  }catch(e){ drillError(e); }
+}
 async function drillReviewerBreakdown(rv){
   const name=(rv||'').split('@')[0]||'—';
   openDrillLoading('Reviewer · '+name+' — loading rooftops…');
@@ -718,7 +724,8 @@ function trendFiltered(){
 function trendBarsMC(rows,metric){
   if(!rows.length) return '<div style="color:var(--muted);font-size:12px;padding:70px 20px;text-align:center">No data for this range</div>';
   const vals=rows.map(r=>N(r[metric])), max=Math.max(...vals,1), H=240, mlbl=TREND_MLBL[metric];
-  return `<div class="trend-bars" style="height:${H}px">${rows.map((r,i)=>{const h=Math.max(Math.round((vals[i]/max)*(H-26)),3);const c=TREND_COLORS[i%TREND_COLORS.length];const dt=(r.review_date||'').slice(5);return `<div class="trend-bar-wrap" title="${r.review_date}: ${vals[i]} ${mlbl} · ${N(r.iss)} issues"><div class="trend-bar-val">${vals[i].toLocaleString()}</div><div class="trend-bar" style="height:${h}px;background:${c}"></div><div class="trend-date">${dt}</div></div>`;}).join('')}</div>`;
+  const n=rows.length, showVal=n<=16, dateStep=n<=16?1:Math.ceil(n/12);
+  return `<div class="trend-bars" style="height:${H}px">${rows.map((r,i)=>{const h=Math.max(Math.round((vals[i]/max)*(H-26)),3);const c=TREND_COLORS[i%TREND_COLORS.length];const dt=(r.review_date||'').slice(5);const vEl=showVal?`<div class="trend-bar-val">${vals[i].toLocaleString()}</div>`:'';const dEl=(i%dateStep===0)?`<div class="trend-date">${dt}</div>`:`<div class="trend-date">&nbsp;</div>`;return `<div class="trend-bar-wrap" style="cursor:pointer" title="${r.review_date}: ${vals[i]} ${mlbl} · ${N(r.iss)} issues — click for rooftops" onclick="drillDayBreakdown('${r.review_date}')">${vEl}<div class="trend-bar" style="height:${h}px;background:${c}"></div>${dEl}</div>`;}).join('')}</div>`;
 }
 function smoothPath(pts){
   if(pts.length<2) return pts.length?`M ${pts[0][0]} ${pts[0][1]}`:'';
@@ -737,7 +744,7 @@ function trendCurve(rows,metric,W){
   const area=`${line} L ${x(n-1).toFixed(1)} ${bottom} L ${x(0).toFixed(1)} ${bottom} Z`;
   let grid='';
   for(let g=0;g<=4;g++){const gy=topY+(bottom-topY)*g/4;const gv=Math.round(max*(1-g/4));grid+=`<line x1="${padL}" y1="${gy.toFixed(1)}" x2="${W-padR}" y2="${gy.toFixed(1)}" stroke="var(--border)" stroke-width="1" opacity="0.45"/><text x="${padL}" y="${(gy-3).toFixed(1)}" fill="var(--muted)" font-size="8">${gv.toLocaleString()}</text>`;}
-  const dots=pts.map((p,i)=>`<circle cx="${p[0].toFixed(1)}" cy="${p[1].toFixed(1)}" r="4" fill="${col}" stroke="#0f172a" stroke-width="2"><title>${rows[i].review_date}: ${vals[i]} ${mlbl} · ${N(rows[i].iss)} issues</title></circle>`).join('');
+  const dots=pts.map((p,i)=>`<circle cx="${p[0].toFixed(1)}" cy="${p[1].toFixed(1)}" r="4" fill="${col}" stroke="#0f172a" stroke-width="2" style="cursor:pointer" onclick="drillDayBreakdown('${rows[i].review_date}')"><title>${rows[i].review_date}: ${vals[i]} ${mlbl} · ${N(rows[i].iss)} issues — click for rooftops</title></circle>`).join('');
   const idxs=n<=8?rows.map((_,i)=>i):[0,Math.floor(n/2),n-1];
   const xlabels=[...new Set(idxs)].map(i=>`<text x="${x(i).toFixed(1)}" y="${H-8}" fill="var(--muted)" font-size="8" text-anchor="middle">${(rows[i].review_date||'').slice(5)}</text>`).join('');
   return `<svg width="100%" height="${H}" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" style="display:block">
@@ -749,6 +756,8 @@ function renderTrend(){
   const el=document.getElementById('trend-chart'); if(!el) return;
   const rows=trendFiltered();
   el.innerHTML = trendType==='line' ? trendCurve(rows,trendMetric,el.clientWidth) : trendBarsMC(rows,trendMetric);
+  const cap=document.getElementById('trend-caption');
+  if(cap){ if(rows.length){ const ds=rows.map(r=>r.review_date).filter(Boolean); const f=x=>{const D=new Date(x+'T00:00:00');return fmt(D);}; cap.textContent=`${rows.length} day${rows.length>1?'s':''} · ${f(ds[0])} – ${f(ds[ds.length-1])}`; } else { cap.textContent='No reviews in this range'; } }
 }
 function setTrendMetric(m,btn){ trendMetric=m; document.querySelectorAll('#trend-metric-tabs .trd-tab').forEach(t=>t.classList.remove('active')); if(btn)btn.classList.add('active'); renderTrend(); }
 function setTrendRange(r,btn){ trendRange=r; document.querySelectorAll('#trend-range-tabs .trd-tab').forEach(t=>t.classList.remove('active')); if(btn)btn.classList.add('active'); renderTrend(); }
@@ -875,6 +884,7 @@ async function loadAll(){
         <div class="trend-tabs" id="trend-type-toggle">${[['bar','▮ Bars'],['line','〜 Curve']].map(t=>`<button class="trd-type ${trendType===t[0]?'active':''}" onclick="setTrendType('${t[0]}',this)">${t[1]}</button>`).join('')}</div>
       </div>
       <div id="trend-chart"></div>
+      <div id="trend-caption" style="font-size:10px;color:var(--muted);margin-top:8px;text-align:right"></div>
     </div>
 
     <div class="sec-label">Issues</div>
