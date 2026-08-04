@@ -512,6 +512,7 @@ function downloadCSV(){ if(!_drillRows||!_drillCols)return; const esc=s=>{s=(s==
 
 function dlCSV(rows,filename){ if(!rows||!rows.length)return; const cols=Object.keys(rows[0]); const esc=s=>{s=(s==null?'':''+s);return /[",\n]/.test(s)?'"'+s.replace(/"/g,'""')+'"':s;}; const csv=[cols.map(esc).join(',')].concat(rows.map(r=>cols.map(c=>esc(r[c])).join(','))).join('\n'); const a=document.createElement('a'); a.href=URL.createObjectURL(new Blob([csv],{type:'text/csv'})); a.download=filename; a.click(); setTimeout(()=>URL.revokeObjectURL(a.href),1000); }
 function downloadRooftopCSV(){ dlCSV(window._rtCsv,'rooftop_summary.csv'); }
+function downloadReviewerCSV(){ dlCSV(window._rvCsv,'reviewer_stats.csv'); }
 
 function renderVinDrill(title,rows,cols){
   _drillRows=rows; _drillCols=cols;
@@ -684,7 +685,7 @@ async function loadAll(){
   mc.innerHTML='<div class="loading-overlay"><div class="spinner"></div><div style="color:var(--muted);font-size:12px">Querying BigQuery…</div></div>';
   try{
     const W=buildWhere();
-    const[ovR,issR,rvR,rtR,trendR,recentR,aeR,worstTeamR,issAggR]=await Promise.all([
+    const[ovR,issR,rvR,rtR,trendR,recentR,aeR,worstTeamR,issAggR,issByRvR]=await Promise.all([
       query(`SELECT COUNT(*) as total, COUNTIF(issue_type='OK' OR issue_type='Pending') as ok_cnt, COUNTIF(issue_type NOT IN ('OK','Pending')) as issue_cnt, COUNT(DISTINCT reviewer) as rev_cnt, COUNT(DISTINCT rooftop) as rt_cnt, COUNT(DISTINCT COALESCE(enterprise_name, enterprise)) as ent_cnt, COUNT(DISTINCT vin) as vin_cnt FROM ${SRC} ${W}`),
       query(`SELECT issue_type, COUNT(*) as cnt FROM ${SRC} ${W} GROUP BY issue_type ORDER BY cnt DESC`),
       query(`SELECT reviewer, COUNT(*) as total, COUNTIF(issue_type='OK' OR issue_type='Pending') as ok_cnt, COUNTIF(issue_type NOT IN ('OK','Pending')) as issue_cnt, MAX(review_date) as last_date FROM ${SRC} ${W} GROUP BY reviewer ORDER BY total DESC`),
@@ -693,7 +694,8 @@ async function loadAll(){
       query(`SELECT review_date,reviewer,rooftop,vin,issue_type,comment FROM ${SRC} ${W} ${W?'AND':'WHERE'} issue_type NOT IN ('OK','Pending') ORDER BY reviewed_at DESC LIMIT 25`),
       query(`SELECT ae_poc_email, COUNT(*) as total, COUNTIF(issue_type NOT IN ('OK','Pending')) as issue_cnt, MAX(review_date) as last_date FROM ${SRC} ${W} GROUP BY ae_poc_email ORDER BY total DESC`),
       query(`SELECT team_id, MAX(enterprise_name) as enterprise_name, MAX(team_name) as team_name, MAX(ae) as ae, MAX(ob) as ob, MAX(cs) as cs, COUNTIF(is_issue) as issue_cnt FROM (SELECT team_id, enterprise_name, apld_team_name as team_name, ae_poc_email as ae, ob_poc_email as ob, cs_poc_email as cs, (issue_type NOT IN ('OK','Pending')) as is_issue FROM ${SRC} ${W}) WHERE enterprise_name IS NOT NULL GROUP BY team_id ORDER BY issue_cnt DESC LIMIT 1`),
-      query(`SELECT rooftop, issue_type, COUNT(*) as cnt FROM ${SRC} ${W} ${W?'AND':'WHERE'} issue_type NOT IN ('OK','Pending') GROUP BY rooftop, issue_type`)
+      query(`SELECT rooftop, issue_type, COUNT(*) as cnt FROM ${SRC} ${W} ${W?'AND':'WHERE'} issue_type NOT IN ('OK','Pending') GROUP BY rooftop, issue_type`),
+      query(`SELECT reviewer, issue_type, COUNT(*) as cnt FROM ${SRC} ${W} ${W?'AND':'WHERE'} issue_type NOT IN ('OK','Pending') GROUP BY reviewer, issue_type`)
     ]);
     const ov=ovR[0]||{};
     const total=N(ov.total),ok=N(ov.ok_cnt),issues=N(ov.issue_cnt);
@@ -710,6 +712,12 @@ async function loadAll(){
     rtR.forEach(r=>{rtTot.vins+=N(r.vins);rtTot.total+=N(r.total);rtTot.iss+=N(r.issue_cnt);const c=issByRt[r.rooftop]||{};issTypes.forEach(it=>{rtTot.by[it]=(rtTot.by[it]||0)+(c[it]||0);});});
     const rtTacc=100-pct(rtTot.iss,rtTot.total);
     window._rtCsv=rtR.map((r,i)=>{const c=issByRt[r.rooftop]||{};const o={'#':i+1,Rooftop:r.rooftop,Enterprise:r.ent_name||r.enterprise||'','CS POC':r.cs_email||'',VINs:N(r.vins),'Times Reviewed':Math.round(N(r.vins)?N(r.total)/N(r.vins):0)};issTypes.forEach(it=>o[it]=(c[it]||0));o.Issues=N(r.issue_cnt);o.Accuracy=(100-pct(N(r.issue_cnt),N(r.total)))+'%';o['Last Review']=r.last_date||'';return o;});
+    // Per-reviewer issue-type breakdown + totals + CSV (mirrors the rooftop summary)
+    const issByRv={}; issByRvR.forEach(r=>{ if(!issByRv[r.reviewer]) issByRv[r.reviewer]={}; issByRv[r.reviewer][r.issue_type]=N(r.cnt); });
+    const rvTot={total:0,ok:0,iss:0,by:{}};
+    rvR.forEach(r=>{rvTot.total+=N(r.total);rvTot.ok+=N(r.ok_cnt);rvTot.iss+=N(r.issue_cnt);const c=issByRv[r.reviewer]||{};issTypes.forEach(it=>{rvTot.by[it]=(rvTot.by[it]||0)+(c[it]||0);});});
+    const rvTacc=100-pct(rvTot.iss,rvTot.total);
+    window._rvCsv=rvR.map(r=>{const c=issByRv[r.reviewer]||{};const o={Reviewer:r.reviewer||'',Total:N(r.total),OK:N(r.ok_cnt)};issTypes.forEach(it=>o[it]=(c[it]||0));o.Issues=N(r.issue_cnt);o.Accuracy=(100-pct(N(r.issue_cnt),N(r.total)))+'%';o['Last Active']=r.last_date||'';return o;});
     DRILL={rtR,issR};  // aggregate cache for instant tile drills (VIN drills query on demand)
 
     mc.innerHTML=`
@@ -738,9 +746,12 @@ async function loadAll(){
 
     <div class="sec-label">Performance</div>
     <div class="tables-row" style="grid-template-columns:1fr">
-      <div class="tbl-card"><div class="tbl-head-bar"><div class="chart-title">Reviewer Stats</div></div>
-        <table><thead><tr><th>Reviewer</th><th>Total</th><th>OK</th><th>Issues</th><th>Accuracy</th><th>Last Active</th></tr></thead>
-        <tbody>${rvR.map(r=>{const t=N(r.total),o=N(r.ok_cnt),iss=N(r.issue_cnt);const acc=100-pct(iss,t);return`<tr><td>${r.reviewer?.split('@')[0]||'—'}<br><span style="font-size:8px;color:var(--muted)">${r.reviewer}</span></td><td><b>${t}</b></td><td><span class="badge b-ok">${o}</span></td><td><span class="badge b-issue">${iss}</span></td><td><span style="font-weight:700;color:${acc>=90?'#10b981':acc>=70?'#eab308':'#f97316'}">${acc}%</span></td><td style="color:var(--muted);font-size:9px">${r.last_date||'—'}</td></tr>`;}).join('')}</tbody></table>
+      <div class="tbl-card"><div class="tbl-head-bar" style="display:flex;justify-content:space-between;align-items:center"><div class="chart-title">Reviewer Stats</div><button class="btn" onclick="downloadReviewerCSV()">⬇ CSV</button></div>
+        <div class="rt-scroll">
+        <table><thead><tr><th>Reviewer</th><th style="text-align:center">Total</th><th style="text-align:center">OK</th>${issTypes.map(t=>`<th style="text-align:center">${t}</th>`).join('')}<th style="text-align:center">Issues</th><th style="text-align:center">Accuracy</th><th>Last Active</th></tr></thead>
+        <tbody>${rvR.map(r=>{const t=N(r.total),o=N(r.ok_cnt),iss=N(r.issue_cnt);const acc=100-pct(iss,t);const cnts=issByRv[r.reviewer]||{};return`<tr><td>${r.reviewer?.split('@')[0]||'—'}<br><span style="font-size:8px;color:var(--muted)">${r.reviewer}</span></td><td style="text-align:center"><b>${t}</b></td><td style="text-align:center"><span class="badge b-ok">${o}</span></td>${issTypes.map(it=>{const c=cnts[it]||0;return `<td style="text-align:center;color:var(--issue)">${c||''}</td>`;}).join('')}<td style="text-align:center"><span class="badge b-issue">${iss}</span></td><td style="text-align:center"><span style="font-weight:700;color:${acc>=90?'#10b981':acc>=70?'#eab308':'#f97316'}">${acc}%</span></td><td style="color:var(--muted);font-size:9px">${r.last_date||'—'}</td></tr>`;}).join('')}</tbody>
+        <tfoot><tr><td style="font-weight:700">Total</td><td style="text-align:center;font-weight:700">${rvTot.total.toLocaleString()}</td><td style="text-align:center;font-weight:700">${rvTot.ok.toLocaleString()}</td>${issTypes.map(it=>`<td style="text-align:center;font-weight:700;color:var(--issue)">${rvTot.by[it]||''}</td>`).join('')}<td style="text-align:center;font-weight:700">${rvTot.iss.toLocaleString()}</td><td style="text-align:center;font-weight:700;color:${rvTacc>=90?'#10b981':rvTacc>=70?'#eab308':'#f97316'}">${rvTacc}%</td><td></td></tr></tfoot></table>
+        </div>
       </div>
       <div class="tbl-card"><div class="tbl-head-bar" style="display:flex;justify-content:space-between;align-items:center"><div class="chart-title">Rooftop Summary</div><button class="btn" onclick="downloadRooftopCSV()">⬇ CSV</button></div>
         <div class="rt-scroll">
