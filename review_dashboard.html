@@ -179,6 +179,8 @@ tr:hover td{background:rgba(255,255,255,.02)}
 .copy-mini{background:none;border:none;color:var(--muted);cursor:pointer;font-size:11px;padding:0 3px}
 .copy-mini:hover{color:var(--blue)}
 .rt-scroll{max-height:480px;overflow:auto}
+.rt-scroll table{width:auto;min-width:100%}
+.rt-scroll th,.rt-scroll td{white-space:nowrap}
 .rt-scroll thead th{position:sticky;top:0;background:#1e293b;z-index:3}
 .rt-scroll tfoot td{position:sticky;bottom:0;background:#16233a;z-index:3;border-top:1px solid var(--border);font-size:11px;padding:9px 12px}
 
@@ -513,6 +515,7 @@ function downloadCSV(){ if(!_drillRows||!_drillCols)return; const esc=s=>{s=(s==
 function dlCSV(rows,filename){ if(!rows||!rows.length)return; const cols=Object.keys(rows[0]); const esc=s=>{s=(s==null?'':''+s);return /[",\n]/.test(s)?'"'+s.replace(/"/g,'""')+'"':s;}; const csv=[cols.map(esc).join(',')].concat(rows.map(r=>cols.map(c=>esc(r[c])).join(','))).join('\n'); const a=document.createElement('a'); a.href=URL.createObjectURL(new Blob([csv],{type:'text/csv'})); a.download=filename; a.click(); setTimeout(()=>URL.revokeObjectURL(a.href),1000); }
 function downloadRooftopCSV(){ dlCSV(window._rtCsv,'rooftop_summary.csv'); }
 function downloadReviewerCSV(){ dlCSV(window._rvCsv,'reviewer_stats.csv'); }
+function downloadCsPocCSV(){ dlCSV(window._csCsv,'cs_poc_summary.csv'); }
 
 function renderVinDrill(title,rows,cols){
   _drillRows=rows; _drillCols=cols;
@@ -685,22 +688,21 @@ async function loadAll(){
   mc.innerHTML='<div class="loading-overlay"><div class="spinner"></div><div style="color:var(--muted);font-size:12px">Querying BigQuery…</div></div>';
   try{
     const W=buildWhere();
-    const[ovR,issR,rvR,rtR,trendR,recentR,aeR,worstTeamR,issAggR,issByRvR]=await Promise.all([
+    const[ovR,issR,rvR,rtR,trendR,worstTeamR,issAggR,issByRvR,csR,issByCsR]=await Promise.all([
       query(`SELECT COUNT(*) as total, COUNTIF(issue_type='OK' OR issue_type='Pending') as ok_cnt, COUNTIF(issue_type NOT IN ('OK','Pending')) as issue_cnt, COUNT(DISTINCT reviewer) as rev_cnt, COUNT(DISTINCT rooftop) as rt_cnt, COUNT(DISTINCT COALESCE(enterprise_name, enterprise)) as ent_cnt, COUNT(DISTINCT vin) as vin_cnt FROM ${SRC} ${W}`),
       query(`SELECT issue_type, COUNT(*) as cnt FROM ${SRC} ${W} GROUP BY issue_type ORDER BY cnt DESC`),
       query(`SELECT reviewer, COUNT(*) as total, COUNTIF(issue_type='OK' OR issue_type='Pending') as ok_cnt, COUNTIF(issue_type NOT IN ('OK','Pending')) as issue_cnt, MAX(review_date) as last_date FROM ${SRC} ${W} GROUP BY reviewer ORDER BY total DESC`),
       query(`SELECT rooftop, ANY_VALUE(enterprise) as enterprise, ANY_VALUE(enterprise_name) as ent_name, ANY_VALUE(apld_team_name) as team_name, ANY_VALUE(cs_poc_email) as cs_email, COUNT(DISTINCT vin) as vins, COUNT(*) as total, COUNTIF(issue_type='OK' OR issue_type='Pending') as ok_cnt, COUNTIF(issue_type NOT IN ('OK','Pending')) as issue_cnt, MAX(review_date) as last_date FROM ${SRC} ${W} GROUP BY rooftop ORDER BY total DESC`),
       query(`SELECT review_date, COUNT(*) as cnt, COUNTIF(issue_type NOT IN ('OK','Pending')) as iss FROM ${SRC} ${W} GROUP BY review_date ORDER BY review_date`),
-      query(`SELECT review_date,reviewer,rooftop,vin,issue_type,comment FROM ${SRC} ${W} ${W?'AND':'WHERE'} issue_type NOT IN ('OK','Pending') ORDER BY reviewed_at DESC LIMIT 25`),
-      query(`SELECT ae_poc_email, COUNT(*) as total, COUNTIF(issue_type NOT IN ('OK','Pending')) as issue_cnt, MAX(review_date) as last_date FROM ${SRC} ${W} GROUP BY ae_poc_email ORDER BY total DESC`),
       query(`SELECT team_id, MAX(enterprise_name) as enterprise_name, MAX(team_name) as team_name, MAX(ae) as ae, MAX(ob) as ob, MAX(cs) as cs, COUNTIF(is_issue) as issue_cnt FROM (SELECT team_id, enterprise_name, apld_team_name as team_name, ae_poc_email as ae, ob_poc_email as ob, cs_poc_email as cs, (issue_type NOT IN ('OK','Pending')) as is_issue FROM ${SRC} ${W}) WHERE enterprise_name IS NOT NULL GROUP BY team_id ORDER BY issue_cnt DESC LIMIT 1`),
       query(`SELECT rooftop, issue_type, COUNT(*) as cnt FROM ${SRC} ${W} ${W?'AND':'WHERE'} issue_type NOT IN ('OK','Pending') GROUP BY rooftop, issue_type`),
-      query(`SELECT reviewer, issue_type, COUNT(*) as cnt FROM ${SRC} ${W} ${W?'AND':'WHERE'} issue_type NOT IN ('OK','Pending') GROUP BY reviewer, issue_type`)
+      query(`SELECT reviewer, issue_type, COUNT(*) as cnt FROM ${SRC} ${W} ${W?'AND':'WHERE'} issue_type NOT IN ('OK','Pending') GROUP BY reviewer, issue_type`),
+      query(`SELECT cs_poc_email, COUNT(DISTINCT vin) as vins, COUNT(*) as total, COUNTIF(issue_type='OK' OR issue_type='Pending') as ok_cnt, COUNTIF(issue_type NOT IN ('OK','Pending')) as issue_cnt, MAX(review_date) as last_date FROM ${SRC} ${W} GROUP BY cs_poc_email ORDER BY total DESC`),
+      query(`SELECT cs_poc_email, issue_type, COUNT(*) as cnt FROM ${SRC} ${W} ${W?'AND':'WHERE'} issue_type NOT IN ('OK','Pending') GROUP BY cs_poc_email, issue_type`)
     ]);
     const ov=ovR[0]||{};
     const total=N(ov.total),ok=N(ov.ok_cnt),issues=N(ov.issue_cnt);
     const accuracy=100-pct(issues,total);
-    const aeRows=aeR.filter(r=>r.ae_poc_email).slice(0,15);
     const entCnt=N(ov.ent_cnt);
     const topIssue=issR.filter(r=>r.issue_type!=='OK'&&r.issue_type!=='Pending')[0]||null;
     const worst=(worstTeamR&&worstTeamR[0])?worstTeamR[0]:null;
@@ -718,6 +720,13 @@ async function loadAll(){
     rvR.forEach(r=>{rvTot.total+=N(r.total);rvTot.ok+=N(r.ok_cnt);rvTot.iss+=N(r.issue_cnt);const c=issByRv[r.reviewer]||{};issTypes.forEach(it=>{rvTot.by[it]=(rvTot.by[it]||0)+(c[it]||0);});});
     const rvTacc=100-pct(rvTot.iss,rvTot.total);
     window._rvCsv=rvR.map(r=>{const c=issByRv[r.reviewer]||{};const o={Reviewer:r.reviewer||'',Total:N(r.total),OK:N(r.ok_cnt)};issTypes.forEach(it=>o[it]=(c[it]||0));o.Issues=N(r.issue_cnt);o.Accuracy=(100-pct(N(r.issue_cnt),N(r.total)))+'%';o['Last Active']=r.last_date||'';return o;});
+    // Per-CS-POC breakdown (mirrors rooftop summary): unique VINs, reviews, issue-type cols, totals, CSV
+    const csRows=csR.filter(r=>r.cs_poc_email);
+    const issByCs={}; issByCsR.forEach(r=>{ if(!issByCs[r.cs_poc_email]) issByCs[r.cs_poc_email]={}; issByCs[r.cs_poc_email][r.issue_type]=N(r.cnt); });
+    const csTot={vins:0,total:0,iss:0,by:{}};
+    csRows.forEach(r=>{csTot.vins+=N(r.vins);csTot.total+=N(r.total);csTot.iss+=N(r.issue_cnt);const c=issByCs[r.cs_poc_email]||{};issTypes.forEach(it=>{csTot.by[it]=(csTot.by[it]||0)+(c[it]||0);});});
+    const csTacc=100-pct(csTot.iss,csTot.total);
+    window._csCsv=csRows.map(r=>{const c=issByCs[r.cs_poc_email]||{};const o={'CS POC':r.cs_poc_email||'','Unique VINs':N(r.vins),Reviews:N(r.total)};issTypes.forEach(it=>o[it]=(c[it]||0));o.Issues=N(r.issue_cnt);o.Accuracy=(100-pct(N(r.issue_cnt),N(r.total)))+'%';o['Last Active']=r.last_date||'';return o;});
     DRILL={rtR,issR};  // aggregate cache for instant tile drills (VIN drills query on demand)
 
     mc.innerHTML=`
@@ -762,16 +771,13 @@ async function loadAll(){
       </div>
     </div>
 
-    <div class="sec-label">By Account Owner (AE)</div>
-    <div class="tbl-card"><div class="tbl-head-bar"><div class="chart-title">AE POC · review volume &amp; quality</div></div>
-      <table><thead><tr><th>AE POC</th><th>Reviews</th><th>Issues</th><th>Accuracy</th><th>Last Active</th></tr></thead>
-      <tbody>${aeRows.length?aeRows.map(r=>{const t=N(r.total),iss=N(r.issue_cnt);const acc=100-pct(iss,t);return`<tr><td>${(r.ae_poc_email||'').split('@')[0]||'—'}<br><span style="font-size:8px;color:var(--muted)">${r.ae_poc_email||''}</span></td><td><b>${t}</b></td><td><span class="badge b-issue">${iss}</span></td><td><span style="font-weight:700;color:${acc>=90?'#10b981':acc>=70?'#eab308':'#f97316'}">${acc}%</span></td><td style="color:var(--muted);font-size:9px">${r.last_date||'—'}</td></tr>`;}).join(''):`<tr><td colspan="5" style="color:var(--muted);text-align:center;padding:16px">No AE data</td></tr>`}</tbody></table>
-    </div>
-
-    <div class="sec-label">Recent Issues (last 25)</div>
-    <div class="act-card">
-      <div class="act-row act-head"><span>Date</span><span>VIN</span><span>Rooftop</span><span>Issue</span><span>Reviewer</span></div>
-      ${recentR.map(r=>`<div class="act-row"><span style="color:var(--muted)">${r.review_date||'—'}</span><span class="vin-mono">${r.vin||'—'}</span><span style="color:var(--muted);font-size:9px">${r.rooftop||'—'}</span><span><span class="badge" style="background:${ic(r.issue_type)}22;color:${ic(r.issue_type)}">${r.issue_type}</span></span><span style="color:var(--muted);font-size:9px">${r.reviewer?.split('@')[0]||'—'}</span></div>`).join('')}
+    <div class="sec-label">By CS POC</div>
+    <div class="tbl-card"><div class="tbl-head-bar" style="display:flex;justify-content:space-between;align-items:center"><div class="chart-title">CS POC · review volume &amp; quality</div><button class="btn" onclick="downloadCsPocCSV()">⬇ CSV</button></div>
+      <div class="rt-scroll">
+      <table><thead><tr><th>CS POC</th><th style="text-align:center">Unique VINs</th><th style="text-align:center">Reviews</th>${issTypes.map(t=>`<th style="text-align:center">${t}</th>`).join('')}<th style="text-align:center">Issues</th><th style="text-align:center">Accuracy</th><th>Last Active</th></tr></thead>
+      <tbody>${csRows.length?csRows.map(r=>{const t=N(r.total),iss=N(r.issue_cnt);const acc=100-pct(iss,t);const cnts=issByCs[r.cs_poc_email]||{};return`<tr><td>${(r.cs_poc_email||'').split('@')[0]||'—'}<br><span style="font-size:8px;color:var(--muted)">${r.cs_poc_email||''}</span></td><td style="text-align:center"><b>${N(r.vins).toLocaleString()}</b></td><td style="text-align:center"><b>${t.toLocaleString()}</b></td>${issTypes.map(it=>{const c=cnts[it]||0;return `<td style="text-align:center;color:var(--issue)">${c||''}</td>`;}).join('')}<td style="text-align:center"><span class="badge b-issue">${iss}</span></td><td style="text-align:center"><span style="font-weight:700;color:${acc>=90?'#10b981':acc>=70?'#eab308':'#f97316'}">${acc}%</span></td><td style="color:var(--muted);font-size:9px">${r.last_date||'—'}</td></tr>`;}).join(''):`<tr><td colspan="${issTypes.length+6}" style="color:var(--muted);text-align:center;padding:16px">No CS POC data</td></tr>`}</tbody>
+      <tfoot><tr><td style="font-weight:700">Total</td><td style="text-align:center;font-weight:700">${csTot.vins.toLocaleString()}</td><td style="text-align:center;font-weight:700">${csTot.total.toLocaleString()}</td>${issTypes.map(it=>`<td style="text-align:center;font-weight:700;color:var(--issue)">${csTot.by[it]||''}</td>`).join('')}<td style="text-align:center;font-weight:700">${csTot.iss.toLocaleString()}</td><td style="text-align:center;font-weight:700;color:${csTacc>=90?'#10b981':csTacc>=70?'#eab308':'#f97316'}">${csTacc}%</td><td></td></tr></tfoot></table>
+      </div>
     </div>`;
 
     document.getElementById('last-updated').textContent='Updated '+new Date().toLocaleTimeString();
