@@ -635,7 +635,7 @@ function donut(data,size=120){
 function trendBars(rows){
   if(!rows.length) return '<div style="color:var(--muted);font-size:11px;padding:20px">No data</div>';
   const vals=rows.map(r=>N(r.cnt)),max=Math.max(...vals,1);
-  return `<div class="trend-bars">${rows.map((r,i)=>{const h=Math.max(Math.round((vals[i]/max)*100),2);const dt=(r.review_date||'').slice(5);return `<div class="trend-bar-wrap" title="${r.review_date}: ${vals[i]}"><div class="trend-bar-val">${vals[i]}</div><div class="trend-bar" style="height:${h}px"></div><div class="trend-date">${dt}</div></div>`;}).join('')}</div>`;
+  return `<div class="trend-bars">${rows.map((r,i)=>{const h=Math.max(Math.round((vals[i]/max)*100),2);const dt=(r.review_date||'').slice(5);return `<div class="trend-bar-wrap" title="${r.review_date}: ${vals[i]} reviews · ${N(r.iss)} issues"><div class="trend-bar-val">${vals[i]}</div><div class="trend-bar" style="height:${h}px"></div><div class="trend-date">${dt}</div></div>`;}).join('')}</div>`;
 }
 
 function hbars(data,colorFn,valFmt){
@@ -746,6 +746,12 @@ async function loadAll(){
       ${topIssuesCard('Top 3 Issues · Type', top3Issues, '#a78bfa')}
     </div>
 
+    <div class="sec-label">Daily Trend</div>
+    <div class="chart-card">
+      <div class="chart-title">Reviews done per day</div>
+      ${trendBars(trendR)}
+    </div>
+
     <div class="sec-label">Issues</div>
     <div class="chart-card">
       <div class="chart-title">Issue Types · click a row to drill to accounts (rooftop + enterprise)</div>
@@ -755,13 +761,6 @@ async function loadAll(){
 
     <div class="sec-label">Performance</div>
     <div class="tables-row" style="grid-template-columns:1fr">
-      <div class="tbl-card"><div class="tbl-head-bar" style="display:flex;justify-content:space-between;align-items:center"><div class="chart-title">Reviewer Stats</div><button class="btn" onclick="downloadReviewerCSV()">⬇ CSV</button></div>
-        <div class="rt-scroll">
-        <table><thead><tr><th>Reviewer</th><th style="text-align:center">Total</th><th style="text-align:center">OK</th>${issTypes.map(t=>`<th style="text-align:center">${t}</th>`).join('')}<th style="text-align:center">Issues</th><th style="text-align:center">Accuracy</th><th>Last Active</th></tr></thead>
-        <tbody>${rvR.map(r=>{const t=N(r.total),o=N(r.ok_cnt),iss=N(r.issue_cnt);const acc=100-pct(iss,t);const cnts=issByRv[r.reviewer]||{};return`<tr><td>${r.reviewer?.split('@')[0]||'—'}<br><span style="font-size:8px;color:var(--muted)">${r.reviewer}</span></td><td style="text-align:center"><b>${t}</b></td><td style="text-align:center"><span class="badge b-ok">${o}</span></td>${issTypes.map(it=>{const c=cnts[it]||0;return `<td style="text-align:center;color:var(--issue)">${c||''}</td>`;}).join('')}<td style="text-align:center"><span class="badge b-issue">${iss}</span></td><td style="text-align:center"><span style="font-weight:700;color:${acc>=90?'#10b981':acc>=70?'#eab308':'#f97316'}">${acc}%</span></td><td style="color:var(--muted);font-size:9px">${r.last_date||'—'}</td></tr>`;}).join('')}</tbody>
-        <tfoot><tr><td style="font-weight:700">Total</td><td style="text-align:center;font-weight:700">${rvTot.total.toLocaleString()}</td><td style="text-align:center;font-weight:700">${rvTot.ok.toLocaleString()}</td>${issTypes.map(it=>`<td style="text-align:center;font-weight:700;color:var(--issue)">${rvTot.by[it]||''}</td>`).join('')}<td style="text-align:center;font-weight:700">${rvTot.iss.toLocaleString()}</td><td style="text-align:center;font-weight:700;color:${rvTacc>=90?'#10b981':rvTacc>=70?'#eab308':'#f97316'}">${rvTacc}%</td><td></td></tr></tfoot></table>
-        </div>
-      </div>
       <div class="tbl-card"><div class="tbl-head-bar" style="display:flex;justify-content:space-between;align-items:center"><div class="chart-title">Rooftop Summary</div><button class="btn" onclick="downloadRooftopCSV()">⬇ CSV</button></div>
         <div class="rt-scroll">
         <table><thead><tr><th>#</th><th>Rooftop</th><th>Enterprise</th><th>CS POC</th><th style="text-align:center">VINs</th><th style="text-align:center">Times Reviewed</th>${issTypes.map(t=>`<th style="text-align:center">${t}</th>`).join('')}<th style="text-align:center">Issues</th><th style="text-align:center">Accuracy</th><th>Last Review</th></tr></thead>
@@ -778,7 +777,16 @@ async function loadAll(){
       <tbody>${csRows.length?csRows.map(r=>{const t=N(r.total),iss=N(r.issue_cnt);const acc=100-pct(iss,t);const cnts=issByCs[r.cs_poc_email]||{};return`<tr><td>${(r.cs_poc_email||'').split('@')[0]||'—'}<br><span style="font-size:8px;color:var(--muted)">${r.cs_poc_email||''}</span></td><td style="text-align:center"><b>${N(r.vins).toLocaleString()}</b></td><td style="text-align:center"><b>${t.toLocaleString()}</b></td>${issTypes.map(it=>{const c=cnts[it]||0;return `<td style="text-align:center;color:var(--issue)">${c||''}</td>`;}).join('')}<td style="text-align:center"><span class="badge b-issue">${iss}</span></td><td style="text-align:center"><span style="font-weight:700;color:${acc>=90?'#10b981':acc>=70?'#eab308':'#f97316'}">${acc}%</span></td><td style="color:var(--muted);font-size:9px">${r.last_date||'—'}</td></tr>`;}).join(''):`<tr><td colspan="${issTypes.length+6}" style="color:var(--muted);text-align:center;padding:16px">No CS POC data</td></tr>`}</tbody>
       <tfoot><tr><td style="font-weight:700">Total</td><td style="text-align:center;font-weight:700">${csTot.vins.toLocaleString()}</td><td style="text-align:center;font-weight:700">${csTot.total.toLocaleString()}</td>${issTypes.map(it=>`<td style="text-align:center;font-weight:700;color:var(--issue)">${csTot.by[it]||''}</td>`).join('')}<td style="text-align:center;font-weight:700">${csTot.iss.toLocaleString()}</td><td style="text-align:center;font-weight:700;color:${csTacc>=90?'#10b981':csTacc>=70?'#eab308':'#f97316'}">${csTacc}%</td><td></td></tr></tfoot></table>
       </div>
-    </div>`;
+    </div>
+
+    <div class="sec-label">Reviewer Stats</div>
+    <div class="tbl-card"><div class="tbl-head-bar" style="display:flex;justify-content:space-between;align-items:center"><div class="chart-title">Reviewer Stats</div><button class="btn" onclick="downloadReviewerCSV()">⬇ CSV</button></div>
+        <div class="rt-scroll">
+        <table><thead><tr><th>Reviewer</th><th style="text-align:center">Total</th><th style="text-align:center">OK</th>${issTypes.map(t=>`<th style="text-align:center">${t}</th>`).join('')}<th style="text-align:center">Issues</th><th style="text-align:center">Accuracy</th><th>Last Active</th></tr></thead>
+        <tbody>${rvR.map(r=>{const t=N(r.total),o=N(r.ok_cnt),iss=N(r.issue_cnt);const acc=100-pct(iss,t);const cnts=issByRv[r.reviewer]||{};return`<tr><td>${r.reviewer?.split('@')[0]||'—'}<br><span style="font-size:8px;color:var(--muted)">${r.reviewer}</span></td><td style="text-align:center"><b>${t}</b></td><td style="text-align:center"><span class="badge b-ok">${o}</span></td>${issTypes.map(it=>{const c=cnts[it]||0;return `<td style="text-align:center;color:var(--issue)">${c||''}</td>`;}).join('')}<td style="text-align:center"><span class="badge b-issue">${iss}</span></td><td style="text-align:center"><span style="font-weight:700;color:${acc>=90?'#10b981':acc>=70?'#eab308':'#f97316'}">${acc}%</span></td><td style="color:var(--muted);font-size:9px">${r.last_date||'—'}</td></tr>`;}).join('')}</tbody>
+        <tfoot><tr><td style="font-weight:700">Total</td><td style="text-align:center;font-weight:700">${rvTot.total.toLocaleString()}</td><td style="text-align:center;font-weight:700">${rvTot.ok.toLocaleString()}</td>${issTypes.map(it=>`<td style="text-align:center;font-weight:700;color:var(--issue)">${rvTot.by[it]||''}</td>`).join('')}<td style="text-align:center;font-weight:700">${rvTot.iss.toLocaleString()}</td><td style="text-align:center;font-weight:700;color:${rvTacc>=90?'#10b981':rvTacc>=70?'#eab308':'#f97316'}">${rvTacc}%</td><td></td></tr></tfoot></table>
+        </div>
+      </div>`;
 
     document.getElementById('last-updated').textContent='Updated '+new Date().toLocaleTimeString();
     enableSort(mc);  // make all rendered tables sortable
