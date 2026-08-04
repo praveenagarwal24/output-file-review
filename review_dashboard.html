@@ -112,10 +112,16 @@ main{padding:22px 28px;max-width:1440px;margin:0 auto}
 /* trend bars */
 .trend-bars{display:flex;align-items:flex-end;gap:2px;height:110px}
 .trend-bar-wrap{display:flex;flex-direction:column;align-items:center;flex:1;min-width:0}
-.trend-bar{width:100%;background:var(--blue);border-radius:3px 3px 0 0;min-height:2px}
-.trend-bar:hover{background:#60a5fa}
-.trend-bar-val{font-size:7px;color:var(--muted);margin-bottom:2px}
-.trend-date{font-size:7px;color:var(--muted);margin-top:2px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:100%;text-align:center}
+.trend-bar{width:100%;border-radius:4px 4px 0 0;min-height:3px;transition:height .5s ease}
+.trend-bar:hover{filter:brightness(1.18)}
+.trend-bar-val{font-size:9px;color:var(--muted);margin-bottom:3px;font-weight:600}
+.trend-date{font-size:8px;color:var(--muted);margin-top:3px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:100%;text-align:center}
+.trend-controls{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:16px}
+.trend-spacer{flex:1;min-width:8px}
+.trend-tabs{display:flex;gap:4px;flex-wrap:wrap}
+.trd-tab,.trd-type{background:var(--card);border:1px solid var(--border);color:var(--muted);padding:4px 11px;border-radius:7px;font-size:11px;font-weight:600;cursor:pointer;font-family:'Inter',sans-serif;transition:all .12s}
+.trd-tab:hover,.trd-type:hover{color:var(--text);border-color:var(--blue)}
+.trd-tab.active,.trd-type.active{background:var(--blue);color:#fff;border-color:var(--blue)}
 
 /* horiz bars */
 .bar-chart{display:flex;flex-direction:column;gap:8px}
@@ -597,10 +603,12 @@ function drill(type){
   enableSort(mb);
 }
 
-function buildWhere() {
+function buildWhere(opts={}) {
   const parts=[];
-  if(dfrom) parts.push(`review_date >= '${dfrom}'`);
-  if(dto)   parts.push(`review_date <= '${dto}'`);
+  if(!opts.noDate){
+    if(dfrom) parts.push(`review_date >= '${dfrom}'`);
+    if(dto)   parts.push(`review_date <= '${dto}'`);
+  }
   const rt=document.getElementById('sel-rooftop')?.value;
   if(rt) parts.push(`rooftop = '${rt.replace(/'/g,"\\'")}'`);
   const rv=document.getElementById('sel-reviewer')?.value;
@@ -637,6 +645,67 @@ function trendBars(rows){
   const vals=rows.map(r=>N(r.cnt)),max=Math.max(...vals,1);
   return `<div class="trend-bars">${rows.map((r,i)=>{const h=Math.max(Math.round((vals[i]/max)*100),2);const dt=(r.review_date||'').slice(5);return `<div class="trend-bar-wrap" title="${r.review_date}: ${vals[i]} reviews · ${N(r.iss)} issues"><div class="trend-bar-val">${vals[i]}</div><div class="trend-bar" style="height:${h}px"></div><div class="trend-date">${dt}</div></div>`;}).join('')}</div>`;
 }
+
+// ── Daily Trend (interactive: metric tabs, range tabs, bar/curve toggle) ──
+const TREND_COLORS=['#3b82f6','#8b5cf6','#10b981','#f59e0b','#ec4899','#06b6d4','#f97316','#6366f1','#84cc16','#14b8a6'];
+const TREND_RANGES=[['today','Today'],['yesterday','Yesterday'],['7d','7d'],['15d','15d'],['30d','30d'],['90d','90d'],['all','All']];
+const TREND_METRICS=[['cnt','Reviews'],['vins','Unique VINs'],['ents','Enterprises']];
+const TREND_MLBL={cnt:'reviews',vins:'VINs',ents:'enterprises'};
+let trendMetric='cnt', trendRange='15d', trendType='bar';
+
+function trendRangeCutoff(range){
+  if(range==='today')     return {from:iso(today()), to:iso(today())};
+  if(range==='yesterday') return {from:iso(daysAgo(1)), to:iso(daysAgo(1))};
+  if(range==='7d')  return {from:iso(daysAgo(6)),  to:iso(today())};
+  if(range==='15d') return {from:iso(daysAgo(14)), to:iso(today())};
+  if(range==='30d') return {from:iso(daysAgo(29)), to:iso(today())};
+  if(range==='90d') return {from:iso(daysAgo(89)), to:iso(today())};
+  return {from:null, to:null};
+}
+function trendFiltered(){
+  const rows=window._trendAll||[];
+  const {from,to}=trendRangeCutoff(trendRange);
+  return rows.filter(r=>{const d=r.review_date; if(!d) return false; if(from&&d<from) return false; if(to&&d>to) return false; return true;});
+}
+function trendBarsMC(rows,metric){
+  if(!rows.length) return '<div style="color:var(--muted);font-size:12px;padding:70px 20px;text-align:center">No data for this range</div>';
+  const vals=rows.map(r=>N(r[metric])), max=Math.max(...vals,1), H=240, mlbl=TREND_MLBL[metric];
+  return `<div class="trend-bars" style="height:${H}px">${rows.map((r,i)=>{const h=Math.max(Math.round((vals[i]/max)*(H-26)),3);const c=TREND_COLORS[i%TREND_COLORS.length];const dt=(r.review_date||'').slice(5);return `<div class="trend-bar-wrap" title="${r.review_date}: ${vals[i]} ${mlbl} · ${N(r.iss)} issues"><div class="trend-bar-val">${vals[i].toLocaleString()}</div><div class="trend-bar" style="height:${h}px;background:${c}"></div><div class="trend-date">${dt}</div></div>`;}).join('')}</div>`;
+}
+function smoothPath(pts){
+  if(pts.length<2) return pts.length?`M ${pts[0][0]} ${pts[0][1]}`:'';
+  let d=`M ${pts[0][0].toFixed(1)} ${pts[0][1].toFixed(1)}`;
+  for(let i=0;i<pts.length-1;i++){const p0=pts[i-1]||pts[i],p1=pts[i],p2=pts[i+1],p3=pts[i+2]||p2;const c1x=p1[0]+(p2[0]-p0[0])/6,c1y=p1[1]+(p2[1]-p0[1])/6,c2x=p2[0]-(p3[0]-p1[0])/6,c2y=p2[1]-(p3[1]-p1[1])/6;d+=` C ${c1x.toFixed(1)} ${c1y.toFixed(1)} ${c2x.toFixed(1)} ${c2y.toFixed(1)} ${p2[0].toFixed(1)} ${p2[1].toFixed(1)}`;}
+  return d;
+}
+function trendCurve(rows,metric,W){
+  if(!rows.length) return '<div style="color:var(--muted);font-size:12px;padding:70px 20px;text-align:center">No data for this range</div>';
+  W=Math.max(W||900,320); const H=240, padL=8, padR=8, topY=14, bottom=H-26;
+  const vals=rows.map(r=>N(r[metric])), max=Math.max(...vals,1), n=rows.length, mlbl=TREND_MLBL[metric], col='#3b82f6';
+  const x=i=> n===1? W/2 : padL + (i*(W-padL-padR)/(n-1));
+  const y=v=> bottom - (v/max)*(bottom-topY);
+  const pts=vals.map((v,i)=>[x(i),y(v)]);
+  const line=smoothPath(pts);
+  const area=`${line} L ${x(n-1).toFixed(1)} ${bottom} L ${x(0).toFixed(1)} ${bottom} Z`;
+  let grid='';
+  for(let g=0;g<=4;g++){const gy=topY+(bottom-topY)*g/4;const gv=Math.round(max*(1-g/4));grid+=`<line x1="${padL}" y1="${gy.toFixed(1)}" x2="${W-padR}" y2="${gy.toFixed(1)}" stroke="var(--border)" stroke-width="1" opacity="0.45"/><text x="${padL}" y="${(gy-3).toFixed(1)}" fill="var(--muted)" font-size="8">${gv.toLocaleString()}</text>`;}
+  const dots=pts.map((p,i)=>`<circle cx="${p[0].toFixed(1)}" cy="${p[1].toFixed(1)}" r="4" fill="${col}" stroke="#0f172a" stroke-width="2"><title>${rows[i].review_date}: ${vals[i]} ${mlbl} · ${N(rows[i].iss)} issues</title></circle>`).join('');
+  const idxs=n<=8?rows.map((_,i)=>i):[0,Math.floor(n/2),n-1];
+  const xlabels=[...new Set(idxs)].map(i=>`<text x="${x(i).toFixed(1)}" y="${H-8}" fill="var(--muted)" font-size="8" text-anchor="middle">${(rows[i].review_date||'').slice(5)}</text>`).join('');
+  return `<svg width="100%" height="${H}" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" style="display:block">
+    <defs><linearGradient id="trdGrad" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="${col}" stop-opacity="0.35"/><stop offset="100%" stop-color="${col}" stop-opacity="0.02"/></linearGradient></defs>
+    ${grid}<path d="${area}" fill="url(#trdGrad)"/><path d="${line}" fill="none" stroke="${col}" stroke-width="2" vector-effect="non-scaling-stroke"/>${dots}${xlabels}
+  </svg>`;
+}
+function renderTrend(){
+  const el=document.getElementById('trend-chart'); if(!el) return;
+  const rows=trendFiltered();
+  el.innerHTML = trendType==='line' ? trendCurve(rows,trendMetric,el.clientWidth) : trendBarsMC(rows,trendMetric);
+}
+function setTrendMetric(m,btn){ trendMetric=m; document.querySelectorAll('#trend-metric-tabs .trd-tab').forEach(t=>t.classList.remove('active')); if(btn)btn.classList.add('active'); renderTrend(); }
+function setTrendRange(r,btn){ trendRange=r; document.querySelectorAll('#trend-range-tabs .trd-tab').forEach(t=>t.classList.remove('active')); if(btn)btn.classList.add('active'); renderTrend(); }
+function setTrendType(tp,btn){ trendType=tp; document.querySelectorAll('#trend-type-toggle .trd-type').forEach(t=>t.classList.remove('active')); if(btn)btn.classList.add('active'); renderTrend(); }
+window.addEventListener('resize',()=>{ if(window._trendAll && document.getElementById('trend-chart')) renderTrend(); });
 
 function hbars(data,colorFn,valFmt){
   if(!data.length) return '<div style="color:var(--muted);font-size:11px;padding:20px">No data</div>';
@@ -688,12 +757,13 @@ async function loadAll(){
   mc.innerHTML='<div class="loading-overlay"><div class="spinner"></div><div style="color:var(--muted);font-size:12px">Querying BigQuery…</div></div>';
   try{
     const W=buildWhere();
+    const WND=buildWhere({noDate:true});  // trend ignores global date range (its own range tabs drive it)
     const[ovR,issR,rvR,rtR,trendR,worstTeamR,issAggR,issByRvR,csR,issByCsR]=await Promise.all([
       query(`SELECT COUNT(*) as total, COUNTIF(issue_type='OK' OR issue_type='Pending') as ok_cnt, COUNTIF(issue_type NOT IN ('OK','Pending')) as issue_cnt, COUNT(DISTINCT reviewer) as rev_cnt, COUNT(DISTINCT rooftop) as rt_cnt, COUNT(DISTINCT COALESCE(enterprise_name, enterprise)) as ent_cnt, COUNT(DISTINCT vin) as vin_cnt FROM ${SRC} ${W}`),
       query(`SELECT issue_type, COUNT(*) as cnt FROM ${SRC} ${W} GROUP BY issue_type ORDER BY cnt DESC`),
       query(`SELECT reviewer, COUNT(*) as total, COUNTIF(issue_type='OK' OR issue_type='Pending') as ok_cnt, COUNTIF(issue_type NOT IN ('OK','Pending')) as issue_cnt, MAX(review_date) as last_date FROM ${SRC} ${W} GROUP BY reviewer ORDER BY total DESC`),
       query(`SELECT rooftop, ANY_VALUE(enterprise) as enterprise, ANY_VALUE(enterprise_name) as ent_name, ANY_VALUE(apld_team_name) as team_name, ANY_VALUE(cs_poc_email) as cs_email, COUNT(DISTINCT vin) as vins, COUNT(*) as total, COUNTIF(issue_type='OK' OR issue_type='Pending') as ok_cnt, COUNTIF(issue_type NOT IN ('OK','Pending')) as issue_cnt, MAX(review_date) as last_date FROM ${SRC} ${W} GROUP BY rooftop ORDER BY total DESC`),
-      query(`SELECT review_date, COUNT(*) as cnt, COUNTIF(issue_type NOT IN ('OK','Pending')) as iss FROM ${SRC} ${W} GROUP BY review_date ORDER BY review_date`),
+      query(`SELECT review_date, COUNT(*) as cnt, COUNTIF(issue_type NOT IN ('OK','Pending')) as iss, COUNT(DISTINCT vin) as vins, COUNT(DISTINCT COALESCE(enterprise_name, enterprise)) as ents FROM ${SRC} ${WND} GROUP BY review_date ORDER BY review_date`),
       query(`SELECT team_id, MAX(enterprise_name) as enterprise_name, MAX(team_name) as team_name, MAX(ae) as ae, MAX(ob) as ob, MAX(cs) as cs, COUNTIF(is_issue) as issue_cnt FROM (SELECT team_id, enterprise_name, apld_team_name as team_name, ae_poc_email as ae, ob_poc_email as ob, cs_poc_email as cs, (issue_type NOT IN ('OK','Pending')) as is_issue FROM ${SRC} ${W}) WHERE enterprise_name IS NOT NULL GROUP BY team_id ORDER BY issue_cnt DESC LIMIT 1`),
       query(`SELECT rooftop, issue_type, COUNT(*) as cnt FROM ${SRC} ${W} ${W?'AND':'WHERE'} issue_type NOT IN ('OK','Pending') GROUP BY rooftop, issue_type`),
       query(`SELECT reviewer, issue_type, COUNT(*) as cnt FROM ${SRC} ${W} ${W?'AND':'WHERE'} issue_type NOT IN ('OK','Pending') GROUP BY reviewer, issue_type`),
@@ -727,6 +797,7 @@ async function loadAll(){
     csRows.forEach(r=>{csTot.vins+=N(r.vins);csTot.total+=N(r.total);csTot.iss+=N(r.issue_cnt);const c=issByCs[r.cs_poc_email]||{};issTypes.forEach(it=>{csTot.by[it]=(csTot.by[it]||0)+(c[it]||0);});});
     const csTacc=100-pct(csTot.iss,csTot.total);
     window._csCsv=csRows.map(r=>{const c=issByCs[r.cs_poc_email]||{};const o={'CS POC':r.cs_poc_email||'','Unique VINs':N(r.vins),Reviews:N(r.total)};issTypes.forEach(it=>o[it]=(c[it]||0));o.Issues=N(r.issue_cnt);o.Accuracy=(100-pct(N(r.issue_cnt),N(r.total)))+'%';o['Last Active']=r.last_date||'';return o;});
+    window._trendAll=trendR;  // full daily series (no global date filter) for the trend range tabs
     DRILL={rtR,issR};  // aggregate cache for instant tile drills (VIN drills query on demand)
 
     mc.innerHTML=`
@@ -748,8 +819,13 @@ async function loadAll(){
 
     <div class="sec-label">Daily Trend</div>
     <div class="chart-card">
-      <div class="chart-title">Reviews done per day</div>
-      ${trendBars(trendR)}
+      <div class="trend-controls">
+        <div class="trend-tabs" id="trend-metric-tabs">${TREND_METRICS.map(m=>`<button class="trd-tab ${trendMetric===m[0]?'active':''}" onclick="setTrendMetric('${m[0]}',this)">${m[1]}</button>`).join('')}</div>
+        <div class="trend-spacer"></div>
+        <div class="trend-tabs" id="trend-range-tabs">${TREND_RANGES.map(r=>`<button class="trd-tab ${trendRange===r[0]?'active':''}" onclick="setTrendRange('${r[0]}',this)">${r[1]}</button>`).join('')}</div>
+        <div class="trend-tabs" id="trend-type-toggle">${[['bar','▮ Bars'],['line','〜 Curve']].map(t=>`<button class="trd-type ${trendType===t[0]?'active':''}" onclick="setTrendType('${t[0]}',this)">${t[1]}</button>`).join('')}</div>
+      </div>
+      <div id="trend-chart"></div>
     </div>
 
     <div class="sec-label">Issues</div>
@@ -790,6 +866,7 @@ async function loadAll(){
 
     document.getElementById('last-updated').textContent='Updated '+new Date().toLocaleTimeString();
     enableSort(mc);  // make all rendered tables sortable
+    renderTrend();   // draw the interactive daily trend
   }catch(e){ mc.innerHTML=`<div class="err">⚠ ${e.message}</div>`; }
   btn.classList.remove('loading');
 }
