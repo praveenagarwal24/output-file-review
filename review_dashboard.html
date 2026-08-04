@@ -567,6 +567,54 @@ async function drillRooftop(rt){
   }catch(e){ drillError(e); }
 }
 
+// Rooftop-style breakdown (a mini Rooftop Summary filtered to one reviewer / CS POC).
+function renderBreakdown(title, rows, issTypes){
+  const tot={vins:0,total:0,iss:0,by:{}};
+  rows.forEach(r=>{tot.vins+=N(r.vins);tot.total+=N(r.total);tot.iss+=N(r.issue_cnt);issTypes.forEach(it=>{tot.by[it]=(tot.by[it]||0)+N((r.by||{})[it]||0);});});
+  const tacc=100-pct(tot.iss,tot.total);
+  // data for Copy Table / Download CSV
+  _drillCols=[['rooftop','Rooftop'],['enterprise','Enterprise'],['vins','VINs'],['total','Reviews']].concat(issTypes.map(it=>[it,it])).concat([['issue_cnt','Issues'],['accuracy','Accuracy']]);
+  _drillRows=rows.map(r=>{const o={rooftop:r.rooftop||'',enterprise:r.enterprise||'',vins:N(r.vins),total:N(r.total),issue_cnt:N(r.issue_cnt),accuracy:(100-pct(N(r.issue_cnt),N(r.total)))+'%'};issTypes.forEach(it=>o[it]=N((r.by||{})[it]||0));return o;});
+  document.getElementById('modal-title').textContent=title;
+  const bar=`<div style="display:flex;gap:8px;padding:11px 16px;border-bottom:1px solid var(--border);flex-wrap:wrap;position:sticky;top:0;background:var(--card);z-index:2">
+    <button class="btn" onclick="copyTbl(this)">Copy Table (TSV)</button>
+    <button class="btn" onclick="downloadCSV()">⬇ Download CSV</button></div>`;
+  const head=`<tr><th>Rooftop</th><th>Enterprise</th><th style="text-align:center">VINs</th><th style="text-align:center">Reviews</th>${issTypes.map(it=>`<th style="text-align:center">${it}</th>`).join('')}<th style="text-align:center">Issues</th><th style="text-align:center">Accuracy</th></tr>`;
+  const body=rows.length?rows.map(r=>{const iss=N(r.issue_cnt);const acc=100-pct(iss,N(r.total));const by=r.by||{};return `<tr><td>${r.rooftop||'—'}</td><td style="font-size:9px;color:var(--muted)">${r.enterprise||'—'}</td><td style="text-align:center"><b>${N(r.vins).toLocaleString()}</b></td><td style="text-align:center">${N(r.total).toLocaleString()}</td>${issTypes.map(it=>{const c=N(by[it]||0);return `<td style="text-align:center;color:var(--issue)">${c||''}</td>`;}).join('')}<td style="text-align:center;font-weight:600">${iss.toLocaleString()}</td><td style="text-align:center"><span style="font-weight:700;color:${acc>=90?'#10b981':acc>=70?'#eab308':'#f97316'}">${acc}%</span></td></tr>`;}).join(''):`<tr><td colspan="${issTypes.length+6}" style="text-align:center;color:var(--muted);padding:24px">No data for the current filters.</td></tr>`;
+  const foot=`<tfoot><tr><td style="font-weight:700">Total</td><td></td><td style="text-align:center;font-weight:700">${tot.vins.toLocaleString()}</td><td style="text-align:center;font-weight:700">${tot.total.toLocaleString()}</td>${issTypes.map(it=>`<td style="text-align:center;font-weight:700;color:var(--issue)">${tot.by[it]||''}</td>`).join('')}<td style="text-align:center;font-weight:700">${tot.iss.toLocaleString()}</td><td style="text-align:center;font-weight:700;color:${tacc>=90?'#10b981':tacc>=70?'#eab308':'#f97316'}">${tacc}%</td></tr></tfoot>`;
+  const mb=document.getElementById('modal-body');
+  mb.innerHTML=bar+`<div class="rt-scroll"><table><thead>${head}</thead><tbody>${body}</tbody>${foot}</table></div>`;
+  document.getElementById('modal-ov').classList.add('open');
+  enableSort(mb);
+}
+
+// Fetch rooftop-level aggregates (base + issue-type breakdown) filtered to a dimension value.
+async function _breakdownFetch(condField, val){
+  const W=buildWhere();
+  const cond=`${W?'AND':'WHERE'} ${condField}='${(val||'').replace(/'/g,"\\'")}'`;
+  const [baseR, brk] = await Promise.all([
+    query(`SELECT rooftop, ANY_VALUE(COALESCE(enterprise_name, enterprise)) as enterprise, COUNT(DISTINCT vin) as vins, COUNT(*) as total, COUNTIF(issue_type NOT IN ('OK','Pending')) as issue_cnt FROM ${SRC} ${W} ${cond} GROUP BY rooftop ORDER BY total DESC`),
+    query(`SELECT rooftop, issue_type, COUNT(*) as cnt FROM ${SRC} ${W} ${cond} AND issue_type NOT IN ('OK','Pending') GROUP BY rooftop, issue_type`)
+  ]);
+  const by={}; brk.forEach(r=>{ if(!by[r.rooftop]) by[r.rooftop]={}; by[r.rooftop][r.issue_type]=N(r.cnt); });
+  return baseR.map(r=>({rooftop:r.rooftop, enterprise:r.enterprise, vins:r.vins, total:r.total, issue_cnt:r.issue_cnt, by:by[r.rooftop]||{}}));
+}
+
+async function drillReviewerBreakdown(rv){
+  const name=(rv||'').split('@')[0]||'—';
+  openDrillLoading('Reviewer · '+name+' — loading rooftops…');
+  try{ const rows=await _breakdownFetch('reviewer', rv);
+    renderBreakdown('Reviewer · '+name+' · rooftops ('+rows.length.toLocaleString()+')', rows, window._issTypes||[]);
+  }catch(e){ drillError(e); }
+}
+async function drillCsPocBreakdown(cs){
+  const name=(cs||'').split('@')[0]||'—';
+  openDrillLoading('CS POC · '+name+' — loading rooftops…');
+  try{ const rows=await _breakdownFetch('cs_poc_email', cs);
+    renderBreakdown('CS POC · '+name+' · rooftops ('+rows.length.toLocaleString()+')', rows, window._issTypes||[]);
+  }catch(e){ drillError(e); }
+}
+
 // Instant drill-downs — rendered from data already loaded (no extra BQ round-trip).
 function drill(type){
   if(!DRILL){return;}
@@ -798,6 +846,7 @@ async function loadAll(){
     const csTacc=100-pct(csTot.iss,csTot.total);
     window._csCsv=csRows.map(r=>{const c=issByCs[r.cs_poc_email]||{};const o={'CS POC':r.cs_poc_email||'','Unique VINs':N(r.vins),Reviews:N(r.total)};issTypes.forEach(it=>o[it]=(c[it]||0));o.Issues=N(r.issue_cnt);o.Accuracy=(100-pct(N(r.issue_cnt),N(r.total)))+'%';o['Last Active']=r.last_date||'';return o;});
     window._trendAll=trendR;  // full daily series (no global date filter) for the trend range tabs
+    window._issTypes=issTypes;  // issue-type column set, reused by reviewer/CS-POC breakdown drills
     DRILL={rtR,issR};  // aggregate cache for instant tile drills (VIN drills query on demand)
 
     mc.innerHTML=`
@@ -850,7 +899,7 @@ async function loadAll(){
     <div class="tbl-card"><div class="tbl-head-bar" style="display:flex;justify-content:space-between;align-items:center"><div class="chart-title">CS POC · review volume &amp; quality</div><button class="btn" onclick="downloadCsPocCSV()">⬇ CSV</button></div>
       <div class="rt-scroll">
       <table><thead><tr><th>CS POC</th><th style="text-align:center">Unique VINs</th><th style="text-align:center">Reviews</th>${issTypes.map(t=>`<th style="text-align:center">${t}</th>`).join('')}<th style="text-align:center">Issues</th><th style="text-align:center">Accuracy</th><th>Last Active</th></tr></thead>
-      <tbody>${csRows.length?csRows.map(r=>{const t=N(r.total),iss=N(r.issue_cnt);const acc=100-pct(iss,t);const cnts=issByCs[r.cs_poc_email]||{};return`<tr><td>${(r.cs_poc_email||'').split('@')[0]||'—'}<br><span style="font-size:8px;color:var(--muted)">${r.cs_poc_email||''}</span></td><td style="text-align:center"><b>${N(r.vins).toLocaleString()}</b></td><td style="text-align:center"><b>${t.toLocaleString()}</b></td>${issTypes.map(it=>{const c=cnts[it]||0;return `<td style="text-align:center;color:var(--issue)">${c||''}</td>`;}).join('')}<td style="text-align:center"><span class="badge b-issue">${iss}</span></td><td style="text-align:center"><span style="font-weight:700;color:${acc>=90?'#10b981':acc>=70?'#eab308':'#f97316'}">${acc}%</span></td><td style="color:var(--muted);font-size:9px">${r.last_date||'—'}</td></tr>`;}).join(''):`<tr><td colspan="${issTypes.length+6}" style="color:var(--muted);text-align:center;padding:16px">No CS POC data</td></tr>`}</tbody>
+      <tbody>${csRows.length?csRows.map(r=>{const t=N(r.total),iss=N(r.issue_cnt);const acc=100-pct(iss,t);const cnts=issByCs[r.cs_poc_email]||{};return`<tr style="cursor:pointer" onclick="drillCsPocBreakdown('${(r.cs_poc_email||'').replace(/'/g,"\\'")}')"><td>${(r.cs_poc_email||'').split('@')[0]||'—'}<br><span style="font-size:8px;color:var(--muted)">${r.cs_poc_email||''}</span></td><td style="text-align:center"><b>${N(r.vins).toLocaleString()}</b></td><td style="text-align:center"><b>${t.toLocaleString()}</b></td>${issTypes.map(it=>{const c=cnts[it]||0;return `<td style="text-align:center;color:var(--issue)">${c||''}</td>`;}).join('')}<td style="text-align:center"><span class="badge b-issue">${iss}</span></td><td style="text-align:center"><span style="font-weight:700;color:${acc>=90?'#10b981':acc>=70?'#eab308':'#f97316'}">${acc}%</span></td><td style="color:var(--muted);font-size:9px">${r.last_date||'—'}</td></tr>`;}).join(''):`<tr><td colspan="${issTypes.length+6}" style="color:var(--muted);text-align:center;padding:16px">No CS POC data</td></tr>`}</tbody>
       <tfoot><tr><td style="font-weight:700">Total</td><td style="text-align:center;font-weight:700">${csTot.vins.toLocaleString()}</td><td style="text-align:center;font-weight:700">${csTot.total.toLocaleString()}</td>${issTypes.map(it=>`<td style="text-align:center;font-weight:700;color:var(--issue)">${csTot.by[it]||''}</td>`).join('')}<td style="text-align:center;font-weight:700">${csTot.iss.toLocaleString()}</td><td style="text-align:center;font-weight:700;color:${csTacc>=90?'#10b981':csTacc>=70?'#eab308':'#f97316'}">${csTacc}%</td><td></td></tr></tfoot></table>
       </div>
     </div>
@@ -859,7 +908,7 @@ async function loadAll(){
     <div class="tbl-card"><div class="tbl-head-bar" style="display:flex;justify-content:space-between;align-items:center"><div class="chart-title">Reviewer Stats</div><button class="btn" onclick="downloadReviewerCSV()">⬇ CSV</button></div>
         <div class="rt-scroll">
         <table><thead><tr><th>Reviewer</th><th style="text-align:center">Total</th><th style="text-align:center">OK</th>${issTypes.map(t=>`<th style="text-align:center">${t}</th>`).join('')}<th style="text-align:center">Issues</th><th style="text-align:center">Accuracy</th><th>Last Active</th></tr></thead>
-        <tbody>${rvR.map(r=>{const t=N(r.total),o=N(r.ok_cnt),iss=N(r.issue_cnt);const acc=100-pct(iss,t);const cnts=issByRv[r.reviewer]||{};return`<tr><td>${r.reviewer?.split('@')[0]||'—'}<br><span style="font-size:8px;color:var(--muted)">${r.reviewer}</span></td><td style="text-align:center"><b>${t}</b></td><td style="text-align:center"><span class="badge b-ok">${o}</span></td>${issTypes.map(it=>{const c=cnts[it]||0;return `<td style="text-align:center;color:var(--issue)">${c||''}</td>`;}).join('')}<td style="text-align:center"><span class="badge b-issue">${iss}</span></td><td style="text-align:center"><span style="font-weight:700;color:${acc>=90?'#10b981':acc>=70?'#eab308':'#f97316'}">${acc}%</span></td><td style="color:var(--muted);font-size:9px">${r.last_date||'—'}</td></tr>`;}).join('')}</tbody>
+        <tbody>${rvR.map(r=>{const t=N(r.total),o=N(r.ok_cnt),iss=N(r.issue_cnt);const acc=100-pct(iss,t);const cnts=issByRv[r.reviewer]||{};return`<tr style="cursor:pointer" onclick="drillReviewerBreakdown('${(r.reviewer||'').replace(/'/g,"\\'")}')"><td>${r.reviewer?.split('@')[0]||'—'}<br><span style="font-size:8px;color:var(--muted)">${r.reviewer}</span></td><td style="text-align:center"><b>${t}</b></td><td style="text-align:center"><span class="badge b-ok">${o}</span></td>${issTypes.map(it=>{const c=cnts[it]||0;return `<td style="text-align:center;color:var(--issue)">${c||''}</td>`;}).join('')}<td style="text-align:center"><span class="badge b-issue">${iss}</span></td><td style="text-align:center"><span style="font-weight:700;color:${acc>=90?'#10b981':acc>=70?'#eab308':'#f97316'}">${acc}%</span></td><td style="color:var(--muted);font-size:9px">${r.last_date||'—'}</td></tr>`;}).join('')}</tbody>
         <tfoot><tr><td style="font-weight:700">Total</td><td style="text-align:center;font-weight:700">${rvTot.total.toLocaleString()}</td><td style="text-align:center;font-weight:700">${rvTot.ok.toLocaleString()}</td>${issTypes.map(it=>`<td style="text-align:center;font-weight:700;color:var(--issue)">${rvTot.by[it]||''}</td>`).join('')}<td style="text-align:center;font-weight:700">${rvTot.iss.toLocaleString()}</td><td style="text-align:center;font-weight:700;color:${rvTacc>=90?'#10b981':rvTacc>=70?'#eab308':'#f97316'}">${rvTacc}%</td><td></td></tr></tfoot></table>
         </div>
       </div>`;
