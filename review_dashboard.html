@@ -298,10 +298,18 @@ tr:hover td{background:rgba(255,255,255,.02)}
 const BQ  = 'https://script.google.com/macros/s/AKfycbxS1D1FkX2q_wQhh4U6LbzQKAgSRwzQGr0gEpmaM1rT8Sqig7ghr54ChYe9dor3PIaG/exec';
 const TBL = '`inspired-frame-453018-r2.spyne_reviews.image_reviews`';
 const ENT = '`inspired-frame-453018-r2.spyne_reviews.spyne_rooftop_enterprises`';
-// Reviews joined (on team_id) to deduped enterprise metadata. Used as the FROM
-// source for all analytical queries so segment / ARR / POC fields are available.
-const SRC = `(SELECT r.*, e.enterprise_name, e.apld_team_name, e.customer_segment, e.apld_contracted_arr, e.ae_poc_email, e.ob_poc_email, e.cs_poc_email
+// Reviews enriched from spyne_rooftop_enterprises: ENTERPRISE NAME via enterprise_id
+// (clean 1:1 key), TEAM/ROOFTOP NAME + segment/ARR/POC via team_id. Fallbacks avoid
+// blanks. Used as the FROM source for all analytical queries.
+const SRC = `(SELECT r.*,
+    COALESCE(ent.enterprise_name, tm.enterprise_name, NULLIF(r.rooftop,''), NULLIF(r.enterprise,'')) AS enterprise_name,
+    COALESCE(tm.apld_team_name, NULLIF(r.rooftop,'')) AS apld_team_name,
+    tm.customer_segment, tm.apld_contracted_arr, tm.ae_poc_email, tm.ob_poc_email, tm.cs_poc_email
   FROM ${TBL} r
+  LEFT JOIN (
+    SELECT enterprise_id, ANY_VALUE(enterprise_name) AS enterprise_name
+    FROM ${ENT} WHERE enterprise_id IS NOT NULL GROUP BY enterprise_id
+  ) ent ON CAST(r.enterprise_id AS STRING) = CAST(ent.enterprise_id AS STRING)
   LEFT JOIN (
     SELECT team_id,
            ANY_VALUE(enterprise_name)    AS enterprise_name,
@@ -312,7 +320,7 @@ const SRC = `(SELECT r.*, e.enterprise_name, e.apld_team_name, e.customer_segmen
            ANY_VALUE(ob_poc_email)        AS ob_poc_email,
            ANY_VALUE(cs_poc_email)        AS cs_poc_email
     FROM ${ENT} WHERE team_id IS NOT NULL GROUP BY team_id
-  ) e ON CAST(r.team_id AS STRING) = CAST(e.team_id AS STRING))`;
+  ) tm ON CAST(r.team_id AS STRING) = CAST(tm.team_id AS STRING))`;
 
 // ── Date state ──
 let dfrom='', dto='', calYear=new Date().getFullYear(), calMonth=new Date().getMonth();
@@ -840,7 +848,7 @@ async function loadAll(){
     const rtTot={vins:0,total:0,iss:0,by:{}};
     rtR.forEach(r=>{rtTot.vins+=N(r.vins);rtTot.total+=N(r.total);rtTot.iss+=N(r.issue_cnt);const c=issByRt[r.rooftop]||{};issTypes.forEach(it=>{rtTot.by[it]=(rtTot.by[it]||0)+(c[it]||0);});});
     const rtTacc=100-pct(rtTot.iss,rtTot.total);
-    window._rtCsv=rtR.map((r,i)=>{const c=issByRt[r.rooftop]||{};const o={'#':i+1,Rooftop:r.rooftop,Enterprise:r.ent_name||r.enterprise||'','CS POC':r.cs_email||'',VINs:N(r.vins),'Times Reviewed':Math.round(N(r.vins)?N(r.total)/N(r.vins):0)};issTypes.forEach(it=>o[it]=(c[it]||0));o.Issues=N(r.issue_cnt);o.Accuracy=(100-pct(N(r.issue_cnt),N(r.total)))+'%';o['Last Review']=r.last_date||'';return o;});
+    window._rtCsv=rtR.map((r,i)=>{const c=issByRt[r.rooftop]||{};const o={'#':i+1,Rooftop:r.team_name||r.rooftop,Enterprise:r.ent_name||r.enterprise||'','CS POC':r.cs_email||'',VINs:N(r.vins),'Times Reviewed':Math.round(N(r.vins)?N(r.total)/N(r.vins):0)};issTypes.forEach(it=>o[it]=(c[it]||0));o.Issues=N(r.issue_cnt);o.Accuracy=(100-pct(N(r.issue_cnt),N(r.total)))+'%';o['Last Review']=r.last_date||'';return o;});
     // Per-reviewer issue-type breakdown + totals + CSV (mirrors the rooftop summary)
     const issByRv={}; issByRvR.forEach(r=>{ if(!issByRv[r.reviewer]) issByRv[r.reviewer]={}; issByRv[r.reviewer][r.issue_type]=N(r.cnt); });
     const rvTot={total:0,ok:0,iss:0,by:{}};
@@ -899,7 +907,7 @@ async function loadAll(){
       <div class="tbl-card"><div class="tbl-head-bar" style="display:flex;justify-content:space-between;align-items:center"><div class="chart-title">Rooftop Summary</div><button class="btn" onclick="downloadRooftopCSV()">⬇ CSV</button></div>
         <div class="rt-scroll">
         <table><thead><tr><th>#</th><th>Rooftop</th><th>Enterprise</th><th>CS POC</th><th style="text-align:center">VINs</th><th style="text-align:center">Times Reviewed</th>${issTypes.map(t=>`<th style="text-align:center">${t}</th>`).join('')}<th style="text-align:center">Issues</th><th style="text-align:center">Accuracy</th><th>Last Review</th></tr></thead>
-        <tbody>${rtR.map((r,i)=>{const iss=N(r.issue_cnt);const acc=100-pct(iss,N(r.total));const _p=N(r.vins)?N(r.total)/N(r.vins):0;const passes=Math.round(_p);const cs=r.cs_email?`<a href="mailto:${r.cs_email}" style="color:var(--blue)" onclick="event.stopPropagation()">${r.cs_email.split('@')[0]}</a>`:'—';const cnts=issByRt[r.rooftop]||{};return`<tr style="cursor:pointer" onclick="drillRooftop('${(r.rooftop||'').replace(/'/g,"\\'")}')"><td style="color:var(--muted)">${i+1}</td><td>${r.rooftop||'—'}</td><td style="font-size:9px;color:var(--muted)">${r.ent_name||r.enterprise||'—'}</td><td style="font-size:9px" title="${r.cs_email||''}">${cs}</td><td style="text-align:center"><b>${N(r.vins).toLocaleString()}</b></td><td style="text-align:center">${passes}×</td>${issTypes.map(it=>{const c=cnts[it]||0;return `<td style="text-align:center;color:var(--issue)">${c||''}</td>`;}).join('')}<td style="text-align:center;font-weight:600">${iss.toLocaleString()}</td><td style="text-align:center"><span style="font-weight:700;color:${acc>=90?'#10b981':acc>=70?'#eab308':'#f97316'}">${acc}%</span></td><td style="color:var(--muted);font-size:9px">${r.last_date||'—'}</td></tr>`;}).join('')}</tbody>
+        <tbody>${rtR.map((r,i)=>{const iss=N(r.issue_cnt);const acc=100-pct(iss,N(r.total));const _p=N(r.vins)?N(r.total)/N(r.vins):0;const passes=Math.round(_p);const cs=r.cs_email?`<a href="mailto:${r.cs_email}" style="color:var(--blue)" onclick="event.stopPropagation()">${r.cs_email.split('@')[0]}</a>`:'—';const cnts=issByRt[r.rooftop]||{};return`<tr style="cursor:pointer" onclick="drillRooftop('${(r.rooftop||'').replace(/'/g,"\\'")}')"><td style="color:var(--muted)">${i+1}</td><td>${r.team_name||r.rooftop||'—'}</td><td style="font-size:9px;color:var(--muted)">${r.ent_name||r.enterprise||'—'}</td><td style="font-size:9px" title="${r.cs_email||''}">${cs}</td><td style="text-align:center"><b>${N(r.vins).toLocaleString()}</b></td><td style="text-align:center">${passes}×</td>${issTypes.map(it=>{const c=cnts[it]||0;return `<td style="text-align:center;color:var(--issue)">${c||''}</td>`;}).join('')}<td style="text-align:center;font-weight:600">${iss.toLocaleString()}</td><td style="text-align:center"><span style="font-weight:700;color:${acc>=90?'#10b981':acc>=70?'#eab308':'#f97316'}">${acc}%</span></td><td style="color:var(--muted);font-size:9px">${r.last_date||'—'}</td></tr>`;}).join('')}</tbody>
         <tfoot><tr><td></td><td style="font-weight:700">Total</td><td></td><td></td><td style="text-align:center;font-weight:700">${rtTot.vins.toLocaleString()}</td><td></td>${issTypes.map(it=>`<td style="text-align:center;font-weight:700;color:var(--issue)">${rtTot.by[it]||''}</td>`).join('')}<td style="text-align:center;font-weight:700">${rtTot.iss.toLocaleString()}</td><td style="text-align:center;font-weight:700;color:${rtTacc>=90?'#10b981':rtTacc>=70?'#eab308':'#f97316'}">${rtTacc}%</td><td></td></tr></tfoot></table>
         </div>
       </div>
