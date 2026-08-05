@@ -427,6 +427,7 @@
                 <div class="flex rounded-lg border border-slate-200 overflow-hidden text-[12px] font-semibold">
                     <button id="toggle-sheet-btn" onclick="setDataSource('sheet')" class="px-3 py-1.5 bg-blue-600 text-white transition">Google Sheet</button>
                     <button id="toggle-csv-btn" onclick="setDataSource('csv')" class="px-3 py-1.5 bg-white text-slate-500 hover:bg-slate-50 transition">Upload CSV</button>
+                    <button id="toggle-drive-btn" onclick="setDataSource('drive')" class="px-3 py-1.5 bg-white text-slate-500 hover:bg-slate-50 transition">Google Drive</button>
                 </div>
             </div>
 
@@ -465,6 +466,27 @@
                     <div id="csv-btn-loader" class="loading-spinner hidden"></div>
                 </button>
                 <p id="csv-load-status" class="text-[11px] text-slate-400 text-center hidden"></p>
+            </div>
+
+            <!-- Google Drive Mode -->
+            <div id="drive-mode-panel" class="space-y-4 hidden">
+                <div>
+                    <input id="drive-link-input" type="text" placeholder="Paste public Google Drive folder link"
+                        class="w-full p-3 border border-slate-300 rounded-lg text-[13px] focus:ring-2 focus:ring-blue-500 outline-none"
+                        oninput="onDriveLinkInput()">
+                    <p class="text-[11px] text-slate-400 mt-1">Folder must be shared “Anyone with the link → Viewer”. Each CSV file = one rooftop.</p>
+                </div>
+
+                <div id="drive-info-bar" class="hidden bg-green-50 border border-green-200 rounded-lg px-3 py-2 text-[12px] text-green-800 flex items-center justify-between">
+                    <span id="drive-info-text"></span>
+                    <button onclick="clearDriveFolder()" class="text-green-600 hover:text-red-500 font-bold ml-2 transition">✕</button>
+                </div>
+
+                <button id="load-drive-btn" class="w-full spyne-blue text-white font-semibold py-3 rounded-lg hover:bg-blue-700 transition flex items-center justify-center space-x-2 disabled:opacity-70 opacity-50 cursor-not-allowed" disabled>
+                    <span id="drive-btn-text">Paste a folder link to continue →</span>
+                    <div id="drive-btn-loader" class="loading-spinner hidden"></div>
+                </button>
+                <p id="drive-load-status" class="text-[11px] text-slate-400 text-center hidden"></p>
             </div>
 
             <div class="mt-8 text-center text-[11px] text-slate-400 leading-relaxed">
@@ -548,6 +570,8 @@
                     <h2 id="review-team-name" class="font-bold text-slate-800 text-[15px]"></h2>
                     <span id="review-team-id" class="text-[11px] font-semibold text-slate-400 uppercase tracking-wide"></span>
                 </div>
+                <!-- Enterprise metadata (from spyne_rooftop_enterprises, joined on team_id) -->
+                <div id="enterprise-meta" class="hidden items-center flex-wrap gap-1.5"></div>
                 <!-- Progress summary bar — 1st image mode -->
                 <div id="img1-progress-bar" class="hidden items-center space-x-1 flex-wrap gap-y-1">
                     <span id="pg-reviewed" class="px-2 py-0.5 rounded-full text-[11px] font-semibold bg-slate-100 text-slate-600"></span>
@@ -1015,6 +1039,15 @@
     // ──────────────────────────────────────────────────────────────────────────
     // Google Sign-In — OAuth Client ID for nandmodi.github.io
     const GOOGLE_CLIENT_ID = '108193022090-pqojr6seugmdmth5jrah9rgisjgn2q28.apps.googleusercontent.com';
+
+    // ── Google Drive folder source ──────────────────────────────────────────
+    // API key used ONLY to list + download CSV files from a PUBLIC Drive folder
+    // ("Anyone with the link → Viewer"). Create it in the SAME Google Cloud
+    // project as the OAuth client above: enable "Google Drive API", then
+    // Credentials → Create credentials → API key. Restrict it to the Drive API
+    // and to your GitHub Pages domain (HTTP referrer) before shipping.
+    // Paste the key below, replacing the placeholder.
+    const DRIVE_API_KEY = 'AIzaSyBbMmcng4HhumcoPqwBrW4hQa9r_C8c0Hs';
     const AUTH_ALLOWED_EMAILS = new Set([
         'praveen@spyne.ai',
         'kishor@spyne.ai',
@@ -1026,9 +1059,62 @@
         'tannu.singh@spyne.co.in',
         'vijay.gautam@spyne.co.in',
         'karmendra.singh@spyne.co.in',
-        'dhruv.kumar@spyne.co.in'
+        'anup.gupta@spyne.co.in',
     ]);
-    const AUTH_SESSION_KEY = 'spyne_auth_user_v1';
+    const AUTH_SESSION_KEY  = 'spyne_auth_user_v1';
+    const BQ_WEBAPP_URL     = 'https://script.google.com/macros/s/AKfycbyWgJgtuiCwstoNi4LA-meGMIo0HBVRG2Fp1gfNCPjE2Or24HLaKZSYk-obZjh2OILj/exec';
+
+    // ── Enterprise metadata (spyne_rooftop_enterprises), keyed by team_id ──
+    // Loaded once from the BQ web app; used to enrich the review header.
+    const entMetaByTeamId = new Map();
+    let   entMetaLoaded   = false;
+
+    async function loadEnterpriseMeta() {
+        if (entMetaLoaded) return;
+        try {
+            const res = await fetch(BQ_WEBAPP_URL, {
+                method:   'POST',
+                redirect: 'follow',
+                body:     JSON.stringify({ action: 'getEnterprises' })
+            });
+            const data = JSON.parse(await res.text());
+            if (data && data.ok && Array.isArray(data.enterprises)) {
+                data.enterprises.forEach(e => {
+                    if (e.team_id) entMetaByTeamId.set(String(e.team_id), e);
+                });
+                entMetaLoaded = true;
+            }
+        } catch (err) {
+            console.warn('[EntMeta] load failed:', err);
+        }
+    }
+
+    function fmtArr(v) {
+        const n = Number(v);
+        if (!v || isNaN(n)) return '';
+        return '$' + Math.round(n).toLocaleString();
+    }
+
+    // Fill the #enterprise-meta card for a given team_id (join key).
+    function renderEnterpriseMeta(teamId) {
+        const box = document.getElementById('enterprise-meta');
+        if (!box) return;
+        const m = teamId ? entMetaByTeamId.get(String(teamId)) : null;
+        if (!m) { box.classList.add('hidden'); box.classList.remove('flex'); box.innerHTML = ''; return; }
+        const chip = (label, val, cls) => val
+            ? `<span class="px-2 py-0.5 rounded-full text-[11px] font-semibold ${cls}" title="${label}">${val}</span>` : '';
+        const mail = (label, val) => val
+            ? `<span class="text-[11px] text-slate-500">${label}: <a href="mailto:${val}" class="text-blue-600 hover:underline">${val}</a></span>` : '';
+        const parts = [
+            chip('Segment', m.customer_segment, 'bg-indigo-100 text-indigo-700'),
+            chip('Contracted ARR', fmtArr(m.apld_contracted_arr), 'bg-emerald-100 text-emerald-700'),
+            mail('AE', m.ae_poc_email),
+            mail('OB', m.ob_poc_email),
+            mail('CS', m.cs_poc_email)
+        ].filter(Boolean);
+        box.innerHTML = parts.join('<span class="text-slate-300 text-[10px]">|</span>');
+        box.classList.remove('hidden'); box.classList.add('flex');
+    }
 
     // Per-user localStorage keys — reviews are isolated per reviewer
     function storageKey()     { return 'spyne_reviews_v2_' + (getCurrentUser() || 'anon'); }
@@ -1603,7 +1689,7 @@
 
             const rooftop = (r[C.rooftop] || '').trim();
             const isNew = !teamAgg.has(teamId);
-            if (isNew) teamAgg.set(teamId, { name, vins: new Map(), rooftop: rooftop || '' });
+            if (isNew) teamAgg.set(teamId, { name, vins: new Map(), rooftop: rooftop || '', entId: (r[C.entId] || '').trim() });
             // Store per-VIN condition alongside URLs
             const t = teamAgg.get(teamId);
             if ((!t.name || t.name === teamId) && name !== teamId) t.name = name;
@@ -1620,7 +1706,7 @@
             // For CSV mode rows, URLs are pipe-OR-comma separated (splitUrls handles both) —
             // skip the slow regex extractUrlsFromRow and split directly
             let urls;
-            if (dataSourceMode === 'csv') {
+            if (dataSourceMode === 'csv' || dataSourceMode === 'drive') {
                 const raw = (r[C.imageUrls] || '').trim();
                 urls = splitUrls(raw);
             } else {
@@ -1646,7 +1732,7 @@
         for (const [teamId, t] of teamAgg.entries()) {
             let imageCount = 0;
             for (const entry of t.vins.values()) imageCount += (entry.urls || entry).length;
-            teamsList.push({ teamId, name: t.name, rooftop: t.rooftop || '', vinCount: t.vins.size, imageCount });
+            teamsList.push({ teamId, name: t.name, rooftop: t.rooftop || '', entId: t.entId || '', vinCount: t.vins.size, imageCount });
             vinsByTeam.set(teamId, t.vins);
         }
         teamsList.sort((a, b) => a.name.localeCompare(b.name));
@@ -1672,13 +1758,16 @@
         dataSourceMode = mode;
         document.getElementById('sheet-mode-panel').classList.toggle('hidden', mode !== 'sheet');
         document.getElementById('csv-mode-panel').classList.toggle('hidden', mode !== 'csv');
-        document.getElementById('toggle-sheet-btn').className =
-            'px-3 py-1.5 transition ' + (mode === 'sheet' ? 'bg-blue-600 text-white' : 'bg-white text-slate-500 hover:bg-slate-50');
-        document.getElementById('toggle-csv-btn').className =
-            'px-3 py-1.5 transition ' + (mode === 'csv' ? 'bg-blue-600 text-white' : 'bg-white text-slate-500 hover:bg-slate-50');
+        document.getElementById('drive-mode-panel').classList.toggle('hidden', mode !== 'drive');
+        const activeCls   = 'px-3 py-1.5 transition bg-blue-600 text-white';
+        const inactiveCls = 'px-3 py-1.5 transition bg-white text-slate-500 hover:bg-slate-50';
+        document.getElementById('toggle-sheet-btn').className = mode === 'sheet' ? activeCls : inactiveCls;
+        document.getElementById('toggle-csv-btn').className   = mode === 'csv'   ? activeCls : inactiveCls;
+        document.getElementById('toggle-drive-btn').className = mode === 'drive' ? activeCls : inactiveCls;
         document.getElementById('data-source-hint').textContent =
-            mode === 'csv' ? 'VINs and images are read from your uploaded CSV file.'
-                           : 'Images load live from the All_Data sheet.';
+            mode === 'csv'   ? 'VINs and images are read from your uploaded CSV file.'
+          : mode === 'drive' ? 'Each CSV in the Drive folder loads as a separate rooftop.'
+                             : 'Images load live from the All_Data sheet.';
     }
 
     function handleCsvDrop(event) {
@@ -1771,6 +1860,13 @@
                     h === 'condition' || h === 'type' || h === 'vehicle_condition' ||
                     h === 'new_used' || h === 'newused' || h === 'inventory_type'
                 );
+                // Pick enterprise_id and team_id directly from CSV if present
+                const enterpriseIdCol = hLower.findIndex(h =>
+                    h === 'enterprise_id' || h === 'enterpriseid' || h === 'enterprise id'
+                );
+                const teamIdCol = hLower.findIndex(h =>
+                    h === 'team_id' || h === 'teamid' || h === 'team id'
+                );
 
                 if (vinCol === -1) { showError('CSV must have a VIN column.'); return; }
                 if (imgCol === -1) { showError('CSV must have an image URL column (e.g. Image URLs, photos, media).'); return; }
@@ -1795,21 +1891,28 @@
                     const condition = conditionCol >= 0 ? String(r[conditionCol] || '').trim() : '';
                     // Key = VIN + rooftop so same VIN at different rooftops = separate entries
                     const key = vin + '|~|' + rooftop;
-                    if (!vinMap.has(key)) vinMap.set(key, { vin, rooftop, condition, urls: new Set() });
+                    const csvTeamId = teamIdCol       >= 0 ? String(r[teamIdCol]       || '').trim() : '';
+                    const csvEntId  = enterpriseIdCol >= 0 ? String(r[enterpriseIdCol] || '').trim() : '';
+                    if (!vinMap.has(key)) vinMap.set(key, { vin, rooftop, condition, csvTeamId, csvEntId, urls: new Set() });
                     const entry = vinMap.get(key);
                     if (imgRaw) splitUrls(imgRaw).forEach(u => { if (u) entry.urls.add(u); });
                     if (!entry.condition && condition) entry.condition = condition;
+                    if (!entry.csvTeamId && csvTeamId) entry.csvTeamId = csvTeamId;
+                    if (!entry.csvEntId  && csvEntId)  entry.csvEntId  = csvEntId;
                 });
 
                 setParseProgress(70, 'Building rows…');
 
                 const syntheticRows = [];
                 for (const data of vinMap.values()) {
-                    const { vin, rooftop, condition } = data;
+                    const { vin, rooftop, condition, csvTeamId, csvEntId } = data;
                     const imgUrls = [...data.urls].join('|');
-                    const teamId  = rooftop ? toTeamId(rooftop) : 'csv-team-001';
+                    // team_id from CSV if present, else derive from rooftop name
+                    const teamId  = csvTeamId || (rooftop ? toTeamId(rooftop) : 'csv-team-001');
+                    // enterprise_id from CSV (col 2), enterprise name stays as filename (col 3)
+                    const entId   = csvEntId  || 'csv-ent-001';
                     syntheticRows.push([
-                        vin, teamId, 'csv-ent-001', enterpriseName,
+                        vin, teamId, entId, enterpriseName,
                         '', '', '1', '', '',
                         vin, imgUrls, rooftop, condition
                     ]);
@@ -1819,9 +1922,12 @@
                 // Count unique rooftops for the info bar
                 const uniqueTeams = new Set(syntheticRows.map(r => r[1])).size;
 
+                // Grab enterprise_id from first row's col 2
+                const firstEntId = syntheticRows.length > 0 ? (syntheticRows[0][2] || '') : '';
                 csvFileData = {
                     name: file.name,
                     enterprise: enterpriseName,
+                    entId: firstEntId,
                     headers: ['name','teamId','enterpriseId','enterprise_name','dealerId',
                               'partnerId','row_count','s3_url','created_at','VIN','Image URLs','rooftop'],
                     rows: syntheticRows,
@@ -1866,7 +1972,7 @@
                     allImageData         = { headers: csvFileData.headers, rows: csvFileData.rows };
                     imagesLoaded         = true;
                     selectedEnterprise   = csvFileData.enterprise;
-                    selectedEnterpriseId = 'csv-ent-001';
+                    selectedEnterpriseId = csvFileData.entId || 'csv-ent-001';
 
                     await buildTeamIndex(selectedEnterprise);
 
@@ -1907,6 +2013,263 @@
                 document.getElementById('csv-file-input').click();
             });
         }
+    });
+
+    // =========================================================================
+    // GOOGLE DRIVE FOLDER MODE
+    //   Public folder link → list its CSV files (Drive API) → each file = one
+    //   rooftop. All files merge into one dataset; rooftop name = filename
+    //   (unless a file has its own rooftop column). enterprise_id / team_id
+    //   columns are honoured exactly like the upload path.
+    // =========================================================================
+    let driveFolderData = null;
+    const DRIVE_HEADERS = ['name','teamId','enterpriseId','enterprise_name','dealerId',
+                           'partnerId','row_count','s3_url','created_at','VIN','Image URLs','rooftop','condition'];
+
+    // Extract the folder ID from any common Drive folder URL (or a raw ID).
+    function parseDriveFolderId(link) {
+        if (!link) return '';
+        let m = link.match(/\/folders\/([A-Za-z0-9_-]{10,})/);
+        if (m) return m[1];
+        m = link.match(/[?&]id=([A-Za-z0-9_-]{10,})/);
+        if (m) return m[1];
+        if (/^[A-Za-z0-9_-]{10,}$/.test(link.trim())) return link.trim();
+        return '';
+    }
+
+    function onDriveLinkInput() {
+        const link = document.getElementById('drive-link-input').value.trim();
+        const ok   = !!parseDriveFolderId(link);
+        const btn  = document.getElementById('load-drive-btn');
+        btn.disabled = !ok;
+        btn.classList.toggle('opacity-50', !ok);
+        btn.classList.toggle('cursor-not-allowed', !ok);
+        document.getElementById('drive-btn-text').textContent =
+            ok ? 'Load folder →' : 'Paste a folder link to continue →';
+        if (driveFolderData) {
+            driveFolderData = null;
+            document.getElementById('drive-info-bar').classList.add('hidden');
+        }
+    }
+
+    function clearDriveFolder() {
+        driveFolderData = null;
+        document.getElementById('drive-link-input').value = '';
+        document.getElementById('drive-info-bar').classList.add('hidden');
+        const btn = document.getElementById('load-drive-btn');
+        btn.disabled = true;
+        btn.classList.add('opacity-50', 'cursor-not-allowed');
+        document.getElementById('drive-btn-text').textContent = 'Paste a folder link to continue →';
+    }
+
+    // List all .csv files in a public Drive folder (handles pagination + shared drives).
+    async function listDriveCsvFiles(folderId) {
+        const base = 'https://www.googleapis.com/drive/v3/files';
+        const q = "'" + folderId + "' in parents and trashed=false";
+        let pageToken = '', files = [], guard = 0;
+        do {
+            const url = base
+                + '?q=' + encodeURIComponent(q)
+                + '&key=' + encodeURIComponent(DRIVE_API_KEY)
+                + '&fields=' + encodeURIComponent('nextPageToken,files(id,name,mimeType)')
+                + '&pageSize=1000&orderBy=name'
+                + '&supportsAllDrives=true&includeItemsFromAllDrives=true'
+                + (pageToken ? '&pageToken=' + encodeURIComponent(pageToken) : '');
+            const res  = await fetch(url);
+            const data = await res.json().catch(() => ({}));
+            if (!res.ok) throw new Error((data && data.error && data.error.message) || ('HTTP ' + res.status));
+            (data.files || []).forEach(f => {
+                const isFolder = f.mimeType === 'application/vnd.google-apps.folder';
+                const isCsv    = /\.csv$/i.test(f.name || '') || f.mimeType === 'text/csv';
+                if (!isFolder && isCsv) files.push(f);
+            });
+            pageToken = data.nextPageToken || '';
+        } while (pageToken && ++guard < 50);
+        return files;
+    }
+
+    // Download one file's raw text (public files are CORS-enabled on the API host).
+    async function fetchDriveCsvText(fileId) {
+        const url = 'https://www.googleapis.com/drive/v3/files/' + encodeURIComponent(fileId)
+            + '?alt=media&key=' + encodeURIComponent(DRIVE_API_KEY) + '&supportsAllDrives=true';
+        const res = await fetch(url, { cache: 'no-store' });
+        if (!res.ok) throw new Error('HTTP ' + res.status);
+        return res.text();
+    }
+
+    // Parse one file's CSV text into synthetic All_Data-shaped rows.
+    function driveCsvToRows(text, rooftopFallback) {
+        const parsed = parseCSV(text);
+        const hLower = parsed.headers.map(h => h.trim().toLowerCase());
+
+        const vinCol = hLower.findIndex(h =>
+            h === 'vin' || h === 'vin_number' || h === 'vehicle_vin' || h === 'vehiclevin');
+
+        const isNonUrlCol = (h) => /count|num|qty|quantity|total|#|_id$|_flag|_type|_status|year|make|model|trim|condition|style|fuel|color|price|mileage|stock|rooftop|dealer|location|store/.test(h);
+        const exactImgNames = [
+            'image urls','image_urls','imageurls','image url','image_url',
+            'images','image','first_image_url','first_img_url',
+            'imgae urls','imgae_urls','img_urls','img_url',
+            'photo urls','photo_urls','photourls','photo url','photo_url',
+            'photos','photo','media_urls','media_url','media'
+        ];
+        let imgCol = hLower.findIndex(h => exactImgNames.includes(h));
+        if (imgCol === -1) imgCol = hLower.findIndex(h => h.includes('url') && !isNonUrlCol(h));
+        if (imgCol === -1) imgCol = hLower.findIndex(h => (h.includes('image') || h.includes('photo')) && !isNonUrlCol(h));
+
+        const rooftopCol = hLower.findIndex(h =>
+            h === 'rooftop' || h === 'rooftop_name' || h === 'dealer' ||
+            h === 'dealer_name' || h === 'dealership' || h === 'dealership_name' ||
+            h === 'location' || h === 'store');
+        const conditionCol = hLower.findIndex(h =>
+            h === 'condition' || h === 'type' || h === 'vehicle_condition' ||
+            h === 'new_used' || h === 'newused' || h === 'inventory_type');
+        const enterpriseIdCol = hLower.findIndex(h =>
+            h === 'enterprise_id' || h === 'enterpriseid' || h === 'enterprise id');
+        const teamIdCol = hLower.findIndex(h =>
+            h === 'team_id' || h === 'teamid' || h === 'team id');
+
+        if (vinCol === -1) throw new Error('no VIN column');
+        if (imgCol === -1) throw new Error('no image-URL column');
+
+        const toTeamId = (rt) => 'drive-' + String(rt).toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '');
+
+        // A file = one rooftop, so group by VIN within this file.
+        const vinMap = new Map();
+        parsed.rows.forEach((r) => {
+            const vin = String(r[vinCol] || '').trim();
+            if (!vin || vin.toLowerCase() === 'vin') return;
+            const imgRaw    = String(r[imgCol] || '').trim();
+            const rooftop   = rooftopCol   >= 0 ? String(r[rooftopCol]   || '').trim() : '';
+            const condition = conditionCol >= 0 ? String(r[conditionCol] || '').trim() : '';
+            const csvTeamId = teamIdCol       >= 0 ? String(r[teamIdCol]       || '').trim() : '';
+            const csvEntId  = enterpriseIdCol >= 0 ? String(r[enterpriseIdCol] || '').trim() : '';
+            if (!vinMap.has(vin)) vinMap.set(vin, { vin, rooftop, condition, csvTeamId, csvEntId, urls: new Set() });
+            const e = vinMap.get(vin);
+            if (imgRaw) splitUrls(imgRaw).forEach(u => { if (u) e.urls.add(u); });
+            if (!e.condition && condition) e.condition = condition;
+            if (!e.rooftop   && rooftop)   e.rooftop   = rooftop;
+            if (!e.csvTeamId && csvTeamId) e.csvTeamId = csvTeamId;
+            if (!e.csvEntId  && csvEntId)  e.csvEntId  = csvEntId;
+        });
+
+        const rows = [];
+        let entId = '';
+        for (const d of vinMap.values()) {
+            const rooftopName = d.rooftop || rooftopFallback;
+            const teamId      = d.csvTeamId || toTeamId(rooftopName);
+            const eId         = d.csvEntId  || 'drive-ent-001';
+            if (!entId && d.csvEntId) entId = d.csvEntId;
+            const imgUrls = [...d.urls].join('|');
+            // Col D (enterprise_name) left blank so buildTeamIndex keeps every file.
+            // Col A (name) = rooftop name so the team label shows the rooftop.
+            rows.push([ rooftopName, teamId, eId, '', '', '', '1', '', '', d.vin, imgUrls, rooftopName, d.condition ]);
+        }
+        return { rows, rooftopName: rooftopFallback, entId };
+    }
+
+    // Concurrency-limited map (keeps parallel downloads polite).
+    async function mapLimit(items, limit, fn) {
+        const out = new Array(items.length);
+        let i = 0;
+        await Promise.all(new Array(Math.min(limit, items.length)).fill(0).map(async () => {
+            while (i < items.length) { const idx = i++; out[idx] = await fn(items[idx], idx); }
+        }));
+        return out;
+    }
+
+    async function processDriveFolder(link) {
+        const folderId = parseDriveFolderId(link);
+        if (!folderId) throw new Error('Could not read a folder ID from that link.');
+        if (!DRIVE_API_KEY || DRIVE_API_KEY === 'PASTE_YOUR_DRIVE_API_KEY_HERE')
+            throw new Error('Drive API key not configured yet (set DRIVE_API_KEY in the file).');
+
+        const files = await listDriveCsvFiles(folderId);
+        if (!files.length) throw new Error('No CSV files found in that folder (is it shared publicly?).');
+
+        const results = await mapLimit(files, 6, async (f) => {
+            try {
+                const text   = await fetchDriveCsvText(f.id);
+                const parsed = driveCsvToRows(text, (f.name || '').replace(/\.csv$/i, ''));
+                return { name: f.name, ok: true, ...parsed };
+            } catch (err) {
+                return { name: f.name, ok: false, error: err.message };
+            }
+        });
+
+        const good = results.filter(r => r.ok && r.rows.length);
+        const bad  = results.filter(r => !r.ok);
+        if (!good.length) {
+            const why = bad.length ? (' — ' + bad.map(b => b.name + ': ' + b.error).join('; ')) : '';
+            throw new Error('No usable VINs across the folder' + why);
+        }
+
+        const allRows  = good.flatMap(r => r.rows);
+        const rooftops = good.map(r => r.rooftopName);
+        const entId    = (good.find(r => r.entId) || {}).entId || 'drive-ent-001';
+        // Enterprise label = rooftop name (per request; folder name intentionally unused).
+        const label = rooftops.length === 1 ? rooftops[0]
+                    : rooftops[0] + ' (+' + (rooftops.length - 1) + ' more)';
+
+        driveFolderData = { rows: allRows, enterprise: label, entId,
+                            fileCount: good.length, failed: bad, rooftops, vinCount: allRows.length };
+        return driveFolderData;
+    }
+
+    document.addEventListener('DOMContentLoaded', () => {
+        const loadDriveBtn = document.getElementById('load-drive-btn');
+        if (!loadDriveBtn) return;
+        loadDriveBtn.addEventListener('click', async () => {
+            const link  = document.getElementById('drive-link-input').value.trim();
+            const bText = document.getElementById('drive-btn-text');
+            const bLoad = document.getElementById('drive-btn-loader');
+            const info  = document.getElementById('drive-info-bar');
+            const infoT = document.getElementById('drive-info-text');
+
+            loadDriveBtn.disabled = true;
+            bLoad.classList.remove('hidden');
+            bText.textContent = 'Reading folder…';
+
+            const loadingOv  = document.getElementById('data-loading-overlay');
+            const loadingMsg = document.getElementById('data-loading-msg');
+            loadingOv.classList.remove('hidden');
+            loadingMsg.textContent = 'Listing CSV files in the Drive folder…';
+
+            try {
+                const d = await processDriveFolder(link);
+
+                const bits = d.rooftops.length > 1 ? (' · ' + d.rooftops.length + ' rooftops') : '';
+                infoT.textContent = '✓  ' + d.vinCount + ' VINs from ' + d.fileCount
+                    + ' file' + (d.fileCount > 1 ? 's' : '') + bits
+                    + (d.failed.length ? ('  (' + d.failed.length + ' skipped)') : '');
+                info.classList.remove('hidden');
+
+                allImageData         = { headers: DRIVE_HEADERS, rows: d.rows };
+                imagesLoaded         = true;
+                selectedEnterprise   = d.enterprise;
+                selectedEnterpriseId = d.entId || 'drive-ent-001';
+
+                loadingMsg.textContent = 'Building rooftop index…';
+                await buildTeamIndex(selectedEnterprise);
+
+                if (!teamsList.length) { loadingOv.classList.add('hidden'); showError('No VINs found in the folder.'); return; }
+
+                loadingMsg.textContent = 'Almost ready…';
+                renderDashboard();
+                showPage('page-dashboard');
+                loadingOv.classList.add('hidden');
+
+                loadProgressFromSheet(selectedEnterprise).then(loaded => { if (loaded) renderDashboard(); }).catch(() => {});
+            } catch (err) {
+                loadingOv.classList.add('hidden');
+                console.error(err);
+                showError('Drive load failed: ' + err.message);
+            } finally {
+                bLoad.classList.add('hidden');
+                loadDriveBtn.disabled = false;
+                bText.textContent = 'Load folder →';
+            }
+        });
     });
 
     // =========================================================================
@@ -1972,7 +2335,7 @@
             if (issueBar) issueBar.style.display = 'flex';
             if (zoomWrap) zoomWrap.style.visibility = 'hidden';
             const idx = currentImg1Idx >= 0 ? currentImg1Idx : 0;
-            svPreloadWindow(idx, 8);
+            svPreloadWindow(idx, 15);
             svShow(idx);
         } else if (mode === 'all') {
             gridArea.style.display   = 'none';
@@ -2233,11 +2596,15 @@
             const v   = currentImg1VINs[currentImg1Idx];
             const cur = getImg1Review(currentImg1Team.teamId, v.vin, v.rooftop || '');
             if (!cur) {
-                // Not yet reviewed — mark as OK on navigate
                 setImg1Review(currentImg1Team.teamId, v.vin, 'ok', '');
                 updateImg1ProgressBadge();
                 updateTileIssueState(currentImg1Idx, 'ok');
             }
+        }
+        // On last VIN pressing → show Done modal
+        if (dir > 0 && currentImg1Idx >= currentImg1VINs.length - 1) {
+            openImg1Complete();
+            return;
         }
         const next = Math.max(0, Math.min(currentImg1VINs.length - 1, currentImg1Idx + dir));
         svShow(next);
@@ -2269,44 +2636,16 @@
     // Cache keyed by RESOLVED url (same as what svShow will use) to guarantee browser cache hit
     const _svPreloadCache = new Set();
 
-    // Concurrency-capped preload queue — keeps the network from being flooded
-    // (which caused lag + proxy rate-limiting). At most PRELOAD_MAX in flight.
-    const PRELOAD_MAX = 6;
-    let _preloadInFlight = 0;
-    const _preloadQueue = [];
-    function _preloadPump() {
-        while (_preloadInFlight < PRELOAD_MAX && _preloadQueue.length) {
-            const resolvedUrl = _preloadQueue.shift();
-            _preloadInFlight++;
-            const p = new Image();
-            p.referrerPolicy = 'no-referrer';
-            p.decoding = 'async';
-            const done = () => { _preloadInFlight--; _preloadPump(); };
-            p.onload = done;
-            p.onerror = done;
-            p.src = resolvedUrl;
-        }
-    }
-
     function preloadUrl(url) {
         if (!url) return;
         const chain = getFallbacks(url, 800, 82);  // MUST match svShow params exactly
         const resolvedUrl = chain[0];
         if (_svPreloadCache.has(resolvedUrl)) return;
         _svPreloadCache.add(resolvedUrl);
-        _preloadQueue.push(resolvedUrl);
-        _preloadPump();
-    }
-
-    // Drop any queued (not-yet-started) preloads. Called on VIN change so the
-    // previous VIN's preloads stop competing with the new VIN's visible images.
-    function resetPreloadQueue() { _preloadQueue.length = 0; }
-
-    // Run background preload work only after the browser is idle, i.e. after the
-    // currently-visible grid images have had first claim on the CDN connections.
-    function deferPreload(fn) {
-        if (typeof requestIdleCallback === 'function') requestIdleCallback(fn, { timeout: 1500 });
-        else setTimeout(fn, 700);
+        const p = new Image();
+        p.referrerPolicy = 'no-referrer';
+        p.decoding = 'async';
+        p.src = resolvedUrl;
     }
 
     function svPreloadAhead(currentIdx, count = 8) {
@@ -2634,6 +2973,7 @@
     // =========================================================================
     async function init() {
         loadReviews();
+        loadEnterpriseMeta();  // fetch enterprise metadata (by team_id) in the background
 
         // Auth gate: if we have a valid session, skip straight to login page
         const existingUser = getCurrentUser();
@@ -3000,6 +3340,7 @@
             rooftop:   'All Rooftops (' + teamsList.length + ')',
             vinCount:  mergedMap.size,
             imageCount: totalImgs,
+            entId:     selectedEnterpriseId || '',
         };
         openTeam1stImage(virtualTeam);
     }
@@ -3013,6 +3354,7 @@
 
         document.getElementById('review-team-name').innerText = team.name;
         document.getElementById('review-team-id').innerText   = '';  // hide teamId in 1img mode
+        renderEnterpriseMeta(team.teamId);
 
         const teamVins = vinsByTeam.get(team.teamId);
         currentTeamVINs = teamVins ? [...teamVins.entries()].map(([key, entry]) => { const vin = key.includes('|~|') ? key.split('|~|')[0] : key; return { vin, urls: Array.isArray(entry) ? entry : (entry.urls||[]), rooftop: Array.isArray(entry) ? '' : (entry.rooftop||''), condition: Array.isArray(entry) ? '' : (entry.condition||'') }; }) : [];
@@ -3084,9 +3426,6 @@
 
     function selectVIN(idx) {
         if (idx < 0 || idx >= currentTeamVINs.length) return;
-        // Drop the previous VIN's queued preloads so they don't compete with the
-        // new VIN's visible thumbnails for the CDN's limited connections.
-        resetPreloadQueue();
         currentVINIndex = idx;
         const v = currentTeamVINs[idx];
         document.getElementById('current-vin-text').innerText = v.vin;
@@ -3109,18 +3448,14 @@
         setCheckedIssues(r?.issues || []);
         renderImages(v);
         renderVINSidebar();
-        // Preload single-view size (800/82) AFTER the grid thumbnails load — deferred
-        // so the larger single-view images don't slow down the visible grid.
+        // Preload single-view size (800/82) immediately on VIN select
         if (v.urls) {
-            deferPreload(() => {
-                v.urls.slice(0, 8).forEach(u => {
-                    const chain = getFallbacks(u, 800, 82);
-                    if (!_svPreloadCache.has(chain[0])) {
-                        _svPreloadCache.add(chain[0]);
-                        _preloadQueue.push(chain[0]);
-                    }
-                });
-                _preloadPump();
+            v.urls.slice(0, 8).forEach(u => {
+                const chain = getFallbacks(u, 800, 82);
+                if (!_svPreloadCache.has(chain[0])) {
+                    _svPreloadCache.add(chain[0]);
+                    const p = new Image(); p.referrerPolicy = 'no-referrer'; p.decoding = 'async'; p.src = chain[0];
+                }
             });
         }
     }
@@ -3151,26 +3486,6 @@
         if (!originalUrl) return '';
         const stripped = originalUrl.replace(/^https?:\/\//, '');
         return 'https://wsrv.nl/?url=' + encodeURIComponent(stripped) + '&w=' + widthPx + '&q=' + quality + '&output=webp';
-    }
-
-    // DealerEProcess (Cloudinary-backed) CDN — used by Moses Nissan/BMW inventory.
-    // These URLs use `w_auto`, which only returns a valid image when the browser
-    // sends client-hint headers. From github.io with referrerPolicy=no-referrer
-    // those hints are missing, so w_auto fails intermittently. Rewriting w_auto to
-    // a fixed pixel width makes every request deterministic (and smaller/faster).
-    function isDealerEProcessUrl(url) {
-        if (!url) return false;
-        try { return new URL(url).hostname.toLowerCase().includes('dealereprocess.com'); }
-        catch(e) { return false; }
-    }
-
-    function deprocessThumbUrl(originalUrl, widthPx = 500) {
-        if (!originalUrl) return '';
-        // Replace w_auto (or an existing w_NNN) with a fixed pixel width.
-        if (/(^|[,/])w_(auto|\d+)/.test(originalUrl)) {
-            return originalUrl.replace(/(^|[,/])w_(auto|\d+)/, '$1w_' + widthPx);
-        }
-        return originalUrl; // no width transform present — leave untouched
     }
 
     function extractSourceUrl(url) {
@@ -3230,10 +3545,7 @@
         let result;
         const srcUrl = extractSourceUrl(originalUrl);
 
-        if (isDealerEProcessUrl(srcUrl)) {
-            // Fixed-width direct load — reliable and fast (no client-hints needed)
-            result = deprocessThumbUrl(srcUrl, widthPx);
-        } else if (isDealerCdnUrl(srcUrl)) {
+        if (isDealerCdnUrl(srcUrl)) {
             // For hotlink-protected dealer CDNs, use wsrv.nl proxy as primary
             // (bypasses hotlink protection by fetching server-side)
             result = needsProxy(srcUrl) ? wsrvThumbUrl(srcUrl, widthPx, quality) : srcUrl;
@@ -3256,13 +3568,7 @@
         const chain = [];
         const add = (u) => { if (u && !seen.has(u)) { seen.add(u); chain.push(u); } };
 
-        if (isDealerEProcessUrl(srcUrl)) {
-            // 1) fixed-width direct (fast, reliable)  2) original w_auto direct
-            // 3) proxy the fixed-width URL through wsrv.nl only as a last resort
-            add(deprocessThumbUrl(srcUrl, widthPx));
-            add(srcUrl);
-            add(wsrvThumbUrl(deprocessThumbUrl(srcUrl, widthPx), widthPx, quality));
-        } else if (isDealerCdnUrl(srcUrl)) {
+        if (isDealerCdnUrl(srcUrl)) {
             if (needsProxy(srcUrl)) {
                 // Hotlink-protected CDN — proxy first, direct as fallback
                 add(wsrvThumbUrl(srcUrl, widthPx, quality));
@@ -3299,12 +3605,6 @@
 
         noVin.classList.add('hidden');
         footer.classList.remove('hidden');
-
-        // Always start a new VIN scrolled to the top — otherwise the pane keeps the
-        // previous VIN's scroll position and the new (lazy) images below the fold
-        // don't load, which looks like "images didn't refresh".
-        const imgArea = document.getElementById('image-area');
-        if (imgArea) imgArea.scrollTop = 0;
 
         if (!v.urls.length) {
             grid.classList.add('hidden');
@@ -3360,27 +3660,24 @@
         });
         grid.appendChild(frag);
 
-        // Defer next-VIN prefetch so it doesn't steal connections from the images
-        // the user is looking at right now.
-        deferPreload(prefetchNextVINs);
+        prefetchNextVINs();
         vrOnVinChange(v);
     }
 
     function prefetchNextVINs() {
-        for (let offset = 1; offset <= 2; offset++) {
+        for (let offset = 1; offset <= 4; offset++) {
             const nxt = currentTeamVINs[currentVINIndex + offset];
             if (!nxt) break;
-            const limit = offset === 1 ? Math.min(nxt.urls.length, 12) : Math.min(nxt.urls.length, 6);
+            const limit = offset === 1 ? nxt.urls.length : Math.min(nxt.urls.length, 6);
             nxt.urls.slice(0, limit).forEach(u => {
                 [getFallbacks(u, 500, 75), getFallbacks(u, 800, 82)].forEach(chain => {
                     if (!_svPreloadCache.has(chain[0])) {
                         _svPreloadCache.add(chain[0]);
-                        _preloadQueue.push(chain[0]);
+                        const p = new Image(); p.referrerPolicy = 'no-referrer'; p.decoding = 'async'; p.src = chain[0];
                     }
                 });
             });
         }
-        _preloadPump();
     }
 
     // ── VIN Review zoom + single view ─────────────────────────────────────────
@@ -3722,6 +4019,7 @@
         // Reuse the same review page — update header labels
         document.getElementById('review-team-name').innerText = team.rooftop || team.name || '1st Image Review';
         document.getElementById('review-team-id').innerText   = '';  // hide teamId in 1img mode
+        renderEnterpriseMeta(team.teamId);
 
         // Mode badge removed — title already says "1st Image Review"
         const modeBadge = document.getElementById('review-mode-badge');
@@ -4326,6 +4624,7 @@
         }
         const okBtn = document.getElementById('complete-ok-btn');
         okBtn.__1imgMode = true;
+        resetCompleteOkBtn();
         document.getElementById('complete-modal').classList.add('active');
     }
 
@@ -4371,6 +4670,62 @@
         document.getElementById('summary-modal').classList.add('active');
     }
 
+    // Push rows to BigQuery — POST JSON body, parallel chunks of 500, retry per chunk
+    async function pushToBigQuery(rows) {
+        if (!rows || !rows.length) return { ok: true, inserted: 0 };
+        const CHUNK_SIZE  = 500;
+        const MAX_RETRIES = 4;
+        const chunks = [];
+        for (let i = 0; i < rows.length; i += CHUNK_SIZE) chunks.push(rows.slice(i, i + CHUNK_SIZE));
+
+        let totalInserted = 0;
+        const errors = [];
+
+        // Send chunks SEQUENTIALLY (concurrent requests can overload the Apps
+        // Script web app; the server also serialises its BigQuery work).
+        // The server de-dups every row by insertId, so re-sending a chunk after
+        // a partial/failed response NEVER creates duplicate rows.
+        for (let ci = 0; ci < chunks.length; ci++) {
+            const chunk = chunks[ci];
+            let lastErr = '';
+            let chunkDone = false;
+            for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
+                try {
+                    const res = await fetch(BQ_WEBAPP_URL, {
+                        method:   'POST',
+                        redirect: 'follow',
+                        body:     JSON.stringify(chunk)
+                    });
+                    const txt    = await res.text();
+                    const result = JSON.parse(txt);
+                    // Only accept the chunk when EVERY row it contains was saved.
+                    if (result.ok && result.inserted === chunk.length) {
+                        totalInserted += result.inserted;
+                        chunkDone = true;
+                        break;
+                    }
+                    // Partial or failed -> retry the whole chunk (dedup keeps it safe).
+                    lastErr = 'saved ' + (result.inserted || 0) + '/' + chunk.length +
+                              (result.errors ? ' \u2014 ' + JSON.stringify(result.errors).slice(0, 300) : '') +
+                              (result.error  ? ' \u2014 ' + result.error : '');
+                } catch (err) {
+                    lastErr = err.message;
+                }
+                if (attempt < MAX_RETRIES) await new Promise(r => setTimeout(r, 1000 * attempt));
+            }
+            if (!chunkDone) errors.push('Chunk ' + (ci + 1) + ': ' + lastErr);
+        }
+
+        // Success ONLY if every row was confirmed saved.
+        if (errors.length > 0 || totalInserted !== rows.length) {
+            console.error('[BQ] incomplete save', { totalInserted, expected: rows.length, errors });
+            alert('BigQuery save INCOMPLETE: ' + totalInserted + '/' + rows.length + ' rows saved.\n' +
+                  errors.join('\n') + '\nCSV downloaded \u2014 data not lost. Please retry or report this.');
+            return { ok: false, inserted: totalInserted, error: errors.join('; ') };
+        }
+        return { ok: true, inserted: totalInserted };
+    }
+
     function download1ImgCSV() {
         try {
             if (!currentImg1Team) { console.error('No currentImg1Team'); return; }
@@ -4407,7 +4762,7 @@
             const a    = document.createElement('a');
             a.href     = URL.createObjectURL(blob);
             const safe = (currentImg1Team.rooftop || currentImg1Team.teamId || 'review').replace(/[^a-z0-9_-]/gi, '_');
-            a.download = safe + '_' + new Date().toISOString().slice(0,10) + '.csv';
+            a.download = 'review_' + safe + '_' + new Date().toISOString().slice(0,10) + '.csv';
             document.body.appendChild(a);
             a.click();
             document.body.removeChild(a);
@@ -4437,10 +4792,82 @@
         document.getElementById('complete-modal').classList.add('active');
     }
     function closeCompleteModal() { document.getElementById('complete-modal').classList.remove('active'); }
-    document.getElementById('complete-ok-btn').addEventListener('click', () => {
+    // Capture the OK button's original look ONCE so we can restore it before
+    // every completion modal (otherwise it keeps a previous review's
+    // "Saved N rows" text + green background + disabled state).
+    const COMPLETE_OK_ORIG_HTML = document.getElementById('complete-ok-btn').innerHTML;
+    function resetCompleteOkBtn() {
+        const b = document.getElementById('complete-ok-btn');
+        if (!b) return;
+        b.innerHTML = COMPLETE_OK_ORIG_HTML;
+        b.style.background = '';
+        b.disabled = false;
+    }
+    document.getElementById('complete-ok-btn').addEventListener('click', async () => {
         const btn = document.getElementById('complete-ok-btn');
         if (btn.__1imgMode) {
             btn.__1imgMode = false;
+
+            // Build BQ rows from ALL VINs (reviewed + pending)
+            const teamId  = currentImg1Team?.teamId || '';
+            const now     = new Date();
+            const bqRows  = [];
+            (currentImg1VINs || []).forEach(v => {
+                const rooftop = v.rooftop || currentImg1Team?.rooftop || '';
+                const st      = getImg1Review(teamId, v.vin, rooftop);
+                const stLabel = st ? (stateLabel(st) || st) : 'Pending';
+                const issType = !st ? 'Pending' : st === 'ok' ? 'OK' : stLabel;
+                bqRows.push({
+                    review_date:     now.toISOString().slice(0, 10),
+                    reviewed_at:     now.toISOString(),
+                    reviewer:        getCurrentUser() || document.getElementById('user-badge-text')?.textContent?.trim() || '',
+                    enterprise:      selectedEnterprise || currentImg1Team?.name || '',
+                    enterprise_id:   currentImg1Team?.entId || selectedEnterpriseId || '',
+                    rooftop:         rooftop,
+                    condition:       v.condition || '',
+                    team_id:         teamId,
+                    vin:             v.vin,
+                    total_images:    v.urls?.length || 0,
+                    issue_type:      issType,
+                    first_image_url: v.urls?.[0] || '',
+                    comment:         (() => {
+                        const rk = img1ReviewKey(teamId, v.vin, rooftop);
+                        const vk = rooftop ? v.vin + '|~|' + rooftop : v.vin;
+                        return (img1Comments[rk] && (img1Comments[rk][vk] || img1Comments[rk][v.vin])) || '';
+                    })(),
+                    review_mode:     '1st_image'
+                });
+            });
+
+            // Show uploading state in button
+            const okBtnEl = document.getElementById('complete-ok-btn');
+            const origText = okBtnEl.innerHTML;
+            okBtnEl.disabled = true;
+
+            // Live timer while saving
+            let elapsed = 0;
+            const timerInterval = setInterval(() => {
+                elapsed++;
+                okBtnEl.innerHTML = '<span>⏳ Saving to BigQuery... ' + elapsed + 's</span>';
+            }, 1000);
+            okBtnEl.innerHTML = '<span>⏳ Saving to BigQuery... 0s</span>';
+
+            // AWAIT BQ push before closing
+            if (bqRows.length > 0) {
+                const result = await pushToBigQuery(bqRows);
+                clearInterval(timerInterval);
+                if (result.ok) {
+                    okBtnEl.innerHTML = '<span>✓ Saved ' + result.inserted + ' rows in ' + elapsed + 's — downloading CSV...</span>';
+                    okBtnEl.style.background = '#10b981';
+                    await new Promise(r => setTimeout(r, 800));
+                } else {
+                    okBtnEl.innerHTML = '<span>⚠ Saved ' + (result.inserted || 0) + '/' + bqRows.length + ' — CSV downloaded</span>';
+                    okBtnEl.style.background = '#f59e0b';
+                    await new Promise(r => setTimeout(r, 800));
+                }
+            }
+
+            // CSV always downloads regardless of BQ result
             download1ImgCSV();
             closeCompleteModal();
             restore1ImgMode();
@@ -4715,6 +5142,14 @@
             document.getElementById('lightbox').classList.remove('active');
             document.getElementById('summary-modal').classList.remove('active');
             document.getElementById('complete-modal').classList.remove('active');
+        }
+        // Enter confirms the complete modal OK button
+        if (e.key === 'Enter') {
+            const modal = document.getElementById('complete-modal');
+            if (modal && modal.classList.contains('active')) {
+                const okBtn = document.getElementById('complete-ok-btn');
+                if (okBtn && !okBtn.disabled) okBtn.click();
+            }
         }
     });
 
