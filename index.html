@@ -3189,6 +3189,31 @@
     // =========================================================================
     // DASHBOARD
     // =========================================================================
+    // Count distinct 1st-image-reviewed VINs for a team, reading LOCAL storage only.
+    // 1st-image reviews are stored under a rooftop-aware key (see img1ReviewKey /
+    // setImg1Review): "teamId::rooftop" when reviewed from a rooftop card, and
+    // "csv-all-rooftops::rooftop" when reviewed via the "Review All Rooftops" button.
+    // The dashboard previously counted only the bare "teamId" key, so any rooftop /
+    // Drive dataset always showed 0. This unions both possible keys and dedupes by VIN.
+    function img1CountForTeam(t) {
+        if (!t) return 0;
+        const seen = new Set();
+        const addFrom = (key) => {
+            const obj = img1Reviews[key];
+            if (!obj) return;
+            for (const k of Object.keys(obj)) {
+                seen.add(k.includes('|~|') ? k.split('|~|')[0] : k);
+            }
+        };
+        if (t.rooftop) {
+            addFrom(t.teamId + '::' + t.rooftop);
+            addFrom('csv-all-rooftops::' + t.rooftop);
+        } else {
+            addFrom(t.teamId);
+        }
+        return seen.size;
+    }
+
     function renderDashboard() {
         const grid  = document.getElementById('dealer-grid');
         const empty = document.getElementById('dealer-empty');
@@ -3201,7 +3226,7 @@
             totalVINs    += t.vinCount;
             totalImages  += t.imageCount;
             reviewedVINs += Object.keys(reviews[t.teamId]    || {}).length;
-            reviewed1Img += Object.keys(img1Reviews[t.teamId] || {}).length;
+            reviewed1Img += img1CountForTeam(t);
         });
 
         // Teams loaded x / Total (total from Metabase via bar already shown live;
@@ -3253,7 +3278,7 @@
             allCard.className = 'bg-gradient-to-br from-blue-600 to-blue-700 p-5 rounded-xl shadow-sm card-hover transition cursor-pointer flex flex-col justify-between min-h-[128px]';
             const totalVins    = teamsList.reduce((s,t) => s + t.vinCount, 0);
             const totalImgs    = teamsList.reduce((s,t) => s + t.imageCount, 0);
-            const totalImg1    = teamsList.reduce((s,t) => s + Object.keys(img1Reviews[t.teamId]||{}).length, 0);
+            const totalImg1    = teamsList.reduce((s,t) => s + img1CountForTeam(t), 0);
             const allImg1Pct   = totalVins > 0 ? Math.round(totalImg1/totalVins*100) : 0;
             allCard.innerHTML = `
                 <div class="flex items-center justify-between">
@@ -3281,8 +3306,7 @@
                 const card = document.createElement('div');
                 card.className = "bg-white p-5 rounded-xl border border-slate-200 shadow-sm card-hover transition cursor-pointer flex flex-col justify-between min-h-[128px]";
                 // 1st image review progress
-                const img1TeamReviews = img1Reviews[t.teamId] || {};
-                const img1ReviewedCount = Object.keys(img1TeamReviews).length;
+                const img1ReviewedCount = img1CountForTeam(t);
                 const img1Pct = t.vinCount > 0 ? Math.round((img1ReviewedCount / t.vinCount) * 100) : 0;
 
                 card.innerHTML = `
