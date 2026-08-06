@@ -860,18 +860,33 @@ async function loadAll(){
   try{
     const W=buildWhere();
     const WND=buildWhere({noDate:true});  // trend ignores global date range (its own range tabs drive it)
-    const[ovR,issR,rvR,rtR,trendR,worstTeamR,issAggR,issByRvR,csR,issByCsR]=await runQueries([
-      `SELECT COUNT(*) as total, COUNTIF(issue_type='OK' OR issue_type='Pending') as ok_cnt, COUNTIF(issue_type NOT IN ('OK','Pending')) as issue_cnt, COUNT(DISTINCT reviewer) as rev_cnt, COUNT(DISTINCT rooftop) as rt_cnt, COUNT(DISTINCT COALESCE(enterprise_name, enterprise)) as ent_cnt, COUNT(DISTINCT vin) as vin_cnt FROM ${SRC} ${W}`,
-      `SELECT issue_type, COUNT(*) as cnt FROM ${SRC} ${W} GROUP BY issue_type ORDER BY cnt DESC`,
-      `SELECT reviewer, COUNT(DISTINCT rooftop) as rooftops, COUNT(*) as total, COUNTIF(issue_type='OK' OR issue_type='Pending') as ok_cnt, COUNTIF(issue_type NOT IN ('OK','Pending')) as issue_cnt, MAX(review_date) as last_date FROM ${SRC} ${W} GROUP BY reviewer ORDER BY total DESC`,
-      `SELECT rooftop, ANY_VALUE(enterprise) as enterprise, ANY_VALUE(enterprise_name) as ent_name, ANY_VALUE(apld_team_name) as team_name, ANY_VALUE(cs_poc_email) as cs_email, COUNT(DISTINCT vin) as vins, COUNT(*) as total, COUNTIF(issue_type='OK' OR issue_type='Pending') as ok_cnt, COUNTIF(issue_type NOT IN ('OK','Pending')) as issue_cnt, MAX(review_date) as last_date FROM ${SRC} ${W} GROUP BY rooftop ORDER BY total DESC`,
-      `SELECT review_date, COUNT(*) as cnt, COUNTIF(issue_type NOT IN ('OK','Pending')) as iss, COUNT(DISTINCT vin) as vins, COUNT(DISTINCT COALESCE(enterprise_name, enterprise)) as ents FROM ${SRC} ${WND} GROUP BY review_date ORDER BY review_date`,
-      `SELECT team_id, MAX(enterprise_name) as enterprise_name, MAX(team_name) as team_name, MAX(ae) as ae, MAX(ob) as ob, MAX(cs) as cs, COUNTIF(is_issue) as issue_cnt FROM (SELECT team_id, enterprise_name, apld_team_name as team_name, ae_poc_email as ae, ob_poc_email as ob, cs_poc_email as cs, (issue_type NOT IN ('OK','Pending')) as is_issue FROM ${SRC} ${W}) WHERE enterprise_name IS NOT NULL GROUP BY team_id ORDER BY issue_cnt DESC LIMIT 1`,
-      `SELECT rooftop, issue_type, COUNT(*) as cnt FROM ${SRC} ${W} ${W?'AND':'WHERE'} issue_type NOT IN ('OK','Pending') GROUP BY rooftop, issue_type`,
-      `SELECT reviewer, issue_type, COUNT(*) as cnt FROM ${SRC} ${W} ${W?'AND':'WHERE'} issue_type NOT IN ('OK','Pending') GROUP BY reviewer, issue_type`,
-      `SELECT cs_poc_email, COUNT(DISTINCT rooftop) as rooftops, COUNT(DISTINCT vin) as vins, COUNT(*) as total, COUNTIF(issue_type='OK' OR issue_type='Pending') as ok_cnt, COUNTIF(issue_type NOT IN ('OK','Pending')) as issue_cnt, MAX(review_date) as last_date FROM ${SRC} ${W} GROUP BY cs_poc_email ORDER BY total DESC`,
-      `SELECT cs_poc_email, issue_type, COUNT(*) as cnt FROM ${SRC} ${W} ${W?'AND':'WHERE'} issue_type NOT IN ('OK','Pending') GROUP BY cs_poc_email, issue_type`
-    ]);
+    // ── One combined BigQuery job (was ~10 serialized calls) ──
+    // A shared filtered CTE feeds every aggregate via UNION ALL with a `_k` tag +
+    // a generic wide schema (s1..s6 strings, n1..n7 ints); parsed back below.
+    const COMB = `
+WITH s AS (SELECT * FROM ${SRC} ${W})
+SELECT 'ov' _k, CAST(NULL AS STRING) s1, CAST(NULL AS STRING) s2, CAST(NULL AS STRING) s3, CAST(NULL AS STRING) s4, CAST(NULL AS STRING) s5, CAST(NULL AS STRING) s6, COUNT(*) n1, COUNTIF(issue_type='OK' OR issue_type='Pending') n2, COUNTIF(issue_type NOT IN ('OK','Pending')) n3, COUNT(DISTINCT reviewer) n4, COUNT(DISTINCT rooftop) n5, COUNT(DISTINCT COALESCE(enterprise_name, enterprise)) n6, COUNT(DISTINCT vin) n7 FROM s
+UNION ALL SELECT 'iss', issue_type, NULL,NULL,NULL,NULL,NULL, COUNT(*), NULL,NULL,NULL,NULL,NULL,NULL FROM s GROUP BY issue_type
+UNION ALL SELECT 'rv', reviewer, CAST(MAX(review_date) AS STRING), NULL,NULL,NULL,NULL, COUNT(*), COUNTIF(issue_type='OK' OR issue_type='Pending'), COUNTIF(issue_type NOT IN ('OK','Pending')), COUNT(DISTINCT rooftop), NULL,NULL,NULL FROM s GROUP BY reviewer
+UNION ALL SELECT 'rvit', reviewer, issue_type, NULL,NULL,NULL,NULL, COUNT(*), NULL,NULL,NULL,NULL,NULL,NULL FROM s WHERE issue_type NOT IN ('OK','Pending') GROUP BY reviewer, issue_type
+UNION ALL SELECT 'rt', rooftop, ANY_VALUE(enterprise), ANY_VALUE(enterprise_name), ANY_VALUE(apld_team_name), ANY_VALUE(cs_poc_email), CAST(MAX(review_date) AS STRING), COUNT(DISTINCT vin), COUNT(*), COUNTIF(issue_type='OK' OR issue_type='Pending'), COUNTIF(issue_type NOT IN ('OK','Pending')), NULL,NULL,NULL FROM s GROUP BY rooftop
+UNION ALL SELECT 'rtit', rooftop, issue_type, NULL,NULL,NULL,NULL, COUNT(*), NULL,NULL,NULL,NULL,NULL,NULL FROM s WHERE issue_type NOT IN ('OK','Pending') GROUP BY rooftop, issue_type
+UNION ALL SELECT 'cs', cs_poc_email, NULL,NULL,NULL,NULL, CAST(MAX(review_date) AS STRING), COUNT(DISTINCT rooftop), COUNT(DISTINCT vin), COUNT(*), COUNTIF(issue_type='OK' OR issue_type='Pending'), COUNTIF(issue_type NOT IN ('OK','Pending')), NULL,NULL FROM s GROUP BY cs_poc_email
+UNION ALL SELECT 'csit', cs_poc_email, issue_type, NULL,NULL,NULL,NULL, COUNT(*), NULL,NULL,NULL,NULL,NULL,NULL FROM s WHERE issue_type NOT IN ('OK','Pending') GROUP BY cs_poc_email, issue_type
+UNION ALL SELECT * FROM (SELECT 'worst', CAST(team_id AS STRING), MAX(enterprise_name), MAX(apld_team_name), MAX(ae_poc_email), MAX(ob_poc_email), MAX(cs_poc_email), COUNTIF(issue_type NOT IN ('OK','Pending')), NULL,NULL,NULL,NULL,NULL,NULL FROM s WHERE enterprise_name IS NOT NULL GROUP BY team_id ORDER BY 8 DESC LIMIT 1)`;
+    const TREND = `SELECT review_date, COUNT(*) as cnt, COUNTIF(issue_type NOT IN ('OK','Pending')) as iss, COUNT(DISTINCT vin) as vins, COUNT(DISTINCT COALESCE(enterprise_name, enterprise)) as ents FROM ${SRC} ${WND} GROUP BY review_date ORDER BY review_date`;
+    const [combRows, trendR] = await runQueries([COMB, TREND]);
+    const _pick=k=>combRows.filter(r=>r._k===k);
+    const _ovRow=_pick('ov')[0]||{};
+    const ovR=[{total:_ovRow.n1,ok_cnt:_ovRow.n2,issue_cnt:_ovRow.n3,rev_cnt:_ovRow.n4,rt_cnt:_ovRow.n5,ent_cnt:_ovRow.n6,vin_cnt:_ovRow.n7}];
+    const issR=_pick('iss').map(r=>({issue_type:r.s1,cnt:r.n1})).sort((a,b)=>N(b.cnt)-N(a.cnt));
+    const rvR=_pick('rv').map(r=>({reviewer:r.s1,last_date:r.s2,total:r.n1,ok_cnt:r.n2,issue_cnt:r.n3,rooftops:r.n4})).sort((a,b)=>N(b.total)-N(a.total));
+    const issByRvR=_pick('rvit').map(r=>({reviewer:r.s1,issue_type:r.s2,cnt:r.n1}));
+    const rtR=_pick('rt').map(r=>({rooftop:r.s1,enterprise:r.s2,ent_name:r.s3,team_name:r.s4,cs_email:r.s5,last_date:r.s6,vins:r.n1,total:r.n2,ok_cnt:r.n3,issue_cnt:r.n4})).sort((a,b)=>N(b.total)-N(a.total));
+    const issAggR=_pick('rtit').map(r=>({rooftop:r.s1,issue_type:r.s2,cnt:r.n1}));
+    const csR=_pick('cs').map(r=>({cs_poc_email:r.s1,last_date:r.s6,rooftops:r.n1,vins:r.n2,total:r.n3,ok_cnt:r.n4,issue_cnt:r.n5})).sort((a,b)=>N(b.total)-N(a.total));
+    const issByCsR=_pick('csit').map(r=>({cs_poc_email:r.s1,issue_type:r.s2,cnt:r.n1}));
+    const worstTeamR=_pick('worst').map(r=>({team_id:r.s1,enterprise_name:r.s2,team_name:r.s3,ae:r.s4,ob:r.s5,cs:r.s6,issue_cnt:r.n1}));
     const ov=ovR[0]||{};
     const total=N(ov.total),ok=N(ov.ok_cnt),issues=N(ov.issue_cnt);
     const accuracy=100-pct(issues,total);
