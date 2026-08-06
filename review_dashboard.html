@@ -321,7 +321,7 @@ const ENT = '`inspired-frame-453018-r2.spyne_reviews.spyne_rooftop_enterprises`'
 // blanks. Used as the FROM source for all analytical queries.
 const SRC = `(SELECT r.*,
     COALESCE(ent.enterprise_name, tm.enterprise_name, NULLIF(r.rooftop,''), NULLIF(r.enterprise,'')) AS enterprise_name,
-    COALESCE(tm.apld_team_name, NULLIF(r.rooftop,'')) AS apld_team_name,
+    COALESCE(IF(tm.apld_team_name != tm.enterprise_name, tm.apld_team_name, NULLIF(r.rooftop,'')), NULLIF(r.rooftop,''), tm.apld_team_name) AS apld_team_name,
     tm.customer_segment, tm.apld_contracted_arr, tm.ae_poc_email, tm.ob_poc_email, tm.cs_poc_email
   FROM ${TBL} r
   LEFT JOIN (
