@@ -2239,6 +2239,7 @@
             const span = document.querySelector('[data-rowcount="' + f.id + '"]');
             if (span) span.textContent = driveRowCountLabel(f.id);
             updateDriveTotals();
+            updateDriveLoadBtn();
         });
     }
 
@@ -2276,13 +2277,22 @@
     function updateDriveLoadBtn() {
         const btn = document.getElementById('load-drive-btn');
         if (!btn) return;
-        const n   = driveSelectedCsvIds.size;
+        const selected = driveVisibleCsvs().filter(f => driveSelectedCsvIds.has(f.id));
+        const n   = selected.length;
         const dis = n === 0;
         btn.disabled = dis;
         btn.classList.toggle('opacity-50', dis);
         btn.classList.toggle('cursor-not-allowed', dis);
+        if (dis) {
+            document.getElementById('drive-btn-text').textContent = 'Select CSV file(s) to continue →';
+            return;
+        }
+        // Sum the row counts of the selected CSVs (some may still be counting → show "+").
+        let rows = 0, known = true;
+        selected.forEach(f => { const v = driveRowCounts.get(f.id); if (typeof v === 'number') rows += v; else known = false; });
+        const rowsTxt = rows.toLocaleString() + (known ? '' : '+');
         document.getElementById('drive-btn-text').textContent =
-            dis ? 'Select CSV file(s) to continue →' : ('Load ' + n + ' selected CSV' + (n > 1 ? 's' : '') + ' →');
+            'Load ' + n + ' selected CSV' + (n > 1 ? 's' : '') + ' · ' + rowsTxt + ' rows →';
     }
 
     // Load a folder as the root of the navigator (fresh listing).
