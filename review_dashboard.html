@@ -317,15 +317,24 @@ const BQ  = 'https://script.google.com/macros/s/AKfycbxS1D1FkX2q_wQhh4U6LbzQKAgS
 const TBL = '`inspired-frame-453018-r2.spyne_reviews.image_reviews`';
 const ENT = '`inspired-frame-453018-r2.spyne_reviews.spyne_rooftop_enterprises`';
 // Reviews enriched from spyne_rooftop_enterprises: ENTERPRISE NAME via enterprise_id
-// (clean 1:1 key), TEAM/ROOFTOP NAME + segment/ARR/POC via team_id. Fallbacks avoid
+// (clean 1:1 key), TEAM/ROOFTOP NAME + segment/ARR via team_id.
+// POCs (CS/AE/OB) are account-level: mapped by enterprise_id FIRST (higher coverage),
+// falling back to the rooftop team_id when the enterprise has none. Fallbacks avoid
 // blanks. Used as the FROM source for all analytical queries.
 const SRC = `(SELECT r.*,
     COALESCE(ent.enterprise_name, tm.enterprise_name, NULLIF(r.rooftop,''), NULLIF(r.enterprise,'')) AS enterprise_name,
     COALESCE(IF(tm.apld_team_name != tm.enterprise_name, tm.apld_team_name, NULLIF(r.rooftop,'')), NULLIF(r.rooftop,''), tm.apld_team_name) AS apld_team_name,
-    tm.customer_segment, tm.apld_contracted_arr, tm.ae_poc_email, tm.ob_poc_email, tm.cs_poc_email
+    tm.customer_segment, tm.apld_contracted_arr,
+    COALESCE(ent.ae_poc_email, tm.ae_poc_email) AS ae_poc_email,
+    COALESCE(ent.ob_poc_email, tm.ob_poc_email) AS ob_poc_email,
+    COALESCE(ent.cs_poc_email, tm.cs_poc_email) AS cs_poc_email
   FROM ${TBL} r
   LEFT JOIN (
-    SELECT enterprise_id, ANY_VALUE(enterprise_name) AS enterprise_name
+    SELECT enterprise_id,
+           ANY_VALUE(enterprise_name)    AS enterprise_name,
+           MAX(NULLIF(ae_poc_email,''))  AS ae_poc_email,
+           MAX(NULLIF(ob_poc_email,''))  AS ob_poc_email,
+           MAX(NULLIF(cs_poc_email,''))  AS cs_poc_email
     FROM ${ENT} WHERE enterprise_id IS NOT NULL GROUP BY enterprise_id
   ) ent ON CAST(r.enterprise_id AS STRING) = CAST(ent.enterprise_id AS STRING)
   LEFT JOIN (
@@ -334,9 +343,9 @@ const SRC = `(SELECT r.*,
            ANY_VALUE(apld_team_name)     AS apld_team_name,
            ANY_VALUE(customer_segment)   AS customer_segment,
            MAX(SAFE_CAST(apld_contracted_arr AS FLOAT64)) AS apld_contracted_arr,
-           ANY_VALUE(ae_poc_email)        AS ae_poc_email,
-           ANY_VALUE(ob_poc_email)        AS ob_poc_email,
-           ANY_VALUE(cs_poc_email)        AS cs_poc_email
+           MAX(NULLIF(ae_poc_email,''))   AS ae_poc_email,
+           MAX(NULLIF(ob_poc_email,''))   AS ob_poc_email,
+           MAX(NULLIF(cs_poc_email,''))   AS cs_poc_email
     FROM ${ENT} WHERE team_id IS NOT NULL GROUP BY team_id
   ) tm ON CAST(r.team_id AS STRING) = CAST(tm.team_id AS STRING))`;
 
