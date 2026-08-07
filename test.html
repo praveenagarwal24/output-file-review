@@ -427,6 +427,7 @@
                 <div class="flex rounded-lg border border-slate-200 overflow-hidden text-[12px] font-semibold">
                     <button id="toggle-sheet-btn" onclick="setDataSource('sheet')" class="px-3 py-1.5 bg-blue-600 text-white transition">Google Sheet</button>
                     <button id="toggle-csv-btn" onclick="setDataSource('csv')" class="px-3 py-1.5 bg-white text-slate-500 hover:bg-slate-50 transition">Upload CSV</button>
+                    <button id="toggle-drive-btn" onclick="setDataSource('drive')" class="px-3 py-1.5 bg-white text-slate-500 hover:bg-slate-50 transition">Google Drive</button>
                 </div>
             </div>
 
@@ -465,6 +466,31 @@
                     <div id="csv-btn-loader" class="loading-spinner hidden"></div>
                 </button>
                 <p id="csv-load-status" class="text-[11px] text-slate-400 text-center hidden"></p>
+            </div>
+
+            <!-- Google Drive Mode -->
+            <div id="drive-mode-panel" class="space-y-3 hidden">
+                <div>
+                    <input id="drive-link-input" type="text" placeholder="Paste a Drive folder link to jump there (optional)"
+                        class="w-full p-2.5 border border-slate-300 rounded-lg text-[13px] focus:ring-2 focus:ring-blue-500 outline-none"
+                        oninput="onDriveLinkInput()" onchange="driveGoToPastedLink()"
+                        onkeydown="if(event.key==='Enter'){event.preventDefault();event.stopPropagation();driveGoToPastedLink();}">
+                    <p class="text-[11px] text-slate-400 mt-1">Browse the shared Drive below, open a sub-folder to any depth, then tick the CSVs to load. Each CSV = one rooftop.</p>
+                </div>
+
+                <div id="drive-breadcrumb" class="text-[12px] text-slate-500 px-1 flex flex-wrap items-center gap-y-1"></div>
+                <div id="drive-browser" class="max-h-72 overflow-y-auto border border-slate-200 rounded-lg p-1 bg-white text-left"></div>
+
+                <div id="drive-info-bar" class="hidden bg-green-50 border border-green-200 rounded-lg px-3 py-2 text-[12px] text-green-800 flex items-center justify-between">
+                    <span id="drive-info-text"></span>
+                    <button onclick="clearDriveFolder()" class="text-green-600 hover:text-red-500 font-bold ml-2 transition">✕</button>
+                </div>
+
+                <button id="load-drive-btn" class="w-full spyne-blue text-white font-semibold py-3 rounded-lg hover:bg-blue-700 transition flex items-center justify-center space-x-2 disabled:opacity-70 opacity-50 cursor-not-allowed" disabled>
+                    <span id="drive-btn-text">Select CSV file(s) to continue →</span>
+                    <div id="drive-btn-loader" class="loading-spinner hidden"></div>
+                </button>
+                <p id="drive-load-status" class="text-[11px] text-slate-400 text-center hidden"></p>
             </div>
 
             <div class="mt-8 text-center text-[11px] text-slate-400 leading-relaxed">
@@ -1017,6 +1043,15 @@
     // ──────────────────────────────────────────────────────────────────────────
     // Google Sign-In — OAuth Client ID for nandmodi.github.io
     const GOOGLE_CLIENT_ID = '108193022090-pqojr6seugmdmth5jrah9rgisjgn2q28.apps.googleusercontent.com';
+
+    // ── Google Drive folder source ──────────────────────────────────────────
+    // API key used ONLY to list + download CSV files from a PUBLIC Drive folder
+    // ("Anyone with the link → Viewer"). Create it in the SAME Google Cloud
+    // project as the OAuth client above: enable "Google Drive API", then
+    // Credentials → Create credentials → API key. Restrict it to the Drive API
+    // and to your GitHub Pages domain (HTTP referrer) before shipping.
+    // Paste the key below, replacing the placeholder.
+    const DRIVE_API_KEY = 'AIzaSyBbMmcng4HhumcoPqwBrW4hQa9r_C8c0Hs';
     const AUTH_ALLOWED_EMAILS = new Set([
         'praveen@spyne.ai',
         'kishor@spyne.ai',
@@ -1675,7 +1710,7 @@
             // For CSV mode rows, URLs are pipe-OR-comma separated (splitUrls handles both) —
             // skip the slow regex extractUrlsFromRow and split directly
             let urls;
-            if (dataSourceMode === 'csv') {
+            if (dataSourceMode === 'csv' || dataSourceMode === 'drive') {
                 const raw = (r[C.imageUrls] || '').trim();
                 urls = splitUrls(raw);
             } else {
@@ -1727,13 +1762,16 @@
         dataSourceMode = mode;
         document.getElementById('sheet-mode-panel').classList.toggle('hidden', mode !== 'sheet');
         document.getElementById('csv-mode-panel').classList.toggle('hidden', mode !== 'csv');
-        document.getElementById('toggle-sheet-btn').className =
-            'px-3 py-1.5 transition ' + (mode === 'sheet' ? 'bg-blue-600 text-white' : 'bg-white text-slate-500 hover:bg-slate-50');
-        document.getElementById('toggle-csv-btn').className =
-            'px-3 py-1.5 transition ' + (mode === 'csv' ? 'bg-blue-600 text-white' : 'bg-white text-slate-500 hover:bg-slate-50');
+        document.getElementById('drive-mode-panel').classList.toggle('hidden', mode !== 'drive');
+        const activeCls   = 'px-3 py-1.5 transition bg-blue-600 text-white';
+        const inactiveCls = 'px-3 py-1.5 transition bg-white text-slate-500 hover:bg-slate-50';
+        document.getElementById('toggle-sheet-btn').className = mode === 'sheet' ? activeCls : inactiveCls;
+        document.getElementById('toggle-csv-btn').className   = mode === 'csv'   ? activeCls : inactiveCls;
+        document.getElementById('toggle-drive-btn').className = mode === 'drive' ? activeCls : inactiveCls;
         document.getElementById('data-source-hint').textContent =
-            mode === 'csv' ? 'VINs and images are read from your uploaded CSV file.'
-                           : 'Images load live from the All_Data sheet.';
+            mode === 'csv'   ? 'VINs and images are read from your uploaded CSV file.'
+          : mode === 'drive' ? 'Each CSV in the Drive folder loads as a separate rooftop.'
+                             : 'Images load live from the All_Data sheet.';
     }
 
     function handleCsvDrop(event) {
@@ -1766,6 +1804,8 @@
             showError('Please select a .csv file.');
             return;
         }
+        // New file uploaded → always start from a clean local cache (keeps you signed in).
+        clearReviewCache();
         // Show progress immediately
         setParseProgress(5, 'Reading file…');
         document.getElementById('csv-file-label').textContent = '📄 ' + file.name;
@@ -1979,6 +2019,449 @@
                 document.getElementById('csv-file-input').click();
             });
         }
+    });
+
+    // =========================================================================
+    // GOOGLE DRIVE FOLDER MODE
+    //   Public folder link → list its CSV files (Drive API) → each file = one
+    //   rooftop. All files merge into one dataset; rooftop name = filename
+    //   (unless a file has its own rooftop column). enterprise_id / team_id
+    //   columns are honoured exactly like the upload path.
+    // =========================================================================
+    let driveFolderData = null;
+    const DRIVE_HEADERS = ['name','teamId','enterpriseId','enterprise_name','dealerId',
+                           'partnerId','row_count','s3_url','created_at','VIN','Image URLs','rooftop','condition'];
+
+    // Default Drive root the browser opens to (no pasting needed). Whole tree must be
+    // shared "Anyone with the link → Viewer".
+    const DEFAULT_DRIVE_FOLDER_ID = '1p81FZBP7Pw4_m02nF0PUx9SreHRCRPth';
+    // Browser navigation state
+    let   driveBrowsePath   = [];                    // breadcrumb: [{ id, name }]
+    let   driveBrowseItems  = { folders: [], csvs: [] };
+    const driveSelectedCsvIds = new Set();           // ids of CSVs ticked in the current folder
+
+    // Extract the folder ID from any common Drive folder URL (or a raw ID).
+    function parseDriveFolderId(link) {
+        if (!link) return '';
+        let m = link.match(/\/folders\/([A-Za-z0-9_-]{10,})/);
+        if (m) return m[1];
+        m = link.match(/[?&]id=([A-Za-z0-9_-]{10,})/);
+        if (m) return m[1];
+        if (/^[A-Za-z0-9_-]{10,}$/.test(link.trim())) return link.trim();
+        return '';
+    }
+
+    // Navigation happens on Enter / blur (driveGoToPastedLink); keystrokes do nothing.
+    function onDriveLinkInput() { /* no-op: the Load button is gated by CSV selection now */ }
+
+    function clearDriveFolder() {
+        driveFolderData = null;
+        document.getElementById('drive-info-bar').classList.add('hidden');
+    }
+
+    // Jump the browser to a pasted folder link (kept as an optional shortcut).
+    function driveGoToPastedLink() {
+        const link = document.getElementById('drive-link-input').value.trim();
+        const id   = parseDriveFolderId(link);
+        if (!id) return;
+        driveBrowseRoot(id);
+    }
+
+    // ── Drive folder browser (any depth) ────────────────────────────────────
+    // List a folder's immediate children, split into sub-folders and CSV files.
+    async function listDriveChildren(folderId) {
+        const base = 'https://www.googleapis.com/drive/v3/files';
+        const q = "'" + folderId + "' in parents and trashed=false";
+        let pageToken = '', folders = [], csvs = [], guard = 0;
+        do {
+            const url = base
+                + '?q=' + encodeURIComponent(q)
+                + '&key=' + encodeURIComponent(DRIVE_API_KEY)
+                + '&fields=' + encodeURIComponent('nextPageToken,files(id,name,mimeType)')
+                + '&pageSize=1000&orderBy=' + encodeURIComponent('folder,name')
+                + '&supportsAllDrives=true&includeItemsFromAllDrives=true'
+                + (pageToken ? '&pageToken=' + encodeURIComponent(pageToken) : '');
+            const res  = await fetch(url);
+            const data = await res.json().catch(() => ({}));
+            if (!res.ok) throw new Error((data && data.error && data.error.message) || ('HTTP ' + res.status));
+            (data.files || []).forEach(f => {
+                if (f.mimeType === 'application/vnd.google-apps.folder') folders.push(f);
+                else if (/\.csv$/i.test(f.name || '') || f.mimeType === 'text/csv') csvs.push(f);
+            });
+            pageToken = data.nextPageToken || '';
+        } while (pageToken && ++guard < 50);
+        return { folders, csvs };
+    }
+
+    async function getDriveFolderName(folderId) {
+        try {
+            const url = 'https://www.googleapis.com/drive/v3/files/' + encodeURIComponent(folderId)
+                + '?fields=id,name&key=' + encodeURIComponent(DRIVE_API_KEY) + '&supportsAllDrives=true';
+            const res = await fetch(url);
+            const d   = await res.json().catch(() => ({}));
+            return (res.ok && d && d.name) ? d.name : 'Folder';
+        } catch (e) { return 'Folder'; }
+    }
+
+    function renderDriveBreadcrumb() {
+        const el = document.getElementById('drive-breadcrumb');
+        if (!el) return;
+        el.innerHTML = driveBrowsePath.map((seg, i) => {
+            const last = i === driveBrowsePath.length - 1;
+            const nm   = escapeHtml(seg.name || 'Folder');
+            const sep  = i > 0 ? '<span class="text-slate-300 mx-1">/</span>' : '';
+            return sep + (last
+                ? '<span class="font-semibold text-slate-700">' + nm + '</span>'
+                : '<button type="button" class="text-blue-600 hover:underline" onclick="driveCrumbTo(' + i + ')">' + nm + '</button>');
+        }).join('');
+    }
+
+    function renderDriveBrowser() {
+        const el = document.getElementById('drive-browser');
+        if (!el) return;
+        const { folders, csvs } = driveBrowseItems;
+        let html = '';
+        if (folders.length) {
+            html += '<div class="text-[10px] uppercase tracking-wider text-slate-400 font-bold px-1 pt-1 pb-0.5">Folders</div>';
+            folders.forEach(f => {
+                html += '<button type="button" data-name="' + escapeHtml(f.name || '') + '" '
+                     + 'class="w-full flex items-center gap-2 px-2 py-1.5 rounded hover:bg-blue-50 text-left text-[13px]" '
+                     + 'onclick="driveEnterFolder(\'' + f.id + '\', this.dataset.name)">'
+                     + '<span>📁</span><span class="truncate flex-1">' + escapeHtml(f.name || '') + '</span>'
+                     + '<span class="text-slate-300">›</span></button>';
+            });
+        }
+        if (csvs.length) {
+            html += '<div class="flex items-center justify-between px-1 pt-2 pb-0.5">'
+                 + '<div class="text-[10px] uppercase tracking-wider text-slate-400 font-bold">CSV files (' + csvs.length + ')</div>'
+                 + '<label class="text-[11px] text-slate-500 flex items-center gap-1 cursor-pointer">'
+                 + '<input type="checkbox" id="drive-select-all" onchange="driveToggleAll(this.checked)"> Select all</label></div>';
+            csvs.forEach(f => {
+                const checked = driveSelectedCsvIds.has(f.id) ? 'checked' : '';
+                html += '<label class="w-full flex items-center gap-2 px-2 py-1.5 rounded hover:bg-slate-50 cursor-pointer text-[13px]">'
+                     + '<input type="checkbox" ' + checked + ' onchange="driveToggleCsv(\'' + f.id + '\', this.checked)">'
+                     + '<span>📄</span><span class="truncate flex-1">' + escapeHtml(f.name || '') + '</span></label>';
+            });
+        }
+        if (!folders.length && !csvs.length) {
+            html = '<div class="text-[12px] text-slate-400 py-6 text-center">This folder has no sub-folders or CSV files.</div>';
+        }
+        el.innerHTML = html;
+        syncDriveSelectAll();
+    }
+
+    function driveToggleCsv(id, checked) {
+        if (checked) driveSelectedCsvIds.add(id); else driveSelectedCsvIds.delete(id);
+        syncDriveSelectAll();
+        updateDriveLoadBtn();
+    }
+    function driveToggleAll(checked) {
+        driveBrowseItems.csvs.forEach(f => { if (checked) driveSelectedCsvIds.add(f.id); else driveSelectedCsvIds.delete(f.id); });
+        renderDriveBrowser();
+        updateDriveLoadBtn();
+    }
+    function syncDriveSelectAll() {
+        const all = document.getElementById('drive-select-all');
+        if (!all) return;
+        const csvs = driveBrowseItems.csvs;
+        all.checked = csvs.length > 0 && csvs.every(f => driveSelectedCsvIds.has(f.id));
+    }
+    function updateDriveLoadBtn() {
+        const btn = document.getElementById('load-drive-btn');
+        if (!btn) return;
+        const n   = driveSelectedCsvIds.size;
+        const dis = n === 0;
+        btn.disabled = dis;
+        btn.classList.toggle('opacity-50', dis);
+        btn.classList.toggle('cursor-not-allowed', dis);
+        document.getElementById('drive-btn-text').textContent =
+            dis ? 'Select CSV file(s) to continue →' : ('Load ' + n + ' selected CSV' + (n > 1 ? 's' : '') + ' →');
+    }
+
+    // Open a folder id: refresh listing + selection, keeping the current breadcrumb.
+    async function _driveOpen(folderId) {
+        driveSelectedCsvIds.clear();
+        const el = document.getElementById('drive-browser');
+        if (el) el.innerHTML = '<div class="text-[12px] text-slate-400 py-6 text-center">Loading…</div>';
+        try {
+            const { folders, csvs } = await listDriveChildren(folderId);
+            driveBrowseItems = { folders, csvs };
+            renderDriveBrowser();
+        } catch (err) {
+            driveBrowseItems = { folders: [], csvs: [] };
+            if (el) el.innerHTML = '<div class="text-[12px] text-red-500 py-6 text-center px-2">Could not list this folder: '
+                + escapeHtml(err.message) + '<br><span class="text-slate-400">Is it shared “Anyone with the link → Viewer”?</span></div>';
+        }
+        updateDriveLoadBtn();
+    }
+
+    async function driveBrowseRoot(folderId) {
+        driveBrowsePath = [{ id: folderId, name: '…' }];
+        renderDriveBreadcrumb();
+        await _driveOpen(folderId);
+        const nm = await getDriveFolderName(folderId);
+        if (driveBrowsePath[0]) { driveBrowsePath[0].name = nm; renderDriveBreadcrumb(); }
+    }
+    async function driveEnterFolder(folderId, name) {
+        driveBrowsePath.push({ id: folderId, name: name || 'Folder' });
+        renderDriveBreadcrumb();
+        await _driveOpen(folderId);
+    }
+    async function driveCrumbTo(index) {
+        const seg = driveBrowsePath[index];
+        if (!seg) return;
+        driveBrowsePath = driveBrowsePath.slice(0, index + 1);
+        renderDriveBreadcrumb();
+        await _driveOpen(seg.id);
+    }
+
+    // Build the combined dataset from an explicit list of CSV file objects ({id,name}).
+    async function buildDriveDataFromFiles(fileObjs) {
+        // New dataset → clean local cache (keeps you signed in).
+        clearReviewCache();
+        if (!DRIVE_API_KEY || DRIVE_API_KEY === 'PASTE_YOUR_DRIVE_API_KEY_HERE')
+            throw new Error('Drive API key not configured yet (set DRIVE_API_KEY in the file).');
+        if (!fileObjs || !fileObjs.length) throw new Error('No CSV files selected.');
+
+        const results = await mapLimit(fileObjs, 6, async (f) => {
+            try {
+                const text   = await fetchDriveCsvText(f.id);
+                const parsed = driveCsvToRows(text, (f.name || '').replace(/\.csv$/i, ''));
+                return { name: f.name, ok: true, ...parsed };
+            } catch (err) {
+                return { name: f.name, ok: false, error: err.message };
+            }
+        });
+        const good = results.filter(r => r.ok && r.rows.length);
+        const bad  = results.filter(r => !r.ok);
+        if (!good.length) {
+            const why = bad.length ? (' — ' + bad.map(b => b.name + ': ' + b.error).join('; ')) : '';
+            throw new Error('No usable VINs in the selected files' + why);
+        }
+        const allRows  = good.flatMap(r => r.rows);
+        const rooftops = good.map(r => r.rooftopName);
+        const entId    = (good.find(r => r.entId) || {}).entId || 'drive-ent-001';
+        const label    = rooftops.length === 1 ? rooftops[0]
+                       : rooftops[0] + ' (+' + (rooftops.length - 1) + ' more)';
+        driveFolderData = { rows: allRows, enterprise: label, entId,
+                            fileCount: good.length, failed: bad, rooftops, vinCount: allRows.length };
+        return driveFolderData;
+    }
+
+    // Activate loaded Drive data → dashboard (shared by the load button).
+    async function activateDriveData(d) {
+        const info  = document.getElementById('drive-info-bar');
+        const infoT = document.getElementById('drive-info-text');
+        const bits  = d.rooftops.length > 1 ? (' · ' + d.rooftops.length + ' rooftops') : '';
+        infoT.textContent = '✓  ' + d.vinCount + ' VINs from ' + d.fileCount
+            + ' file' + (d.fileCount > 1 ? 's' : '') + bits
+            + (d.failed.length ? ('  (' + d.failed.length + ' skipped)') : '');
+        info.classList.remove('hidden');
+
+        allImageData         = { headers: DRIVE_HEADERS, rows: d.rows };
+        imagesLoaded         = true;
+        selectedEnterprise   = d.enterprise;
+        selectedEnterpriseId = d.entId || 'drive-ent-001';
+
+        const loadingMsg = document.getElementById('data-loading-msg');
+        if (loadingMsg) loadingMsg.textContent = 'Building rooftop index…';
+        await buildTeamIndex(selectedEnterprise);
+        if (!teamsList.length) throw new Error('No VINs found in the selected files.');
+        if (loadingMsg) loadingMsg.textContent = 'Almost ready…';
+        renderDashboard();
+        showPage('page-dashboard');
+        loadProgressFromSheet(selectedEnterprise).then(loaded => { if (loaded) renderDashboard(); }).catch(() => {});
+    }
+
+    // List all .csv files in a public Drive folder (handles pagination + shared drives).
+    async function listDriveCsvFiles(folderId) {
+        const base = 'https://www.googleapis.com/drive/v3/files';
+        const q = "'" + folderId + "' in parents and trashed=false";
+        let pageToken = '', files = [], guard = 0;
+        do {
+            const url = base
+                + '?q=' + encodeURIComponent(q)
+                + '&key=' + encodeURIComponent(DRIVE_API_KEY)
+                + '&fields=' + encodeURIComponent('nextPageToken,files(id,name,mimeType)')
+                + '&pageSize=1000&orderBy=name'
+                + '&supportsAllDrives=true&includeItemsFromAllDrives=true'
+                + (pageToken ? '&pageToken=' + encodeURIComponent(pageToken) : '');
+            const res  = await fetch(url);
+            const data = await res.json().catch(() => ({}));
+            if (!res.ok) throw new Error((data && data.error && data.error.message) || ('HTTP ' + res.status));
+            (data.files || []).forEach(f => {
+                const isFolder = f.mimeType === 'application/vnd.google-apps.folder';
+                const isCsv    = /\.csv$/i.test(f.name || '') || f.mimeType === 'text/csv';
+                if (!isFolder && isCsv) files.push(f);
+            });
+            pageToken = data.nextPageToken || '';
+        } while (pageToken && ++guard < 50);
+        return files;
+    }
+
+    // Download one file's raw text (public files are CORS-enabled on the API host).
+    async function fetchDriveCsvText(fileId) {
+        const url = 'https://www.googleapis.com/drive/v3/files/' + encodeURIComponent(fileId)
+            + '?alt=media&key=' + encodeURIComponent(DRIVE_API_KEY) + '&supportsAllDrives=true';
+        const res = await fetch(url, { cache: 'no-store' });
+        if (!res.ok) throw new Error('HTTP ' + res.status);
+        return res.text();
+    }
+
+    // Parse one file's CSV text into synthetic All_Data-shaped rows.
+    function driveCsvToRows(text, rooftopFallback) {
+        const parsed = parseCSV(text);
+        const hLower = parsed.headers.map(h => h.trim().toLowerCase());
+
+        const vinCol = hLower.findIndex(h =>
+            h === 'vin' || h === 'vin_number' || h === 'vehicle_vin' || h === 'vehiclevin');
+
+        const isNonUrlCol = (h) => /count|num|qty|quantity|total|#|_id$|_flag|_type|_status|year|make|model|trim|condition|style|fuel|color|price|mileage|stock|rooftop|dealer|location|store/.test(h);
+        const exactImgNames = [
+            'image urls','image_urls','imageurls','image url','image_url',
+            'images','image','first_image_url','first_img_url',
+            'imgae urls','imgae_urls','img_urls','img_url',
+            'photo urls','photo_urls','photourls','photo url','photo_url',
+            'photos','photo','media_urls','media_url','media'
+        ];
+        let imgCol = hLower.findIndex(h => exactImgNames.includes(h));
+        if (imgCol === -1) imgCol = hLower.findIndex(h => h.includes('url') && !isNonUrlCol(h));
+        if (imgCol === -1) imgCol = hLower.findIndex(h => (h.includes('image') || h.includes('photo')) && !isNonUrlCol(h));
+
+        const rooftopCol = hLower.findIndex(h =>
+            h === 'rooftop' || h === 'rooftop_name' || h === 'dealer' ||
+            h === 'dealer_name' || h === 'dealership' || h === 'dealership_name' ||
+            h === 'location' || h === 'store');
+        const conditionCol = hLower.findIndex(h =>
+            h === 'condition' || h === 'type' || h === 'vehicle_condition' ||
+            h === 'new_used' || h === 'newused' || h === 'inventory_type');
+        const enterpriseIdCol = hLower.findIndex(h =>
+            h === 'enterprise_id' || h === 'enterpriseid' || h === 'enterprise id');
+        const teamIdCol = hLower.findIndex(h =>
+            h === 'team_id' || h === 'teamid' || h === 'team id');
+
+        if (vinCol === -1) throw new Error('no VIN column');
+        if (imgCol === -1) throw new Error('no image-URL column');
+
+        const toTeamId = (rt) => 'drive-' + String(rt).toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '');
+
+        // A file = one rooftop, so group by VIN within this file.
+        const vinMap = new Map();
+        parsed.rows.forEach((r) => {
+            const vin = String(r[vinCol] || '').trim();
+            if (!vin || vin.toLowerCase() === 'vin') return;
+            const imgRaw    = String(r[imgCol] || '').trim();
+            const rooftop   = rooftopCol   >= 0 ? String(r[rooftopCol]   || '').trim() : '';
+            const condition = conditionCol >= 0 ? String(r[conditionCol] || '').trim() : '';
+            const csvTeamId = teamIdCol       >= 0 ? String(r[teamIdCol]       || '').trim() : '';
+            const csvEntId  = enterpriseIdCol >= 0 ? String(r[enterpriseIdCol] || '').trim() : '';
+            if (!vinMap.has(vin)) vinMap.set(vin, { vin, rooftop, condition, csvTeamId, csvEntId, urls: new Set() });
+            const e = vinMap.get(vin);
+            if (imgRaw) splitUrls(imgRaw).forEach(u => { if (u) e.urls.add(u); });
+            if (!e.condition && condition) e.condition = condition;
+            if (!e.rooftop   && rooftop)   e.rooftop   = rooftop;
+            if (!e.csvTeamId && csvTeamId) e.csvTeamId = csvTeamId;
+            if (!e.csvEntId  && csvEntId)  e.csvEntId  = csvEntId;
+        });
+
+        const rows = [];
+        let entId = '';
+        for (const d of vinMap.values()) {
+            const rooftopName = d.rooftop || rooftopFallback;
+            const teamId      = d.csvTeamId || toTeamId(rooftopName);
+            const eId         = d.csvEntId  || 'drive-ent-001';
+            if (!entId && d.csvEntId) entId = d.csvEntId;
+            const imgUrls = [...d.urls].join('|');
+            // Col D (enterprise_name) left blank so buildTeamIndex keeps every file.
+            // Col A (name) = rooftop name so the team label shows the rooftop.
+            rows.push([ rooftopName, teamId, eId, '', '', '', '1', '', '', d.vin, imgUrls, rooftopName, d.condition ]);
+        }
+        return { rows, rooftopName: rooftopFallback, entId };
+    }
+
+    // Concurrency-limited map (keeps parallel downloads polite).
+    async function mapLimit(items, limit, fn) {
+        const out = new Array(items.length);
+        let i = 0;
+        await Promise.all(new Array(Math.min(limit, items.length)).fill(0).map(async () => {
+            while (i < items.length) { const idx = i++; out[idx] = await fn(items[idx], idx); }
+        }));
+        return out;
+    }
+
+    async function processDriveFolder(link) {
+        const folderId = parseDriveFolderId(link);
+        if (!folderId) throw new Error('Could not read a folder ID from that link.');
+        // New folder loaded → always start from a clean local cache (keeps you signed in).
+        clearReviewCache();
+        if (!DRIVE_API_KEY || DRIVE_API_KEY === 'PASTE_YOUR_DRIVE_API_KEY_HERE')
+            throw new Error('Drive API key not configured yet (set DRIVE_API_KEY in the file).');
+
+        const files = await listDriveCsvFiles(folderId);
+        if (!files.length) throw new Error('No CSV files found in that folder (is it shared publicly?).');
+
+        const results = await mapLimit(files, 6, async (f) => {
+            try {
+                const text   = await fetchDriveCsvText(f.id);
+                const parsed = driveCsvToRows(text, (f.name || '').replace(/\.csv$/i, ''));
+                return { name: f.name, ok: true, ...parsed };
+            } catch (err) {
+                return { name: f.name, ok: false, error: err.message };
+            }
+        });
+
+        const good = results.filter(r => r.ok && r.rows.length);
+        const bad  = results.filter(r => !r.ok);
+        if (!good.length) {
+            const why = bad.length ? (' — ' + bad.map(b => b.name + ': ' + b.error).join('; ')) : '';
+            throw new Error('No usable VINs across the folder' + why);
+        }
+
+        const allRows  = good.flatMap(r => r.rows);
+        const rooftops = good.map(r => r.rooftopName);
+        const entId    = (good.find(r => r.entId) || {}).entId || 'drive-ent-001';
+        // Enterprise label = rooftop name (per request; folder name intentionally unused).
+        const label = rooftops.length === 1 ? rooftops[0]
+                    : rooftops[0] + ' (+' + (rooftops.length - 1) + ' more)';
+
+        driveFolderData = { rows: allRows, enterprise: label, entId,
+                            fileCount: good.length, failed: bad, rooftops, vinCount: allRows.length };
+        return driveFolderData;
+    }
+
+    document.addEventListener('DOMContentLoaded', () => {
+        const loadDriveBtn = document.getElementById('load-drive-btn');
+        if (!loadDriveBtn) return;
+        loadDriveBtn.addEventListener('click', async () => {
+            const selected = driveBrowseItems.csvs.filter(f => driveSelectedCsvIds.has(f.id));
+            if (!selected.length) { showError('Tick at least one CSV file to load.'); return; }
+
+            const bText = document.getElementById('drive-btn-text');
+            const bLoad = document.getElementById('drive-btn-loader');
+
+            loadDriveBtn.disabled = true;
+            bLoad.classList.remove('hidden');
+            bText.textContent = 'Reading files…';
+
+            const loadingOv  = document.getElementById('data-loading-overlay');
+            const loadingMsg = document.getElementById('data-loading-msg');
+            loadingOv.classList.remove('hidden');
+            loadingMsg.textContent = 'Downloading ' + selected.length + ' CSV file' + (selected.length > 1 ? 's' : '') + '…';
+
+            try {
+                const d = await buildDriveDataFromFiles(selected);
+                await activateDriveData(d);
+                loadingOv.classList.add('hidden');
+            } catch (err) {
+                loadingOv.classList.add('hidden');
+                console.error(err);
+                showError('Drive load failed: ' + err.message);
+            } finally {
+                bLoad.classList.add('hidden');
+                loadDriveBtn.disabled = false;
+                updateDriveLoadBtn();
+            }
+        });
     });
 
     // =========================================================================
@@ -2698,6 +3181,10 @@
         // Check if admin mode requested via ?admin=1
         checkAdminMode();
 
+        // Default data source = Google Drive, preloaded to the shared root folder.
+        setDataSource('drive');
+        driveBrowseRoot(DEFAULT_DRIVE_FOLDER_ID);
+
         // Load enterprise list regardless (pre-warms while user signs in)
         try {
             const data = await fetchEnterprises();
@@ -2857,35 +3344,68 @@
         }
     });
 
+    // Clear local review/progress cache WITHOUT ever touching the login session.
+    // IMPORTANT: the auth key (spyne_auth_user_v1) also starts with "spyne_", so a
+    // naive prefix wipe used to sign the reviewer out mid-session — which caused
+    // reviews to be saved with a blank reviewer name. Always exclude AUTH_SESSION_KEY.
+    function clearReviewCache() {
+        try {
+            Object.keys(localStorage)
+                .filter(k => k.startsWith('spyne_') && k !== AUTH_SESSION_KEY)
+                .forEach(k => localStorage.removeItem(k));
+        } catch (e) {}
+        // Reset in-memory state
+        reviews     = {};
+        img1Reviews = {};
+        // Clear image URL caches so fresh loads happen
+        try { _urlCache.clear(); } catch (e) {}
+        try { _svPreloadCache.clear(); } catch (e) {}
+    }
+
     document.getElementById('clear-cache-btn').addEventListener('click', () => {
         const confirmed = confirm(
             'Clear locally stored review progress from this device?\n\n' +
             'Your reviews are saved in the Google Sheet — they will be restored\n' +
             'from the sheet the next time you load an enterprise.\n\n' +
-            'This only clears the local cache on this device.'
+            'You will stay signed in. This only clears the local review cache.'
         );
         if (!confirmed) return;
 
-        // Clear only Spyne review keys (preserves everything else on the domain)
-        Object.keys(localStorage)
-            .filter(k => k.startsWith('spyne_'))
-            .forEach(k => localStorage.removeItem(k));
-
-        // Reset in-memory state
-        reviews     = {};
-        img1Reviews = {};
-        // Clear image URL caches so fresh loads happen
-        _urlCache.clear();
-        _svPreloadCache.clear();
+        clearReviewCache();
 
         // Re-render dashboard to show cleared counts
         renderDashboard();
-        showError('Local cache cleared. Reload the enterprise to restore from the sheet.');
+        showError('Local cache cleared (you are still signed in). Reload the enterprise to restore from the sheet.');
     });
 
     // =========================================================================
     // DASHBOARD
     // =========================================================================
+    // Count distinct 1st-image-reviewed VINs for a team, reading LOCAL storage only.
+    // 1st-image reviews are stored under a rooftop-aware key (see img1ReviewKey /
+    // setImg1Review): "teamId::rooftop" when reviewed from a rooftop card, and
+    // "csv-all-rooftops::rooftop" when reviewed via the "Review All Rooftops" button.
+    // The dashboard previously counted only the bare "teamId" key, so any rooftop /
+    // Drive dataset always showed 0. This unions both possible keys and dedupes by VIN.
+    function img1CountForTeam(t) {
+        if (!t) return 0;
+        const seen = new Set();
+        const addFrom = (key) => {
+            const obj = img1Reviews[key];
+            if (!obj) return;
+            for (const k of Object.keys(obj)) {
+                seen.add(k.includes('|~|') ? k.split('|~|')[0] : k);
+            }
+        };
+        if (t.rooftop) {
+            addFrom(t.teamId + '::' + t.rooftop);
+            addFrom('csv-all-rooftops::' + t.rooftop);
+        } else {
+            addFrom(t.teamId);
+        }
+        return seen.size;
+    }
+
     function renderDashboard() {
         const grid  = document.getElementById('dealer-grid');
         const empty = document.getElementById('dealer-empty');
@@ -2898,7 +3418,7 @@
             totalVINs    += t.vinCount;
             totalImages  += t.imageCount;
             reviewedVINs += Object.keys(reviews[t.teamId]    || {}).length;
-            reviewed1Img += Object.keys(img1Reviews[t.teamId] || {}).length;
+            reviewed1Img += img1CountForTeam(t);
         });
 
         // Teams loaded x / Total (total from Metabase via bar already shown live;
@@ -2950,7 +3470,7 @@
             allCard.className = 'bg-gradient-to-br from-blue-600 to-blue-700 p-5 rounded-xl shadow-sm card-hover transition cursor-pointer flex flex-col justify-between min-h-[128px]';
             const totalVins    = teamsList.reduce((s,t) => s + t.vinCount, 0);
             const totalImgs    = teamsList.reduce((s,t) => s + t.imageCount, 0);
-            const totalImg1    = teamsList.reduce((s,t) => s + Object.keys(img1Reviews[t.teamId]||{}).length, 0);
+            const totalImg1    = teamsList.reduce((s,t) => s + img1CountForTeam(t), 0);
             const allImg1Pct   = totalVins > 0 ? Math.round(totalImg1/totalVins*100) : 0;
             allCard.innerHTML = `
                 <div class="flex items-center justify-between">
@@ -2978,8 +3498,7 @@
                 const card = document.createElement('div');
                 card.className = "bg-white p-5 rounded-xl border border-slate-200 shadow-sm card-hover transition cursor-pointer flex flex-col justify-between min-h-[128px]";
                 // 1st image review progress
-                const img1TeamReviews = img1Reviews[t.teamId] || {};
-                const img1ReviewedCount = Object.keys(img1TeamReviews).length;
+                const img1ReviewedCount = img1CountForTeam(t);
                 const img1Pct = t.vinCount > 0 ? Math.round((img1ReviewedCount / t.vinCount) * 100) : 0;
 
                 card.innerHTML = `
@@ -4515,6 +5034,17 @@
     document.getElementById('complete-ok-btn').addEventListener('click', async () => {
         const btn = document.getElementById('complete-ok-btn');
         if (btn.__1imgMode) {
+            // Safety net: never save a review without a reviewer name. If the
+            // session was lost (e.g. cache wiped / storage cleared), stop and
+            // send the user to sign in again rather than writing blank-reviewer rows.
+            const reviewerNow = getCurrentUser();
+            if (!reviewerNow) {
+                btn.__1imgMode = false;
+                restore1ImgMode();
+                alert('Your session has ended, so this review was NOT saved.\n\nPlease sign in again and resubmit — this prevents reviews from being recorded without your name.');
+                showPage('page-auth');
+                return;
+            }
             btn.__1imgMode = false;
 
             // Build BQ rows from ALL VINs (reviewed + pending)
@@ -4529,7 +5059,7 @@
                 bqRows.push({
                     review_date:     now.toISOString().slice(0, 10),
                     reviewed_at:     now.toISOString(),
-                    reviewer:        getCurrentUser() || document.getElementById('user-badge-text')?.textContent?.trim() || '',
+                    reviewer:        reviewerNow,
                     enterprise:      selectedEnterprise || currentImg1Team?.name || '',
                     enterprise_id:   currentImg1Team?.entId || selectedEnterpriseId || '',
                     rooftop:         rooftop,
