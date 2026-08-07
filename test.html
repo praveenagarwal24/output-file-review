@@ -2116,6 +2116,43 @@
     function driveCurrentFolder() { return driveLevels.length ? driveLevels[driveLevels.length - 1] : null; }
     function driveCurrentCsvs()   { const f = driveCurrentFolder(); return f ? (f.csvs || []) : []; }
 
+    // ── Shared pick-state: hide rooftops already reviewed or claimed by others ──
+    let drivePickState = { reviewed: new Set(), claims: {} };
+    async function refreshDrivePickState() {
+        try {
+            const res  = await fetch(BQ_WEBAPP_URL + '?action=pickState', { cache: 'no-store', redirect: 'follow' });
+            const data = await res.json();
+            if (data && data.ok) {
+                drivePickState = {
+                    reviewed: new Set((data.reviewed || []).map(x => String(x).trim().toLowerCase())),
+                    claims:   data.claims || {}
+                };
+            }
+        } catch (e) { /* non-fatal: if this fails we simply hide nothing */ }
+    }
+    // CSVs in the current folder this reviewer may pick (not reviewed, not claimed by someone else).
+    function driveVisibleCsvs() {
+        const me = (getCurrentUser() || '').toLowerCase();
+        return driveCurrentCsvs().filter(f => {
+            const rooftop = (f.name || '').replace(/\.csv$/i, '').trim().toLowerCase();
+            if (drivePickState.reviewed.has(rooftop)) return false;      // already reviewed
+            const c = drivePickState.claims[f.id];
+            if (c && (c.reviewer || '').toLowerCase() !== me) return false; // claimed by another reviewer
+            return true;
+        });
+    }
+    // Record claims for the picked CSVs; returns any that were just taken by someone else.
+    async function claimDriveRooftops(items) {
+        try {
+            const res  = await fetch(BQ_WEBAPP_URL, {
+                method: 'POST', redirect: 'follow',
+                body: JSON.stringify({ action: 'claim', reviewer: getCurrentUser() || '', items })
+            });
+            const data = await res.json().catch(() => ({}));
+            return (data && data.ok) ? (data.conflicts || []) : [];
+        } catch (e) { return []; }
+    }
+
     // Render the chained folder dropdowns + the CSV checklist for the deepest folder.
     function renderDriveNavigator() {
         const el = document.getElementById('drive-browser');
@@ -2141,14 +2178,19 @@
                  + 'onchange="driveSelectAtLevel(' + i + ', this.value)">' + opts + '</select></div>';
         });
 
-        // CSV checklist for the current (deepest) folder.
-        const csvs    = driveCurrentCsvs();
-        const cur     = driveCurrentFolder();
-        const curName = cur ? (cur.name || '') : '';
+        // CSV checklist for the current (deepest) folder — only pickable ones.
+        const csvs      = driveVisibleCsvs();
+        const totalCsvs = driveCurrentCsvs().length;
+        const hidden    = totalCsvs - csvs.length;      // reviewed or claimed by others
+        const cur       = driveCurrentFolder();
+        const curName   = cur ? (cur.name || '') : '';
+        const hiddenNote = hidden > 0
+            ? '<div class="text-[11px] text-amber-600 px-2 pt-1">' + hidden + ' hidden (already reviewed or in use by another reviewer)</div>'
+            : '';
         html += '<div class="border-t border-slate-100 mt-1 pt-2">';
         if (csvs.length) {
             html += '<div class="flex items-center justify-between px-1 pb-1">'
-                 + '<div class="text-[10px] uppercase tracking-wider text-slate-400 font-bold">CSV files in ' + escapeHtml(curName) + ' (' + csvs.length + ')</div>'
+                 + '<div class="text-[10px] uppercase tracking-wider text-slate-400 font-bold">Available CSVs in ' + escapeHtml(curName) + ' (' + csvs.length + ')</div>'
                  + '<label class="text-[11px] text-slate-500 flex items-center gap-1 cursor-pointer">'
                  + '<input type="checkbox" id="drive-select-all" onchange="driveToggleAll(this.checked)"> Select all</label></div>';
             csvs.forEach(f => {
@@ -2160,10 +2202,13 @@
                      + '<span class="text-[11px] text-slate-400 whitespace-nowrap" data-rowcount="' + f.id + '">' + rc + '</span></label>';
             });
             html += '<div id="drive-csv-totals" class="text-[11px] text-slate-500 px-2 pt-2"></div>';
+            html += hiddenNote;
         } else {
             const hasSub = cur && cur.folders && cur.folders.length;
-            html += '<div class="text-[12px] text-slate-400 py-4 text-center">'
-                 + (hasSub ? 'No CSVs here — pick a sub-folder above.' : 'No CSV files in this folder.') + '</div>';
+            const msg = totalCsvs > 0
+                ? 'All CSVs here are already reviewed or in use by another reviewer.'
+                : (hasSub ? 'No CSVs here — pick a sub-folder above.' : 'No CSV files in this folder.');
+            html += '<div class="text-[12px] text-slate-400 py-4 text-center">' + msg + '</div>';
         }
         html += '</div>';
 
@@ -2200,7 +2245,7 @@
     function updateDriveTotals() {
         const el = document.getElementById('drive-csv-totals');
         if (!el) return;
-        const csvs     = driveCurrentCsvs();
+        const csvs     = driveVisibleCsvs();
         const selected = csvs.filter(f => driveSelectedCsvIds.has(f.id));
         let selRows = 0, selKnown = true, allRows = 0, allKnown = true;
         csvs.forEach(f => { const v = driveRowCounts.get(f.id); if (typeof v === 'number') allRows += v; else allKnown = false; });
@@ -2218,14 +2263,14 @@
         updateDriveTotals();
     }
     function driveToggleAll(checked) {
-        driveCurrentCsvs().forEach(f => { if (checked) driveSelectedCsvIds.add(f.id); else driveSelectedCsvIds.delete(f.id); });
+        driveVisibleCsvs().forEach(f => { if (checked) driveSelectedCsvIds.add(f.id); else driveSelectedCsvIds.delete(f.id); });
         renderDriveNavigator();
         updateDriveLoadBtn();
     }
     function syncDriveSelectAll() {
         const all = document.getElementById('drive-select-all');
         if (!all) return;
-        const csvs = driveCurrentCsvs();
+        const csvs = driveVisibleCsvs();
         all.checked = csvs.length > 0 && csvs.every(f => driveSelectedCsvIds.has(f.id));
     }
     function updateDriveLoadBtn() {
@@ -2250,9 +2295,12 @@
         const el = document.getElementById('drive-browser');
         if (el) el.innerHTML = '<div class="text-[12px] text-slate-400 py-6 text-center">Loading…</div>';
         try {
-            const name = await getDriveFolderName(folderId);
-            const { folders, csvs } = await listDriveChildren(folderId);
-            driveLevels = [{ id: folderId, name, folders, csvs, selectedId: null }];
+            const [name, children] = await Promise.all([
+                getDriveFolderName(folderId),
+                listDriveChildren(folderId)
+            ]);
+            await refreshDrivePickState();
+            driveLevels = [{ id: folderId, name, folders: children.folders, csvs: children.csvs, selectedId: null }];
             renderDriveNavigator();
         } catch (err) {
             if (el) el.innerHTML = '<div class="text-[12px] text-red-500 py-6 text-center px-2">Could not list this folder: '
@@ -2279,6 +2327,7 @@
             }
             if (status) status.classList.add('hidden');
         }
+        await refreshDrivePickState();
         renderDriveNavigator();
         updateDriveLoadBtn();
     }
@@ -2293,6 +2342,7 @@
             cur.folders = folders;
             cur.csvs    = csvs;
             (csvs || []).forEach(f => { driveRowCounts.delete(f.id); driveTextCache.delete(f.id); });
+            await refreshDrivePickState();
             renderDriveNavigator();
             updateDriveLoadBtn();
         } catch (err) {
@@ -2385,12 +2435,16 @@
     }
 
     // Download one file's raw text (public files are CORS-enabled on the API host).
+    // Download a Drive CSV's text THROUGH the Apps Script backend (BQ_WEBAPP_URL).
+    // Direct browser downloads of larger Drive files fail with "Failed to fetch"
+    // (alt=media redirects to a non-CORS host); the server-side proxy avoids that.
     async function fetchDriveCsvText(fileId) {
-        const url = 'https://www.googleapis.com/drive/v3/files/' + encodeURIComponent(fileId)
-            + '?alt=media&key=' + encodeURIComponent(DRIVE_API_KEY) + '&supportsAllDrives=true';
-        const res = await fetch(url, { cache: 'no-store' });
+        const url = BQ_WEBAPP_URL + '?action=driveFile&id=' + encodeURIComponent(fileId);
+        const res = await fetch(url, { cache: 'no-store', redirect: 'follow' });
         if (!res.ok) throw new Error('HTTP ' + res.status);
-        return res.text();
+        const text = await res.text();
+        if (/^ERROR\b/i.test(text)) throw new Error(text.slice(0, 200));
+        return text;
     }
 
     // Parse one file's CSV text into synthetic All_Data-shaped rows.
@@ -2518,22 +2572,40 @@
         const loadDriveBtn = document.getElementById('load-drive-btn');
         if (!loadDriveBtn) return;
         loadDriveBtn.addEventListener('click', async () => {
-            const selected = driveCurrentCsvs().filter(f => driveSelectedCsvIds.has(f.id));
-            if (!selected.length) { showError('Tick at least one CSV file to load.'); return; }
+            let selected = driveVisibleCsvs().filter(f => driveSelectedCsvIds.has(f.id));
+            if (!selected.length) { showError('Tick at least one available CSV to load.'); return; }
 
             const bText = document.getElementById('drive-btn-text');
             const bLoad = document.getElementById('drive-btn-loader');
 
             loadDriveBtn.disabled = true;
             bLoad.classList.remove('hidden');
-            bText.textContent = 'Reading files…';
+            bText.textContent = 'Reserving…';
 
             const loadingOv  = document.getElementById('data-loading-overlay');
             const loadingMsg = document.getElementById('data-loading-msg');
             loadingOv.classList.remove('hidden');
-            loadingMsg.textContent = 'Downloading ' + selected.length + ' CSV file' + (selected.length > 1 ? 's' : '') + '…';
+            loadingMsg.textContent = 'Reserving the selected rooftops…';
 
             try {
+                // Claim first so nobody else can grab them; drop any just taken by someone else.
+                const items = selected.map(f => ({ fileId: f.id, rooftop: (f.name || '').replace(/\.csv$/i, '') }));
+                const conflicts = await claimDriveRooftops(items);
+                if (conflicts.length) {
+                    const taken = new Set(conflicts.map(c => c.fileId));
+                    selected = selected.filter(f => !taken.has(f.id));
+                    conflicts.forEach(c => driveSelectedCsvIds.delete(c.fileId));
+                    if (!selected.length) {
+                        loadingOv.classList.add('hidden');
+                        await refreshDrivePickState();
+                        renderDriveNavigator();
+                        showError('Those rooftops were just taken by another reviewer.');
+                        return;
+                    }
+                    showError(conflicts.length + ' rooftop(s) were just taken by someone else and were skipped.');
+                }
+
+                loadingMsg.textContent = 'Downloading ' + selected.length + ' CSV file' + (selected.length > 1 ? 's' : '') + '…';
                 const d = await buildDriveDataFromFiles(selected);
                 await activateDriveData(d);
                 loadingOv.classList.add('hidden');
