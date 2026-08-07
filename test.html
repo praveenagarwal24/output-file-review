@@ -1064,7 +1064,6 @@
         'vijay.gautam@spyne.co.in',
         'karmendra.singh@spyne.co.in',
         'anup.gupta@spyne.co.in',
-        'praveenagarwal24@gmail.com',
     ]);
     const AUTH_SESSION_KEY  = 'spyne_auth_user_v1';
     const BQ_WEBAPP_URL     = 'https://script.google.com/macros/s/AKfycbyWgJgtuiCwstoNi4LA-meGMIo0HBVRG2Fp1gfNCPjE2Or24HLaKZSYk-obZjh2OILj/exec';
@@ -2181,12 +2180,24 @@
 
         // CSV checklist for the current (deepest) folder — only pickable ones.
         const csvs      = driveVisibleCsvs();
-        const totalCsvs = driveCurrentCsvs().length;
-        const hidden    = totalCsvs - csvs.length;      // reviewed or claimed by others
+        const allCsvs   = driveCurrentCsvs();
+        const totalCsvs = allCsvs.length;
         const cur       = driveCurrentFolder();
         const curName   = cur ? (cur.name || '') : '';
-        const hiddenNote = hidden > 0
-            ? '<div class="text-[11px] text-amber-600 px-2 pt-1">' + hidden + ' hidden (already reviewed or in use by another reviewer)</div>'
+        // Break the hidden ones down by reason (reviewed vs in-use) so it's clear WHY.
+        const meLower = (getCurrentUser() || '').toLowerCase();
+        let reviewedCount = 0, inUseCount = 0;
+        allCsvs.forEach(f => {
+            const rooftop = (f.name || '').replace(/\.csv$/i, '').trim().toLowerCase();
+            if (drivePickState.reviewed.has(rooftop)) { reviewedCount++; return; }
+            const c = drivePickState.claims[f.id];
+            if (c && (c.reviewer || '').toLowerCase() !== meLower) inUseCount++;
+        });
+        const parts = [];
+        if (reviewedCount) parts.push(reviewedCount + ' already reviewed');
+        if (inUseCount)    parts.push(inUseCount + ' in use by another reviewer');
+        const hiddenNote = parts.length
+            ? '<div class="text-[11px] text-amber-600 px-2 pt-1">Hidden: ' + parts.join(' · ') + '</div>'
             : '';
         html += '<div class="border-t border-slate-100 mt-1 pt-2">';
         if (csvs.length) {
@@ -2206,9 +2217,12 @@
             html += hiddenNote;
         } else {
             const hasSub = cur && cur.folders && cur.folders.length;
-            const msg = totalCsvs > 0
-                ? 'All CSVs here are already reviewed or in use by another reviewer.'
-                : (hasSub ? 'No CSVs here — pick a sub-folder above.' : 'No CSV files in this folder.');
+            let msg;
+            if (totalCsvs > 0) {
+                msg = 'No CSVs available to pick here' + (parts.length ? ' — ' + parts.join(' · ') : '') + '.';
+            } else {
+                msg = hasSub ? 'No CSVs here — pick a sub-folder above.' : 'No CSV files in this folder.';
+            }
             html += '<div class="text-[12px] text-slate-400 py-4 text-center">' + msg + '</div>';
         }
         html += '</div>';
