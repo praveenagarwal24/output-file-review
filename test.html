@@ -2035,9 +2035,9 @@
     // Default Drive root the browser opens to (no pasting needed). Whole tree must be
     // shared "Anyone with the link → Viewer".
     const DEFAULT_DRIVE_FOLDER_ID = '1p81FZBP7Pw4_m02nF0PUx9SreHRCRPth';
-    // Browser navigation state
-    let   driveBrowsePath   = [];                    // breadcrumb: [{ id, name }]
-    let   driveBrowseItems  = { folders: [], csvs: [] };
+    // Browser navigation state (chained dropdowns, any depth)
+    let   driveRootId       = DEFAULT_DRIVE_FOLDER_ID;
+    let   driveLevels       = [];                    // [{ id, name, folders, csvs, selectedId }]
     const driveSelectedCsvIds = new Set();           // ids of CSVs ticked in the current folder
 
     // Extract the folder ID from any common Drive folder URL (or a raw ID).
@@ -2064,7 +2064,7 @@
         const link = document.getElementById('drive-link-input').value.trim();
         const id   = parseDriveFolderId(link);
         if (!id) return;
-        driveBrowseRoot(id);
+        driveInitRoot(id);
     }
 
     // ── Drive folder browser (any depth) ────────────────────────────────────
@@ -2081,7 +2081,7 @@
                 + '&pageSize=1000&orderBy=' + encodeURIComponent('folder,name')
                 + '&supportsAllDrives=true&includeItemsFromAllDrives=true'
                 + (pageToken ? '&pageToken=' + encodeURIComponent(pageToken) : '');
-            const res  = await fetch(url);
+            const res  = await fetch(url, { cache: 'no-store' });
             const data = await res.json().catch(() => ({}));
             if (!res.ok) throw new Error((data && data.error && data.error.message) || ('HTTP ' + res.status));
             (data.files || []).forEach(f => {
@@ -2103,67 +2103,129 @@
         } catch (e) { return 'Folder'; }
     }
 
-    function renderDriveBreadcrumb() {
-        const el = document.getElementById('drive-breadcrumb');
-        if (!el) return;
-        el.innerHTML = driveBrowsePath.map((seg, i) => {
-            const last = i === driveBrowsePath.length - 1;
-            const nm   = escapeHtml(seg.name || 'Folder');
-            const sep  = i > 0 ? '<span class="text-slate-300 mx-1">/</span>' : '';
-            return sep + (last
-                ? '<span class="font-semibold text-slate-700">' + nm + '</span>'
-                : '<button type="button" class="text-blue-600 hover:underline" onclick="driveCrumbTo(' + i + ')">' + nm + '</button>');
-        }).join('');
+    // Text + row-count caches (so counts don't re-download, and Load reuses the text).
+    const driveTextCache = new Map();   // fileId -> raw CSV text
+    const driveRowCounts = new Map();   // fileId -> number | 'err'
+    async function fetchDriveCsvTextCached(fileId) {
+        if (driveTextCache.has(fileId)) return driveTextCache.get(fileId);
+        const text = await fetchDriveCsvText(fileId);
+        driveTextCache.set(fileId, text);
+        return text;
     }
 
-    function renderDriveBrowser() {
+    function driveCurrentFolder() { return driveLevels.length ? driveLevels[driveLevels.length - 1] : null; }
+    function driveCurrentCsvs()   { const f = driveCurrentFolder(); return f ? (f.csvs || []) : []; }
+
+    // Render the chained folder dropdowns + the CSV checklist for the deepest folder.
+    function renderDriveNavigator() {
         const el = document.getElementById('drive-browser');
         if (!el) return;
-        const { folders, csvs } = driveBrowseItems;
         let html = '';
-        if (folders.length) {
-            html += '<div class="text-[10px] uppercase tracking-wider text-slate-400 font-bold px-1 pt-1 pb-0.5">Folders</div>';
-            folders.forEach(f => {
-                html += '<button type="button" data-name="' + escapeHtml(f.name || '') + '" '
-                     + 'class="w-full flex items-center gap-2 px-2 py-1.5 rounded hover:bg-blue-50 text-left text-[13px]" '
-                     + 'onclick="driveEnterFolder(\'' + f.id + '\', this.dataset.name)">'
-                     + '<span>📁</span><span class="truncate flex-1">' + escapeHtml(f.name || '') + '</span>'
-                     + '<span class="text-slate-300">›</span></button>';
+        html += '<div class="flex items-center justify-between px-1 pt-1 pb-2">'
+             + '<span class="text-[10px] uppercase tracking-wider text-slate-400 font-bold">Browse folders</span>'
+             + '<button type="button" class="text-[11px] text-blue-600 hover:underline" onclick="driveRefresh()">↻ Refresh list</button></div>';
+
+        // One dropdown per level that has sub-folders.
+        driveLevels.forEach((lvl, i) => {
+            if (!lvl.folders || !lvl.folders.length) return;
+            const kind = i === 0 ? 'folder' : 'sub-folder';
+            let opts = '<option value="">— select ' + kind + ' —</option>';
+            lvl.folders.forEach(f => {
+                const sel = lvl.selectedId === f.id ? ' selected' : '';
+                opts += '<option value="' + f.id + '"' + sel + '>' + escapeHtml(f.name || '') + '</option>';
             });
-        }
+            html += '<div class="mb-2">'
+                 + '<label class="block text-[10px] text-slate-400 mb-0.5 px-1">' + escapeHtml(kind.charAt(0).toUpperCase() + kind.slice(1))
+                 + ' — in ' + escapeHtml(lvl.name || '') + '</label>'
+                 + '<select class="w-full p-2 border border-slate-300 rounded-lg text-[13px] bg-white outline-none focus:ring-2 focus:ring-blue-500" '
+                 + 'onchange="driveSelectAtLevel(' + i + ', this.value)">' + opts + '</select></div>';
+        });
+
+        // CSV checklist for the current (deepest) folder.
+        const csvs    = driveCurrentCsvs();
+        const cur     = driveCurrentFolder();
+        const curName = cur ? (cur.name || '') : '';
+        html += '<div class="border-t border-slate-100 mt-1 pt-2">';
         if (csvs.length) {
-            html += '<div class="flex items-center justify-between px-1 pt-2 pb-0.5">'
-                 + '<div class="text-[10px] uppercase tracking-wider text-slate-400 font-bold">CSV files (' + csvs.length + ')</div>'
+            html += '<div class="flex items-center justify-between px-1 pb-1">'
+                 + '<div class="text-[10px] uppercase tracking-wider text-slate-400 font-bold">CSV files in ' + escapeHtml(curName) + ' (' + csvs.length + ')</div>'
                  + '<label class="text-[11px] text-slate-500 flex items-center gap-1 cursor-pointer">'
                  + '<input type="checkbox" id="drive-select-all" onchange="driveToggleAll(this.checked)"> Select all</label></div>';
             csvs.forEach(f => {
                 const checked = driveSelectedCsvIds.has(f.id) ? 'checked' : '';
+                const rc = driveRowCountLabel(f.id);
                 html += '<label class="w-full flex items-center gap-2 px-2 py-1.5 rounded hover:bg-slate-50 cursor-pointer text-[13px]">'
                      + '<input type="checkbox" ' + checked + ' onchange="driveToggleCsv(\'' + f.id + '\', this.checked)">'
-                     + '<span>📄</span><span class="truncate flex-1">' + escapeHtml(f.name || '') + '</span></label>';
+                     + '<span>📄</span><span class="truncate flex-1">' + escapeHtml(f.name || '') + '</span>'
+                     + '<span class="text-[11px] text-slate-400 whitespace-nowrap" data-rowcount="' + f.id + '">' + rc + '</span></label>';
             });
+            html += '<div id="drive-csv-totals" class="text-[11px] text-slate-500 px-2 pt-2"></div>';
+        } else {
+            const hasSub = cur && cur.folders && cur.folders.length;
+            html += '<div class="text-[12px] text-slate-400 py-4 text-center">'
+                 + (hasSub ? 'No CSVs here — pick a sub-folder above.' : 'No CSV files in this folder.') + '</div>';
         }
-        if (!folders.length && !csvs.length) {
-            html = '<div class="text-[12px] text-slate-400 py-6 text-center">This folder has no sub-folders or CSV files.</div>';
-        }
+        html += '</div>';
+
         el.innerHTML = html;
         syncDriveSelectAll();
+        updateDriveTotals();
+        if (csvs.length) driveCountRows(csvs);
+    }
+
+    function driveRowCountLabel(id) {
+        if (!driveRowCounts.has(id)) return 'counting…';
+        const v = driveRowCounts.get(id);
+        return v === 'err' ? '—' : (v.toLocaleString() + ' rows');
+    }
+
+    // Download + count data rows for each CSV (cached; updates the UI as each lands).
+    async function driveCountRows(csvs) {
+        const pending = csvs.filter(f => !driveRowCounts.has(f.id));
+        if (!pending.length) return;
+        await mapLimit(pending, 6, async (f) => {
+            try {
+                const text   = await fetchDriveCsvTextCached(f.id);
+                const parsed = parseCSV(text);
+                driveRowCounts.set(f.id, parsed.rows.length);
+            } catch (e) {
+                driveRowCounts.set(f.id, 'err');
+            }
+            const span = document.querySelector('[data-rowcount="' + f.id + '"]');
+            if (span) span.textContent = driveRowCountLabel(f.id);
+            updateDriveTotals();
+        });
+    }
+
+    function updateDriveTotals() {
+        const el = document.getElementById('drive-csv-totals');
+        if (!el) return;
+        const csvs     = driveCurrentCsvs();
+        const selected = csvs.filter(f => driveSelectedCsvIds.has(f.id));
+        let selRows = 0, selKnown = true, allRows = 0, allKnown = true;
+        csvs.forEach(f => { const v = driveRowCounts.get(f.id); if (typeof v === 'number') allRows += v; else allKnown = false; });
+        selected.forEach(f => { const v = driveRowCounts.get(f.id); if (typeof v === 'number') selRows += v; else selKnown = false; });
+        el.innerHTML = 'Selected: <b>' + selected.length + '</b> CSV' + (selected.length !== 1 ? 's' : '')
+            + ' · <b>' + selRows.toLocaleString() + (selKnown ? '' : '+') + '</b> rows'
+            + '<span class="text-slate-300"> &nbsp;|&nbsp; </span>'
+            + 'Folder total: ' + csvs.length + ' CSVs · ' + allRows.toLocaleString() + (allKnown ? '' : '+') + ' rows';
     }
 
     function driveToggleCsv(id, checked) {
         if (checked) driveSelectedCsvIds.add(id); else driveSelectedCsvIds.delete(id);
         syncDriveSelectAll();
         updateDriveLoadBtn();
+        updateDriveTotals();
     }
     function driveToggleAll(checked) {
-        driveBrowseItems.csvs.forEach(f => { if (checked) driveSelectedCsvIds.add(f.id); else driveSelectedCsvIds.delete(f.id); });
-        renderDriveBrowser();
+        driveCurrentCsvs().forEach(f => { if (checked) driveSelectedCsvIds.add(f.id); else driveSelectedCsvIds.delete(f.id); });
+        renderDriveNavigator();
         updateDriveLoadBtn();
     }
     function syncDriveSelectAll() {
         const all = document.getElementById('drive-select-all');
         if (!all) return;
-        const csvs = driveBrowseItems.csvs;
+        const csvs = driveCurrentCsvs();
         all.checked = csvs.length > 0 && csvs.every(f => driveSelectedCsvIds.has(f.id));
     }
     function updateDriveLoadBtn() {
@@ -2178,41 +2240,64 @@
             dis ? 'Select CSV file(s) to continue →' : ('Load ' + n + ' selected CSV' + (n > 1 ? 's' : '') + ' →');
     }
 
-    // Open a folder id: refresh listing + selection, keeping the current breadcrumb.
-    async function _driveOpen(folderId) {
+    // Load a folder as the root of the navigator (fresh listing).
+    async function driveInitRoot(folderId) {
+        driveRootId = folderId;
+        driveLevels = [];
         driveSelectedCsvIds.clear();
+        driveTextCache.clear();
+        driveRowCounts.clear();
         const el = document.getElementById('drive-browser');
         if (el) el.innerHTML = '<div class="text-[12px] text-slate-400 py-6 text-center">Loading…</div>';
         try {
+            const name = await getDriveFolderName(folderId);
             const { folders, csvs } = await listDriveChildren(folderId);
-            driveBrowseItems = { folders, csvs };
-            renderDriveBrowser();
+            driveLevels = [{ id: folderId, name, folders, csvs, selectedId: null }];
+            renderDriveNavigator();
         } catch (err) {
-            driveBrowseItems = { folders: [], csvs: [] };
             if (el) el.innerHTML = '<div class="text-[12px] text-red-500 py-6 text-center px-2">Could not list this folder: '
                 + escapeHtml(err.message) + '<br><span class="text-slate-400">Is it shared “Anyone with the link → Viewer”?</span></div>';
         }
         updateDriveLoadBtn();
     }
 
-    async function driveBrowseRoot(folderId) {
-        driveBrowsePath = [{ id: folderId, name: '…' }];
-        renderDriveBreadcrumb();
-        await _driveOpen(folderId);
-        const nm = await getDriveFolderName(folderId);
-        if (driveBrowsePath[0]) { driveBrowsePath[0].name = nm; renderDriveBreadcrumb(); }
+    // Pick a sub-folder in level i: truncate deeper levels, load the chosen folder.
+    async function driveSelectAtLevel(i, childId) {
+        if (i < 0 || i >= driveLevels.length) return;
+        driveLevels = driveLevels.slice(0, i + 1);
+        driveLevels[i].selectedId = childId || null;
+        driveSelectedCsvIds.clear();
+        if (childId) {
+            const child  = (driveLevels[i].folders || []).find(f => f.id === childId);
+            const status = document.getElementById('drive-load-status');
+            if (status) { status.textContent = 'Opening ' + (child ? child.name : 'folder') + '…'; status.classList.remove('hidden'); }
+            try {
+                const { folders, csvs } = await listDriveChildren(childId);
+                driveLevels.push({ id: childId, name: child ? child.name : 'Folder', folders, csvs, selectedId: null });
+            } catch (err) {
+                showError('Could not open folder: ' + err.message);
+            }
+            if (status) status.classList.add('hidden');
+        }
+        renderDriveNavigator();
+        updateDriveLoadBtn();
     }
-    async function driveEnterFolder(folderId, name) {
-        driveBrowsePath.push({ id: folderId, name: name || 'Folder' });
-        renderDriveBreadcrumb();
-        await _driveOpen(folderId);
-    }
-    async function driveCrumbTo(index) {
-        const seg = driveBrowsePath[index];
-        if (!seg) return;
-        driveBrowsePath = driveBrowsePath.slice(0, index + 1);
-        renderDriveBreadcrumb();
-        await _driveOpen(seg.id);
+
+    // Refresh the current (deepest) folder in place so newly-added sub-folders / CSVs appear.
+    async function driveRefresh() {
+        const cur = driveCurrentFolder();
+        if (!cur) { driveInitRoot(driveRootId); return; }
+        driveSelectedCsvIds.clear();
+        try {
+            const { folders, csvs } = await listDriveChildren(cur.id);
+            cur.folders = folders;
+            cur.csvs    = csvs;
+            (csvs || []).forEach(f => { driveRowCounts.delete(f.id); driveTextCache.delete(f.id); });
+            renderDriveNavigator();
+            updateDriveLoadBtn();
+        } catch (err) {
+            showError('Refresh failed: ' + err.message);
+        }
     }
 
     // Build the combined dataset from an explicit list of CSV file objects ({id,name}).
@@ -2225,7 +2310,7 @@
 
         const results = await mapLimit(fileObjs, 6, async (f) => {
             try {
-                const text   = await fetchDriveCsvText(f.id);
+                const text   = await fetchDriveCsvTextCached(f.id);
                 const parsed = driveCsvToRows(text, (f.name || '').replace(/\.csv$/i, ''));
                 return { name: f.name, ok: true, ...parsed };
             } catch (err) {
@@ -2433,7 +2518,7 @@
         const loadDriveBtn = document.getElementById('load-drive-btn');
         if (!loadDriveBtn) return;
         loadDriveBtn.addEventListener('click', async () => {
-            const selected = driveBrowseItems.csvs.filter(f => driveSelectedCsvIds.has(f.id));
+            const selected = driveCurrentCsvs().filter(f => driveSelectedCsvIds.has(f.id));
             if (!selected.length) { showError('Tick at least one CSV file to load.'); return; }
 
             const bText = document.getElementById('drive-btn-text');
@@ -3183,7 +3268,7 @@
 
         // Default data source = Google Drive, preloaded to the shared root folder.
         setDataSource('drive');
-        driveBrowseRoot(DEFAULT_DRIVE_FOLDER_ID);
+        driveInitRoot(DEFAULT_DRIVE_FOLDER_ID);
 
         // Load enterprise list regardless (pre-warms while user signs in)
         try {
