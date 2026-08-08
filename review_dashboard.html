@@ -527,7 +527,7 @@ function renderDrillTable(cols,rows){
     if(c[0]==='__acc'){const t=N(r.total),iss=N(r.issues);const a=100-pct(iss,t);v=`<span style="font-weight:700;color:${a>=90?'#10b981':a>=70?'#eab308':'#f97316'}">${a}%</span>`;}
     else if(c[2]==='money'){v=money(r[c[0]]);}
     else if(c[2]==='vin'){const x=r[c[0]];v=x?`<span style="font-family:monospace;color:var(--blue)">${x}</span> <button class="copy-mini" onclick="event.stopPropagation();copyCell('${(''+x).replace(/'/g,"\\'")}',this)" title="Copy VIN">⧉</button>`:'—';}
-    else if(c[2]==='mono'){const x=r[c[0]];v=x?`<span style="font-family:monospace;color:var(--blue)">${x}</span>`:'—';}
+    else if(c[2]==='mono'){const x=r[c[0]];v=x?`<span style="font-family:monospace;color:var(--blue)">${x}</span> <button class="copy-mini" onclick="event.stopPropagation();copyCell('${(''+x).replace(/'/g,"\\'")}',this)" title="Copy Rooftop ID">⧉</button>`:'—';}
     else if(c[2]==='num'){v=N(r[c[0]]).toLocaleString();}
     else {v=(r[c[0]]==null||r[c[0]]==='')?'—':r[c[0]];}
     return `<td>${v}</td>`;
@@ -600,7 +600,7 @@ function drillError(e){ document.getElementById('modal-body').innerHTML='<div cl
 // VIN-level drills are fetched on demand (respecting current filters) instead of
 // pulling every row up front — this is what keeps the initial load fast.
 async function drillIssue(it){
-  const cols=[['vin','VIN','vin'],['enterprise','Enterprise'],['rooftop','Rooftop'],['team_id','Rooftop ID','mono'],['reviewer','Reviewer'],['review_date','Date']];
+  const cols=[['vin','VIN','vin'],['enterprise','Enterprise'],['team_id','Rooftop ID','mono'],['rooftop','Rooftop'],['reviewer','Reviewer'],['review_date','Date']];
   openDrillLoading('Issue · '+it+' — loading VINs…');
   try{
     const W=buildWhere();
@@ -611,7 +611,7 @@ async function drillIssue(it){
 }
 
 async function drillRooftop(rt){
-  const cols=[['vin','VIN','vin'],['enterprise','Enterprise'],['issue_type','Issue'],['reviewer','Reviewer'],['review_date','Date'],['team_id','Rooftop ID','mono']];
+  const cols=[['team_id','Rooftop ID','mono'],['vin','VIN','vin'],['enterprise','Enterprise'],['issue_type','Issue'],['reviewer','Reviewer'],['review_date','Date']];
   openDrillLoading('Rooftop · '+rt+' — loading VINs…');
   try{
     const W=buildWhere();
@@ -627,15 +627,15 @@ function renderBreakdown(title, rows, issTypes){
   rows.forEach(r=>{tot.vins+=N(r.vins);tot.total+=N(r.total);tot.iss+=N(r.issue_cnt);issTypes.forEach(it=>{tot.by[it]=(tot.by[it]||0)+N((r.by||{})[it]||0);});});
   const tacc=100-pct(tot.iss,tot.total);
   // data for Copy Table / Download CSV
-  _drillCols=[['rooftop','Rooftop'],['enterprise','Enterprise'],['vins','VINs'],['total','Reviews']].concat(issTypes.map(it=>[it,it])).concat([['issue_cnt','Issues'],['accuracy','Accuracy']]);
-  _drillRows=rows.map(r=>{const o={rooftop:r.rooftop||'',enterprise:r.enterprise||'',vins:N(r.vins),total:N(r.total),issue_cnt:N(r.issue_cnt),accuracy:(100-pct(N(r.issue_cnt),N(r.total)))+'%'};issTypes.forEach(it=>o[it]=N((r.by||{})[it]||0));return o;});
+  _drillCols=[['team_id','Rooftop ID'],['rooftop','Rooftop'],['enterprise','Enterprise'],['vins','VINs'],['total','Reviews']].concat(issTypes.map(it=>[it,it])).concat([['issue_cnt','Issues'],['accuracy','Accuracy']]);
+  _drillRows=rows.map(r=>{const o={team_id:r.team_id||'',rooftop:r.rooftop||'',enterprise:r.enterprise||'',vins:N(r.vins),total:N(r.total),issue_cnt:N(r.issue_cnt),accuracy:(100-pct(N(r.issue_cnt),N(r.total)))+'%'};issTypes.forEach(it=>o[it]=N((r.by||{})[it]||0));return o;});
   document.getElementById('modal-title').textContent=title;
   const bar=`<div style="display:flex;gap:8px;padding:11px 16px;border-bottom:1px solid var(--border);flex-wrap:wrap;position:sticky;top:0;background:var(--card);z-index:2">
     <button class="btn" onclick="copyTbl(this)">Copy Table (TSV)</button>
     <button class="btn" onclick="downloadCSV()">⬇ Download CSV</button></div>`;
-  const head=`<tr><th>Rooftop</th><th>Enterprise</th><th style="text-align:center">VINs</th><th style="text-align:center">Reviews</th>${issTypes.map(it=>`<th style="text-align:center">${it}</th>`).join('')}<th style="text-align:center">Issues</th><th style="text-align:center">Accuracy</th></tr>`;
-  const body=rows.length?rows.map(r=>{const iss=N(r.issue_cnt);const acc=100-pct(iss,N(r.total));const by=r.by||{};return `<tr><td>${r.rooftop||'—'}</td><td style="font-size:9px;color:var(--muted)">${r.enterprise||'—'}</td><td style="text-align:center"><b>${N(r.vins).toLocaleString()}</b></td><td style="text-align:center">${N(r.total).toLocaleString()}</td>${issTypes.map(it=>{const c=N(by[it]||0);return `<td style="text-align:center;color:var(--issue)">${c||''}</td>`;}).join('')}<td style="text-align:center;font-weight:600">${iss.toLocaleString()}</td><td style="text-align:center"><span style="font-weight:700;color:${acc>=90?'#10b981':acc>=70?'#eab308':'#f97316'}">${acc}%</span></td></tr>`;}).join(''):`<tr><td colspan="${issTypes.length+6}" style="text-align:center;color:var(--muted);padding:24px">No data for the current filters.</td></tr>`;
-  const foot=`<tfoot><tr><td style="font-weight:700">Total</td><td></td><td style="text-align:center;font-weight:700">${tot.vins.toLocaleString()}</td><td style="text-align:center;font-weight:700">${tot.total.toLocaleString()}</td>${issTypes.map(it=>`<td style="text-align:center;font-weight:700;color:var(--issue)">${tot.by[it]||''}</td>`).join('')}<td style="text-align:center;font-weight:700">${tot.iss.toLocaleString()}</td><td style="text-align:center;font-weight:700;color:${tacc>=90?'#10b981':tacc>=70?'#eab308':'#f97316'}">${tacc}%</td></tr></tfoot>`;
+  const head=`<tr><th>Rooftop ID</th><th>Rooftop</th><th>Enterprise</th><th style="text-align:center">VINs</th><th style="text-align:center">Reviews</th>${issTypes.map(it=>`<th style="text-align:center">${it}</th>`).join('')}<th style="text-align:center">Issues</th><th style="text-align:center">Accuracy</th></tr>`;
+  const body=rows.length?rows.map(r=>{const iss=N(r.issue_cnt);const acc=100-pct(iss,N(r.total));const by=r.by||{};return `<tr><td style="font-family:monospace;font-size:9px;color:var(--blue);white-space:nowrap">${r.team_id?`${r.team_id} <button class="copy-mini" onclick="copyCell('${(''+r.team_id).replace(/'/g,"\\'")}',this)" title="Copy Rooftop ID">⧉</button>`:'—'}</td><td>${r.rooftop||'—'}</td><td style="font-size:9px;color:var(--muted)">${r.enterprise||'—'}</td><td style="text-align:center"><b>${N(r.vins).toLocaleString()}</b></td><td style="text-align:center">${N(r.total).toLocaleString()}</td>${issTypes.map(it=>{const c=N(by[it]||0);return `<td style="text-align:center;color:var(--issue)">${c||''}</td>`;}).join('')}<td style="text-align:center;font-weight:600">${iss.toLocaleString()}</td><td style="text-align:center"><span style="font-weight:700;color:${acc>=90?'#10b981':acc>=70?'#eab308':'#f97316'}">${acc}%</span></td></tr>`;}).join(''):`<tr><td colspan="${issTypes.length+7}" style="text-align:center;color:var(--muted);padding:24px">No data for the current filters.</td></tr>`;
+  const foot=`<tfoot><tr><td></td><td style="font-weight:700">Total</td><td></td><td style="text-align:center;font-weight:700">${tot.vins.toLocaleString()}</td><td style="text-align:center;font-weight:700">${tot.total.toLocaleString()}</td>${issTypes.map(it=>`<td style="text-align:center;font-weight:700;color:var(--issue)">${tot.by[it]||''}</td>`).join('')}<td style="text-align:center;font-weight:700">${tot.iss.toLocaleString()}</td><td style="text-align:center;font-weight:700;color:${tacc>=90?'#10b981':tacc>=70?'#eab308':'#f97316'}">${tacc}%</td></tr></tfoot>`;
   const mb=document.getElementById('modal-body');
   mb.innerHTML=bar+`<div class="rt-scroll"><table><thead>${head}</thead><tbody>${body}</tbody>${foot}</table></div>`;
   document.getElementById('modal-ov').classList.add('open');
@@ -647,11 +647,11 @@ async function _breakdownFetch(condField, val, opts={}){
   const W=opts.noDate?buildWhere({noDate:true}):buildWhere();
   const cond=(val==null||val==='')?`${W?'AND':'WHERE'} (${condField} IS NULL OR ${condField}='')`:`${W?'AND':'WHERE'} ${condField}='${(val||'').replace(/'/g,"\\'")}'`;
   const [baseR, brk] = await runQueries([
-    `SELECT rooftop, ANY_VALUE(COALESCE(enterprise_name, enterprise)) as enterprise, COUNT(DISTINCT vin) as vins, COUNT(*) as total, COUNTIF(issue_type NOT IN ('OK','Pending')) as issue_cnt FROM ${SRC} ${W} ${cond} GROUP BY rooftop ORDER BY total DESC`,
+    `SELECT rooftop, ANY_VALUE(team_id) as team_id, ANY_VALUE(COALESCE(enterprise_name, enterprise)) as enterprise, COUNT(DISTINCT vin) as vins, COUNT(*) as total, COUNTIF(issue_type NOT IN ('OK','Pending')) as issue_cnt FROM ${SRC} ${W} ${cond} GROUP BY rooftop ORDER BY total DESC`,
     `SELECT rooftop, issue_type, COUNT(*) as cnt FROM ${SRC} ${W} ${cond} AND issue_type NOT IN ('OK','Pending') GROUP BY rooftop, issue_type`
   ]);
   const by={}; brk.forEach(r=>{ if(!by[r.rooftop]) by[r.rooftop]={}; by[r.rooftop][r.issue_type]=N(r.cnt); });
-  return baseR.map(r=>({rooftop:r.rooftop, enterprise:r.enterprise, vins:r.vins, total:r.total, issue_cnt:r.issue_cnt, by:by[r.rooftop]||{}}));
+  return baseR.map(r=>({rooftop:r.rooftop, team_id:r.team_id, enterprise:r.enterprise, vins:r.vins, total:r.total, issue_cnt:r.issue_cnt, by:by[r.rooftop]||{}}));
 }
 
 async function drillDayBreakdown(dateStr){
