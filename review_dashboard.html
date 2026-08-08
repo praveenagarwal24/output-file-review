@@ -196,7 +196,7 @@ tr:hover td{background:var(--hover)}
 .rt-scroll tfoot td{position:sticky;bottom:0;background:var(--tfoot-bg);z-index:3;border-top:1px solid var(--border);font-size:11px;padding:9px 12px}
 
 @media(max-width:1100px){.kpi-grid{grid-template-columns:repeat(3,1fr)}.charts-row{grid-template-columns:1fr 1fr}}
-@media(max-width:768px){.kpi-grid{grid-template-columns:1fr 1fr}.charts-row,.tables-row{grid-template-columns:1fr}main,#filter-bar,header{padding-left:14px;padding-right:14px}}
+@media(max-width:768px){.kpi-grid{grid-template-columns:1fr 1fr}.charts-row,.tables-row,.issues-row{grid-template-columns:1fr}main,#filter-bar,header{padding-left:14px;padding-right:14px}}
 </style>
 <script>(function(){try{var t=localStorage.getItem('dash_theme');if(t!=='light'&&t!=='dark')t=(window.matchMedia&&matchMedia('(prefers-color-scheme: light)').matches)?'light':'dark';document.documentElement.setAttribute('data-theme',t);}catch(e){document.documentElement.setAttribute('data-theme','dark');}})();</script>
 </head>
@@ -846,6 +846,21 @@ function topCard(label,name,count,color,title){
   return `<div class="kpi" style="--acc:${color}"><div class="kpi-lbl">${label}</div><div class="kpi-val" title="${(title||val).replace(/"/g,'&quot;')}" style="font-size:16px;line-height:1.25;min-height:42px;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden">${val}</div><div class="kpi-sub">${count.toLocaleString()} issues</div><div class="kpi-bar"><div class="kpi-bar-fill" style="width:100%"></div></div></div>`;
 }
 
+// Top-performer card: entity name + accuracy % (latest-review-per-VIN basis) + sample size.
+function topAccCard(label,row,color){
+  if(!row||!row.nm){ return `<div class="kpi" style="--acc:${color}"><div class="kpi-lbl">${label}</div><div class="kpi-val" style="font-size:15px;min-height:38px">—</div><div class="kpi-sub">no qualifying data</div><div class="kpi-bar"><div class="kpi-bar-fill" style="width:0%"></div></div></div>`; }
+  const nm=String(row.nm), disp=nm.includes('@')?nm.split('@')[0]:nm, acc=(+row.acc||0);
+  const col=acc>=90?'#10b981':acc>=70?'#eab308':'#f97316';
+  return `<div class="kpi" style="--acc:${color}"><div class="kpi-lbl">${label}</div><div class="kpi-val" title="${nm.replace(/"/g,'&quot;')}" style="font-size:15px;line-height:1.2;min-height:38px;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden">${disp}</div><div style="font-size:22px;font-weight:800;color:${col};margin:3px 0 1px">${acc}%</div><div class="kpi-sub">${row.n.toLocaleString()} VINs · latest review</div><div class="kpi-bar"><div class="kpi-bar-fill" style="width:${Math.min(100,acc)}%"></div></div></div>`;
+}
+
+// Top-performer card by VOLUME (e.g. Top Reviewer = most reviews). Shows count as the headline.
+function topVolCard(label,row,color){
+  if(!row||!row.reviewer){ return `<div class="kpi" style="--acc:${color}"><div class="kpi-lbl">${label}</div><div class="kpi-val" style="font-size:15px;min-height:38px">—</div><div class="kpi-sub">no data</div><div class="kpi-bar"><div class="kpi-bar-fill" style="width:0%"></div></div></div>`; }
+  const nm=String(row.reviewer), disp=nm.includes('@')?nm.split('@')[0]:nm;
+  return `<div class="kpi" style="--acc:${color}"><div class="kpi-lbl">${label}</div><div class="kpi-val" title="${nm.replace(/"/g,'&quot;')}" style="font-size:15px;line-height:1.2;min-height:38px;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden">${disp}</div><div style="font-size:22px;font-weight:800;color:var(--acc);margin:3px 0 1px">${N(row.total).toLocaleString()}</div><div class="kpi-sub">reviews · ${N(row.rooftops).toLocaleString()} rooftops</div><div class="kpi-bar"><div class="kpi-bar-fill" style="width:100%"></div></div></div>`;
+}
+
 async function loadFilterOptions(){
   try{
     const[ents,rts,rvs,pocs]=await runQueries([
@@ -884,7 +899,24 @@ UNION ALL SELECT 'cs', cs_poc_email, NULL,NULL,NULL,NULL, CAST(MAX(review_date) 
 UNION ALL SELECT 'csit', cs_poc_email, issue_type, NULL,NULL,NULL,NULL, COUNT(*), NULL,NULL,NULL,NULL,NULL,NULL FROM s WHERE issue_type NOT IN ('OK','Pending') GROUP BY cs_poc_email, issue_type
 UNION ALL SELECT * FROM (SELECT 'worst', CAST(team_id AS STRING), MAX(enterprise_name), MAX(apld_team_name), MAX(ae_poc_email), MAX(ob_poc_email), MAX(cs_poc_email), COUNTIF(issue_type NOT IN ('OK','Pending')), NULL,NULL,NULL,NULL,NULL,NULL FROM s WHERE enterprise_name IS NOT NULL GROUP BY team_id ORDER BY 8 DESC LIMIT 1)`;
     const TREND = `SELECT review_date, COUNT(*) as cnt, COUNTIF(issue_type NOT IN ('OK','Pending')) as iss, COUNT(DISTINCT vin) as vins, COUNT(DISTINCT rooftop) as rts, COUNT(DISTINCT COALESCE(enterprise_name, enterprise)) as ents FROM ${SRC} ${WND} GROUP BY review_date ORDER BY review_date`;
-    const [combRows, trendR] = await runQueries([COMB, TREND]);
+    // TOP Enterprise/Rooftop/CS by ACCURACY on a LATEST-review-per-VIN basis (each VIN counted
+    // once, its most recent verdict). Qualify with >=100 latest-review VINs; if none qualify the
+    // (n>=100) sort key collapses so the best-accuracy row still wins (auto-relax).
+    // Ties on accuracy broken by higher volume. Numeric/junk enterprise names excluded.
+    // (Top REVIEWER is by VOLUME instead — highest total reviews — taken from rvR[0], not here.)
+    const TOPS = `WITH latest AS (
+      SELECT enterprise_name, rooftop, team_id, cs_poc_email, reviewer, issue_type
+      FROM (SELECT enterprise_name, rooftop, team_id, cs_poc_email, reviewer, issue_type,
+              ROW_NUMBER() OVER (PARTITION BY team_id, vin ORDER BY reviewed_at DESC) rn
+            FROM ${SRC} ${W}) WHERE rn=1),
+    e  AS (SELECT 'ent' k, enterprise_name nm, CAST(NULL AS STRING) tid, COUNT(*) n, ROUND(100*COUNTIF(issue_type IN ('OK','Pending'))/COUNT(*),1) acc FROM latest WHERE enterprise_name IS NOT NULL AND enterprise_name!='' AND NOT REGEXP_CONTAINS(enterprise_name, r'^[0-9]+$') GROUP BY nm),
+    r2 AS (SELECT 'rt'  k, rooftop nm, ANY_VALUE(team_id) tid, COUNT(*) n, ROUND(100*COUNTIF(issue_type IN ('OK','Pending'))/COUNT(*),1) acc FROM latest WHERE rooftop IS NOT NULL AND rooftop!='' GROUP BY nm),
+    c  AS (SELECT 'cs'  k, cs_poc_email nm, CAST(NULL AS STRING) tid, COUNT(*) n, ROUND(100*COUNTIF(issue_type IN ('OK','Pending'))/COUNT(*),1) acc FROM latest WHERE cs_poc_email IS NOT NULL AND cs_poc_email!='' GROUP BY nm)
+    SELECT * FROM (SELECT * FROM e  ORDER BY (n>=100) DESC, acc DESC, n DESC LIMIT 1)
+    UNION ALL SELECT * FROM (SELECT * FROM r2 ORDER BY (n>=100) DESC, acc DESC, n DESC LIMIT 1)
+    UNION ALL SELECT * FROM (SELECT * FROM c  ORDER BY (n>=100) DESC, acc DESC, n DESC LIMIT 1)`;
+    const [combRows, trendR, topsR] = await runQueries([COMB, TREND, TOPS]);
+    const tops={}; (topsR||[]).forEach(r=>{ tops[r.k]={nm:r.nm, tid:r.tid, n:N(r.n), acc:(+r.acc||0)}; });
     const _pick=k=>combRows.filter(r=>r._k===k);
     const _ovRow=_pick('ov')[0]||{};
     const ovR=[{total:_ovRow.n1,ok_cnt:_ovRow.n2,issue_cnt:_ovRow.n3,rev_cnt:_ovRow.n4,rt_cnt:_ovRow.n5,ent_cnt:_ovRow.n6,vin_cnt:_ovRow.n7}];
@@ -957,10 +989,18 @@ UNION ALL SELECT * FROM (SELECT 'worst', CAST(team_id AS STRING), MAX(enterprise
     </div>
 
     <div class="sec-label">Issues</div>
-    <div class="chart-card">
-      <div class="chart-title">Issue Types · click a row to drill to accounts (rooftop + enterprise)</div>
-      <table><thead><tr><th>Issue Type</th><th>Count</th><th>% of Issues</th><th>% of Total VINs</th></tr></thead>
-      <tbody>${issR.filter(r=>r.issue_type!=='OK'&&r.issue_type!=='Pending').map(r=>{const c=N(r.cnt);return `<tr style="cursor:pointer" onclick="drillIssue('${(r.issue_type||'').replace(/'/g,"\\'")}')"><td><span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:${ic(r.issue_type)};margin-right:7px"></span>${r.issue_type} <span style="color:var(--muted);font-size:9px">⤢</span></td><td><b>${c.toLocaleString()}</b></td><td>${pct(c,issues)}%</td><td>${pct(c,total)}%</td></tr>`;}).join('')}</tbody></table>
+    <div class="issues-row" style="display:grid;grid-template-columns:1fr 1fr;gap:10px;align-items:stretch">
+      <div class="chart-card">
+        <div class="chart-title">Issue Types · click a row to drill to accounts (rooftop + enterprise)</div>
+        <table><thead><tr><th>Issue Type</th><th>Count</th><th>% of Issues</th><th>% of Total VINs</th></tr></thead>
+        <tbody>${issR.filter(r=>r.issue_type!=='OK'&&r.issue_type!=='Pending').map(r=>{const c=N(r.cnt);return `<tr style="cursor:pointer" onclick="drillIssue('${(r.issue_type||'').replace(/'/g,"\\'")}')"><td><span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:${ic(r.issue_type)};margin-right:7px"></span>${r.issue_type} <span style="color:var(--muted);font-size:9px">⤢</span></td><td><b>${c.toLocaleString()}</b></td><td>${pct(c,issues)}%</td><td>${pct(c,total)}%</td></tr>`;}).join('')}</tbody></table>
+      </div>
+      <div class="tops-grid" style="display:grid;grid-template-columns:1fr 1fr;grid-auto-rows:1fr;gap:10px">
+        ${topAccCard('Top Enterprise · Accuracy', tops.ent, '#06b6d4')}
+        ${topAccCard('Top Rooftop · Accuracy', tops.rt, '#f59e0b')}
+        ${topAccCard('Top CS POC · Accuracy', tops.cs, '#10b981')}
+        ${topVolCard('Top Reviewer · Volume', rvR.find(r=>r.reviewer&&String(r.reviewer).trim()), '#8b5cf6')}
+      </div>
     </div>
 
     <div class="sec-label">Performance</div>
