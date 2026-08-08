@@ -2542,7 +2542,16 @@
         if (msg) msg.textContent = 'Reserving “' + rooftop + '”…';
 
         try {
-            // 1) Claim (reserve) — keyed by the rooftop URL so it shares the 4h registry.
+            // 1) ALWAYS scrape fresh FIRST — launch a new scrape and wait for the NEW
+            //    file. We claim only AFTER this succeeds, so a failed scrape never
+            //    leaves a stale "You have it" reservation behind.
+            if (msg) msg.textContent = 'Starting a fresh scrape of “' + rooftop + '”…';
+            const before     = await checkScrapeStatus(url);
+            const prevFileId = (before && before.fileId) || '';
+            const ready = await scrapeAndWait(url, rooftop, msg, prevFileId);
+            if (!ready || !ready.fileId) throw new Error('no CSV produced for this rooftop');
+
+            // 2) Reserve it now that we actually have data. Shares the 4h claim registry.
             const conflicts = await claimDriveRooftops([{ fileId: qKey(url), rooftop }]);
             if (conflicts.length) {
                 const who = (conflicts[0] && conflicts[0].reviewer) || 'someone';
@@ -2551,15 +2560,6 @@
                 }
             }
             logQueueEvent('claim', rooftop, url, '');
-
-            // 2) ALWAYS scrape fresh — launch a new scrape and wait for the NEW file.
-            //    The scraper replaces the day's CSV with a new Drive file (new fileId),
-            //    so we note the current fileId first and wait until it changes.
-            if (msg) msg.textContent = 'Starting a fresh scrape of “' + rooftop + '”…';
-            const before     = await checkScrapeStatus(url);
-            const prevFileId = (before && before.fileId) || '';
-            const ready = await scrapeAndWait(url, rooftop, msg, prevFileId);
-            if (!ready || !ready.fileId) throw new Error('no CSV produced for this rooftop');
 
             // 3) Load that one CSV into the reviewer (reuses the Drive load path).
             if (msg) msg.textContent = 'Loading “' + rooftop + '”…';
