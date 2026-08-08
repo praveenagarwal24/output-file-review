@@ -2499,7 +2499,7 @@
             const dim = (st.kind === 'done' || st.kind === 'inuse') ? ' opacity-60' : '';
             const ready = queueToday[String(r.url || '').trim().toLowerCase()];
             const sub = (r.enterprise && r.enterprise !== r.rooftop ? escapeHtml(r.enterprise) + ' · ' : '')
-                      + (ready ? (Number(ready.rows) || 0) + ' rows today' : 'will scrape on click')
+                      + (ready ? ('last scrape: ' + (Number(ready.rows) || 0) + ' rows') : 'not scraped yet') + ' · click to scrape'
                       + (st.kind === 'inuse' && st.claim ? ' · ' + escapeHtml(st.claim.reviewer || 'someone') : '');
             html += '<div data-qidx="' + idx + '" class="w-full flex items-center gap-2 px-2 py-1.5 rounded hover:bg-slate-50 cursor-pointer text-[13px] border-b border-slate-50 last:border-0' + dim + '">'
                  +   '<span class="flex-1 min-w-0">'
@@ -2552,12 +2552,13 @@
             }
             logQueueEvent('claim', rooftop, url, '');
 
-            // 2) Get the CSV — today's scraped copy if present, else scrape on demand.
-            if (msg) msg.textContent = 'Checking for today’s CSV for “' + rooftop + '”…';
-            let ready = await checkScrapeStatus(url);
-            if (!ready || !ready.ready || !ready.fileId) {
-                ready = await scrapeAndWait(url, rooftop, msg);
-            }
+            // 2) ALWAYS scrape fresh — launch a new scrape and wait for the NEW file.
+            //    The scraper replaces the day's CSV with a new Drive file (new fileId),
+            //    so we note the current fileId first and wait until it changes.
+            if (msg) msg.textContent = 'Starting a fresh scrape of “' + rooftop + '”…';
+            const before     = await checkScrapeStatus(url);
+            const prevFileId = (before && before.fileId) || '';
+            const ready = await scrapeAndWait(url, rooftop, msg, prevFileId);
             if (!ready || !ready.fileId) throw new Error('no CSV produced for this rooftop');
 
             // 3) Load that one CSV into the reviewer (reuses the Drive load path).
@@ -2578,7 +2579,7 @@
 
     // Trigger the GitHub scraper for one rooftop, then poll the manifest until the
     // CSV lands (a real headless scrape takes a while — it is NOT instant).
-    async function scrapeAndWait(url, rooftop, msgEl) {
+    async function scrapeAndWait(url, rooftop, msgEl, prevFileId) {
         if (msgEl) msgEl.textContent = 'Scraping “' + rooftop + '” — this can take a few minutes…';
         try {
             const res  = await fetch(BQ_WEBAPP_URL, {
@@ -2590,14 +2591,17 @@
         } catch (e) {
             throw new Error('scrape trigger failed: ' + e.message);
         }
-        const MAX_TRIES = 40, EVERY_MS = 15000;   // ~10 minutes
+        const MAX_TRIES = 60, EVERY_MS = 15000;   // ~15 minutes
+        const prev = prevFileId || '';
         for (let i = 0; i < MAX_TRIES; i++) {
             await new Promise(r => setTimeout(r, EVERY_MS));
-            if (msgEl) msgEl.textContent = 'Scraping “' + rooftop + '” — waiting for the CSV (' + Math.round((i + 1) * EVERY_MS / 1000) + 's)…';
+            if (msgEl) msgEl.textContent = 'Scraping “' + rooftop + '” — waiting for the fresh CSV (' + Math.round((i + 1) * EVERY_MS / 1000) + 's)…';
             try {
                 const s  = await fetch(BQ_WEBAPP_URL + '?action=scrapeStatus&url=' + encodeURIComponent(url), { cache: 'no-store', redirect: 'follow' });
                 const sd = await s.json().catch(() => ({}));
-                if (sd && sd.ok && sd.ready && sd.fileId) return sd;
+                // Only accept a NEW file (different id than before we triggered) so we
+                // never load the previous scrape by mistake.
+                if (sd && sd.ok && sd.ready && sd.fileId && sd.fileId !== prev) return sd;
             } catch (e) { /* keep polling */ }
         }
         throw new Error('scrape timed out — try again later or check the Runs tab');
