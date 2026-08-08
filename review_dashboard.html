@@ -757,8 +757,8 @@ function trendBars(rows){
 // ── Daily Trend (interactive: metric tabs, range tabs, bar/curve toggle) ──
 const TREND_COLORS=['#3b82f6','#8b5cf6','#10b981','#f59e0b','#ec4899','#06b6d4','#f97316','#6366f1','#84cc16','#14b8a6'];
 const TREND_RANGES=[['today','Today'],['yesterday','Yesterday'],['7d','7d'],['15d','15d'],['30d','30d'],['90d','90d'],['all','All']];
-const TREND_METRICS=[['cnt','Reviews'],['vins','Unique VINs'],['ents','Enterprises']];
-const TREND_MLBL={cnt:'reviews',vins:'VINs',ents:'enterprises'};
+const TREND_METRICS=[['cnt','Reviews'],['vins','Unique VINs'],['rts','Rooftops'],['ents','Enterprises']];
+const TREND_MLBL={cnt:'reviews',vins:'VINs',rts:'rooftops',ents:'enterprises'};
 let trendMetric='cnt', trendRange='15d', trendType='bar';
 
 function trendRangeCutoff(range){
@@ -883,7 +883,7 @@ UNION ALL SELECT 'rtit', rooftop, issue_type, NULL,NULL,NULL,NULL, COUNT(*), NUL
 UNION ALL SELECT 'cs', cs_poc_email, NULL,NULL,NULL,NULL, CAST(MAX(review_date) AS STRING), COUNT(DISTINCT rooftop), COUNT(DISTINCT vin), COUNT(*), COUNTIF(issue_type='OK' OR issue_type='Pending'), COUNTIF(issue_type NOT IN ('OK','Pending')), NULL,NULL FROM s GROUP BY cs_poc_email
 UNION ALL SELECT 'csit', cs_poc_email, issue_type, NULL,NULL,NULL,NULL, COUNT(*), NULL,NULL,NULL,NULL,NULL,NULL FROM s WHERE issue_type NOT IN ('OK','Pending') GROUP BY cs_poc_email, issue_type
 UNION ALL SELECT * FROM (SELECT 'worst', CAST(team_id AS STRING), MAX(enterprise_name), MAX(apld_team_name), MAX(ae_poc_email), MAX(ob_poc_email), MAX(cs_poc_email), COUNTIF(issue_type NOT IN ('OK','Pending')), NULL,NULL,NULL,NULL,NULL,NULL FROM s WHERE enterprise_name IS NOT NULL GROUP BY team_id ORDER BY 8 DESC LIMIT 1)`;
-    const TREND = `SELECT review_date, COUNT(*) as cnt, COUNTIF(issue_type NOT IN ('OK','Pending')) as iss, COUNT(DISTINCT vin) as vins, COUNT(DISTINCT COALESCE(enterprise_name, enterprise)) as ents FROM ${SRC} ${WND} GROUP BY review_date ORDER BY review_date`;
+    const TREND = `SELECT review_date, COUNT(*) as cnt, COUNTIF(issue_type NOT IN ('OK','Pending')) as iss, COUNT(DISTINCT vin) as vins, COUNT(DISTINCT rooftop) as rts, COUNT(DISTINCT COALESCE(enterprise_name, enterprise)) as ents FROM ${SRC} ${WND} GROUP BY review_date ORDER BY review_date`;
     const [combRows, trendR] = await runQueries([COMB, TREND]);
     const _pick=k=>combRows.filter(r=>r._k===k);
     const _ovRow=_pick('ov')[0]||{};
