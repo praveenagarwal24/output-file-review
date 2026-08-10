@@ -508,6 +508,7 @@
                     <span class="text-slate-500 font-medium text-[13px]">Select a team</span>
                     <span id="current-enterprise-tag" class="text-slate-700 font-semibold text-[13px]"></span>
                     <span id="enterprise-id-tag" class="bg-slate-200 px-3 py-0.5 rounded-full text-[11px] font-bold text-slate-600"></span>
+                    <span id="dashboard-lot-tag" class="hidden bg-amber-100 px-3 py-0.5 rounded-full text-[11px] font-bold text-amber-700"></span>
                     <button onclick="showPage('page-login')" class="bg-blue-800 text-white text-[10px] px-2 py-0.5 rounded-md font-bold hover:bg-blue-900 transition flex items-center space-x-1">
                         <span>← Change ID</span>
                     </button>
@@ -572,7 +573,7 @@
                 <div class="border-l border-slate-200 h-6 mx-1"></div>
                 <div class="flex items-baseline space-x-2 flex-wrap gap-y-1">
                     <h2 id="review-team-name" class="font-bold text-slate-800 text-[15px]"></h2>
-                    <span id="review-team-id" class="text-[11px] font-semibold text-slate-400 uppercase tracking-wide"></span>
+                    <span id="review-team-id" class="hidden inline-flex items-center gap-1 text-[11px] font-semibold text-slate-400 tracking-wide"></span>
                 </div>
                 <!-- Enterprise metadata (from spyne_rooftop_enterprises, joined on team_id) -->
                 <div id="enterprise-meta" class="hidden items-center flex-wrap gap-1.5"></div>
@@ -1121,6 +1122,64 @@
         box.classList.remove('hidden'); box.classList.add('flex');
     }
 
+    // ── team_id chip beside the team name (review page) ──────────────────────
+    // Build the Spyne Console deep-link for a team. team_id is wrapped in
+    // [brackets] (URL-encoded) to match the console's expected format.
+    function reviewConsoleUrl(teamId, entId) {
+        return 'https://console.spyne.ai/settings?activeSubTab=studio'
+             + '&team_id=' + encodeURIComponent('[' + teamId + ']')
+             + '&enterprise_id=' + encodeURIComponent(entId || '');
+    }
+
+    // Copy raw team_id to clipboard, with a file:// fallback + a quick ✓ flash.
+    function copyTeamId(id, btn) {
+        const flash = () => {
+            if (!btn) return;
+            const ic = btn.querySelector('.copy-ic'), ok = btn.querySelector('.copy-ok');
+            if (ic && ok) {
+                ic.classList.add('hidden'); ok.classList.remove('hidden');
+                setTimeout(() => { ic.classList.remove('hidden'); ok.classList.add('hidden'); }, 1200);
+            }
+        };
+        const fallback = () => {
+            try {
+                const ta = document.createElement('textarea');
+                ta.value = id; ta.style.position = 'fixed'; ta.style.opacity = '0';
+                document.body.appendChild(ta); ta.focus(); ta.select();
+                document.execCommand('copy'); document.body.removeChild(ta);
+            } catch (e) {}
+            flash();
+        };
+        try {
+            if (navigator.clipboard && navigator.clipboard.writeText) {
+                navigator.clipboard.writeText(id).then(flash).catch(fallback);
+            } else { fallback(); }
+        } catch (e) { fallback(); }
+    }
+
+    // Fill #review-team-id for a single team; hide it for aggregated/all-rooftops views.
+    function renderReviewTeamId(teamId, entId) {
+        const el = document.getElementById('review-team-id');
+        if (!el) return;
+        const isSingle = teamId && teamId !== 'csv-all-rooftops';
+        if (!isSingle) { el.classList.add('hidden'); el.innerHTML = ''; return; }
+        el.classList.remove('hidden');
+        const safeId = escapeHtml(String(teamId));
+        const url    = escapeHtml(reviewConsoleUrl(teamId, entId));
+        el.innerHTML =
+            '<a href="' + url + '" target="_blank" rel="noopener" '
+          + 'class="font-mono normal-case text-blue-600 hover:underline" '
+          + 'title="Open in Spyne Console (team_id ' + safeId + ')">' + safeId + '</a>'
+          + '<button type="button" onclick="copyTeamId(\'' + safeId + '\', this)" '
+          + 'class="text-slate-400 hover:text-blue-600 transition p-0.5 rounded" title="Copy team_id">'
+          +   '<svg class="copy-ic w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">'
+          +     '<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" '
+          +     'd="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"/></svg>'
+          +   '<svg class="copy-ok w-3.5 h-3.5 hidden text-emerald-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">'
+          +     '<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/></svg>'
+          + '</button>';
+    }
+
     // Per-user localStorage keys — reviews are isolated per reviewer
     function storageKey()     { return 'spyne_reviews_v2_' + (getCurrentUser() || 'anon'); }
     function storageKey1Img() { return 'spyne_1img_v2_'   + (getCurrentUser() || 'anon'); }
@@ -1208,6 +1267,7 @@
     let imagesLoaded         = false;
     let selectedEnterprise   = "";
     let selectedEnterpriseId = "";
+    let selectedLot          = "";   // deepest Drive sub-folder (lot); empty for Sheet/CSV sources
     let teamsList            = [];
     let vinsByTeam           = new Map();
     let currentTeam          = null;
@@ -1980,6 +2040,7 @@
                     imagesLoaded         = true;
                     selectedEnterprise   = csvFileData.enterprise;
                     selectedEnterpriseId = csvFileData.entId || 'csv-ent-001';
+                    selectedLot          = '';   // no lot concept for uploaded CSVs
 
                     await buildTeamIndex(selectedEnterprise);
 
@@ -2294,21 +2355,28 @@
         const btn = document.getElementById('load-drive-btn');
         if (!btn) return;
         const selected = driveVisibleCsvs().filter(f => driveSelectedCsvIds.has(f.id));
-        const n   = selected.length;
-        const dis = n === 0;
+        const n = selected.length;
+        // A selected file is still "counting" until its row count is settled (number or 'err').
+        const pending = selected.filter(f => !driveRowCounts.has(f.id)).length;
+        // Keep the button greyed until every SELECTED CSV has finished fetching its rows.
+        const dis = n === 0 || pending > 0;
         btn.disabled = dis;
         btn.classList.toggle('opacity-50', dis);
         btn.classList.toggle('cursor-not-allowed', dis);
-        if (dis) {
+        if (n === 0) {
             document.getElementById('drive-btn-text').textContent = 'Select CSV file(s) to continue →';
             return;
         }
-        // Sum the row counts of the selected CSVs (some may still be counting → show "+").
-        let rows = 0, known = true;
-        selected.forEach(f => { const v = driveRowCounts.get(f.id); if (typeof v === 'number') rows += v; else known = false; });
-        const rowsTxt = rows.toLocaleString() + (known ? '' : '+');
+        if (pending > 0) {
+            document.getElementById('drive-btn-text').textContent =
+                'Counting rows… (' + pending + ' of ' + n + ' left)';
+            return;
+        }
+        // All selected counts are final → show the exact total.
+        let rows = 0;
+        selected.forEach(f => { const v = driveRowCounts.get(f.id); if (typeof v === 'number') rows += v; });
         document.getElementById('drive-btn-text').textContent =
-            'Load ' + n + ' selected CSV' + (n > 1 ? 's' : '') + ' · ' + rowsTxt + ' rows →';
+            'Load ' + n + ' selected CSV' + (n > 1 ? 's' : '') + ' · ' + rows.toLocaleString() + ' rows →';
     }
 
     // Load a folder as the root of the navigator (fresh listing).
@@ -2404,7 +2472,9 @@
         const entId    = (good.find(r => r.entId) || {}).entId || 'drive-ent-001';
         const label    = rooftops.length === 1 ? rooftops[0]
                        : rooftops[0] + ' (+' + (rooftops.length - 1) + ' more)';
-        driveFolderData = { rows: allRows, enterprise: label, entId,
+        // The deepest open Drive folder is the "lot" the CSVs live in (e.g. "Lot-01").
+        const lot      = (driveCurrentFolder() || {}).name || '';
+        driveFolderData = { rows: allRows, enterprise: label, entId, lot,
                             fileCount: good.length, failed: bad, rooftops, vinCount: allRows.length };
         return driveFolderData;
     }
@@ -2423,6 +2493,7 @@
         imagesLoaded         = true;
         selectedEnterprise   = d.enterprise;
         selectedEnterpriseId = d.entId || 'drive-ent-001';
+        selectedLot          = d.lot || '';
 
         const loadingMsg = document.getElementById('data-loading-msg');
         if (loadingMsg) loadingMsg.textContent = 'Building rooftop index…';
@@ -3450,6 +3521,7 @@
 
         selectedEnterprise   = select.value;
         selectedEnterpriseId = '';
+        selectedLot          = '';   // no lot concept for the Google Sheet source
         btn.disabled = true;
         bText.innerText = "Loading teams...";
         bLoad.classList.remove('hidden');
@@ -3594,6 +3666,12 @@
         const empty = document.getElementById('dealer-empty');
         document.getElementById('current-enterprise-tag').innerText = selectedEnterprise;
         document.getElementById('enterprise-id-tag').innerText = selectedEnterpriseId || '';
+        // Lot chip — only for Drive-loaded data (hidden for Sheet / uploaded CSV sources).
+        const lotTag = document.getElementById('dashboard-lot-tag');
+        if (lotTag) {
+            if (selectedLot) { lotTag.textContent = 'Lot: ' + selectedLot; lotTag.classList.remove('hidden'); }
+            else { lotTag.textContent = ''; lotTag.classList.add('hidden'); }
+        }
         grid.innerHTML = '';
 
         let totalVINs = 0, totalImages = 0, reviewedVINs = 0, reviewed1Img = 0;
@@ -3764,7 +3842,7 @@
         currentVINIndex = -1;
 
         document.getElementById('review-team-name').innerText = team.name;
-        document.getElementById('review-team-id').innerText   = '';  // hide teamId in 1img mode
+        renderReviewTeamId(team.teamId, team.entId);
         renderEnterpriseMeta(team.teamId);
 
         const teamVins = vinsByTeam.get(team.teamId);
@@ -4429,7 +4507,7 @@
 
         // Reuse the same review page — update header labels
         document.getElementById('review-team-name').innerText = team.rooftop || team.name || '1st Image Review';
-        document.getElementById('review-team-id').innerText   = '';  // hide teamId in 1img mode
+        renderReviewTeamId(team.teamId, team.entId);
         renderEnterpriseMeta(team.teamId);
 
         // Mode badge removed — title already says "1st Image Review"
