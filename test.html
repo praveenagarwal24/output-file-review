@@ -2802,7 +2802,7 @@
             singleArea.style.display = 'none';
             singleArea.classList.remove('active');
             if (vtGrid) vtGrid.classList.add('active');
-            if (issueBar) issueBar.style.display = 'none';
+            if (issueBar) issueBar.style.display = 'flex';   // show issue bar at top in grid too
             if (zoomWrap) zoomWrap.style.visibility = 'visible';
             syncZoomSlider();
             // current-vin-image-count removed
@@ -2811,6 +2811,13 @@
                 grid.classList.remove('hidden');  // images-grid starts with hidden class
                 const cols = ZOOM_COLS[currentGridZoom - 1];
                 grid.style.gridTemplateColumns = 'repeat(' + cols + ', minmax(0, 1fr))';
+            }
+            // Reflect the focused tile's current tag in the header bar
+            if (currentImg1Idx >= 0 && currentImg1Team && currentImg1VINs[currentImg1Idx]) {
+                const _fv = currentImg1VINs[currentImg1Idx];
+                svUpdateControls(getImg1Review(currentImg1Team.teamId, _fv.vin, _fv.rooftop || ''));
+            } else {
+                svUpdateControls(null);
             }
         }
     }
@@ -3067,16 +3074,62 @@
         render1ImgSidebar();
     }
 
+    // ── Grid/Single issue targeting ──────────────────────────────────────────
+    // Which VINs a header-bar / keyboard issue action applies to.
+    //  • Grid view WITH checkbox-selected tiles → all selected tiles (bulk).
+    //  • Otherwise → the single focused tile (currentImg1Idx).
+    function img1IssueTargets() {
+        if (img1ViewMode === 'grid' && selectedVINIndices && selectedVINIndices.size > 0) {
+            return [...selectedVINIndices]
+                .filter(i => i >= 0 && i < currentImg1VINs.length)
+                .sort((a, b) => a - b);
+        }
+        return currentImg1Idx >= 0 ? [currentImg1Idx] : [];
+    }
+
+    // Write a review for a specific tile index, keeping rooftop resolution correct
+    // (setImg1Review resolves rooftop from currentImg1Idx, so pin it while writing).
+    function setImg1ReviewForIdx(idx, status) {
+        const saved = currentImg1Idx;
+        currentImg1Idx = idx;
+        setImg1Review(currentImg1Team.teamId, currentImg1VINs[idx].vin, status, '');
+        currentImg1Idx = saved;
+    }
+
+    // Apply an issue value to the current target set. Toggle semantics: if every
+    // target already holds this value, clear it instead. value === null clears.
+    function applyImg1Issue(value) {
+        if (!currentImg1Team) return;
+        const targets = img1IssueTargets();
+        if (!targets.length) return;
+        let newSt = value;
+        if (value !== null) {
+            const allHave = targets.every(i => {
+                const v = currentImg1VINs[i];
+                return getImg1Review(currentImg1Team.teamId, v.vin, v.rooftop || '') === value;
+            });
+            if (allHave) newSt = null;
+        }
+        targets.forEach(i => {
+            setImg1ReviewForIdx(i, newSt);
+            updateTileIssueState(i, newSt);
+            if (selectedVINIndices && selectedVINIndices.has(i)) updateTileSelectionStyle(i);
+        });
+        updateImg1ProgressBadge();
+        // Header bar reflects the focused tile's state
+        const fIdx = currentImg1Idx >= 0 ? currentImg1Idx : targets[0];
+        const fv   = currentImg1VINs[fIdx];
+        svUpdateControls(fv ? getImg1Review(currentImg1Team.teamId, fv.vin, fv.rooftop || '') : null);
+        render1ImgSidebar();
+    }
+
     function svToggleIssue(value) {
         if (currentImg1Idx < 0 || !currentImg1Team) return;
-        const v   = currentImg1VINs[currentImg1Idx];
-        const cur = getImg1Review(currentImg1Team.teamId, v.vin, v.rooftop || '');
-        svSetIssue(cur === value ? null : value);
+        applyImg1Issue(value);
     }
 
     function svMarkOk() {
-        const cur = getImg1Review(currentImg1Team.teamId, currentImg1VINs[currentImg1Idx]?.vin, currentImg1VINs[currentImg1Idx]?.rooftop || '');
-        svSetIssue(cur === 'ok' ? null : 'ok');
+        applyImg1Issue('ok');
     }
 
     // Preload cache — avoid re-requesting the same URL
@@ -3135,9 +3188,13 @@
 
     function svClear() {
         const teamId = currentImg1Team?.teamId;
-        const vin    = currentImg1VINs[currentImg1Idx]?.vin;
-        if (teamId && vin) clearSubIssues(teamId, vin);
-        svSetIssue(null);
+        if (teamId) {
+            img1IssueTargets().forEach(i => {
+                const vin = currentImg1VINs[i]?.vin;
+                if (vin) clearSubIssues(teamId, vin);
+            });
+        }
+        applyImg1Issue(null);
     }
 
     // =========================================================================
@@ -4414,6 +4471,23 @@
         return map[st] || '';
     }
 
+    // Grid tile indicator: show only a short code of whichever issue is tagged
+    // (✓ for OK), colored by state. Hidden when nothing is tagged.
+    function applyStateBadge(el, st) {
+        if (!el) return;
+        if (st && st !== 'pending') {
+            el.style.cssText = 'position:absolute;top:5px;left:5px;z-index:5;font-size:9px;font-weight:800;padding:2px 6px;border-radius:5px;white-space:nowrap;box-shadow:0 1px 3px rgba(0,0,0,0.25);display:block;';
+            el.style.background = stateColor(st);
+            el.style.color = '#fff';
+            el.textContent = st === 'ok' ? '✓ OK' : stateBadgeText(st);
+            el.title = stateLabel(st);
+        } else {
+            el.style.cssText = 'position:absolute;top:5px;left:5px;z-index:5;display:none;';
+            el.textContent = '';
+            el.title = '';
+        }
+    }
+
     // Sub-issues (single view only) — stored separately keyed by teamId+vin
     // Format: { 'teamId::vin': Set<string> }
     const subIssues = {};
@@ -4569,6 +4643,9 @@
         currentImg1Idx = firstUnreviewed === -1 ? 0 : firstUnreviewed;
         render1ImgSidebar();
         updateImg1ProgressBadge();
+        // Ensure grid view state is applied (shows the header issue bar + focuses a tile)
+        setImg1View('grid');
+        if (currentImg1Idx >= 0) select1ImgVIN(currentImg1Idx);
     }
 
     function handleImageAreaScroll() {
@@ -4768,6 +4845,9 @@
             tile.scrollIntoView({ behavior: 'smooth', block: 'center' });
         }
 
+        // Reflect this tile's current tag in the top issue bar (grid view)
+        if (img1ViewMode === 'grid') svUpdateControls(st);
+
         render1ImgSidebar();
     }
 
@@ -4804,8 +4884,8 @@
             tile.className = 'image-tile';
             tile.id = 'img1-tile-' + idx;
             tile.style.cursor = 'pointer';
-            tile.style.outline = st === 'ok' ? '2px solid #10b981'
-                                : st === 'issue' ? '2px solid #ef4444'
+            tile.style.outline = (st && st !== 'pending')
+                                ? '2px solid ' + stateColor(st)
                                 : '2px solid transparent';
 
             // Index badge (reuse existing style) — show VIN truncated
@@ -4816,56 +4896,13 @@
             badge.textContent = v.vin.slice(-8);  // last 8 chars of VIN
             tile.appendChild(badge);
 
-            // Status badge — top-LEFT (shows ok/raw/stock/both)
+            // Status badge — top-LEFT: short code of whichever issue is tagged (✓ for OK)
             const stBadge = document.createElement('div');
-            const badgeTxt = stateBadgeText(st);
-            // Circle badge for R/S, pill for OK
-            if (st === 'raw' || st === 'stock') {
-                stBadge.style.cssText = 'position:absolute;top:5px;left:5px;z-index:5;width:18px;height:18px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:10px;font-weight:800;box-shadow:0 1px 3px rgba(0,0,0,0.25);';
-                stBadge.style.background = stateColor(st);
-                stBadge.style.color = '#fff';
-                stBadge.textContent = badgeTxt;
-            } else if (st === 'ok') {
-                stBadge.style.cssText = 'position:absolute;top:5px;left:5px;z-index:5;font-size:8px;font-weight:800;padding:2px 5px;border-radius:4px;white-space:nowrap;';
-                stBadge.style.background = '#10b981';
-                stBadge.style.color = '#fff';
-                stBadge.textContent = '✓ OK';
-            }
+            stBadge.className = 'img1-state-badge';
+            applyStateBadge(stBadge, st);
             tile.appendChild(stBadge);
 
-            // Issue radio buttons — top-RIGHT (RAW / STOCK, mutually exclusive)
-            // Single click selects; clicking the already-selected one deselects it.
-            const issueWrap = document.createElement('div');
-            issueWrap.style.cssText = 'position:absolute;top:5px;right:5px;z-index:6;display:flex;flex-direction:column;gap:2px;';
-
-            function makeIssueCircle(letter, color, value, currentSt) {
-                const btn = document.createElement('div');
-                const active = currentSt === value;
-                btn.style.cssText = 'width:18px;height:18px;border-radius:50%;display:flex;align-items:center;justify-content:center;'
-                    + 'font-size:10px;font-weight:800;cursor:pointer;user-select:none;transition:all 0.12s;'
-                    + 'box-shadow:0 1px 3px rgba(0,0,0,0.25);'
-                    + (active
-                        ? 'background:' + color + ';color:#fff;'
-                        : 'background:rgba(255,255,255,0.95);color:' + color + ';outline:2px solid ' + color + ';');
-                btn.textContent = letter;
-                btn.dataset.value = value;
-                btn.addEventListener('click', (e) => {
-                    e.stopPropagation();
-                    setImg1IssueType(idx, btn);
-                });
-                return btn;
-            }
-
-            const rawBtn      = makeIssueCircle('R', '#f97316', 'raw',      st);
-            const stockBtn    = makeIssueCircle('S', '#3b82f6', 'stock',    st);
-            const internalBtn = makeIssueCircle('I', '#8b5cf6', 'issue',    st);
-            issueWrap.appendChild(rawBtn);
-            issueWrap.appendChild(stockBtn);
-            issueWrap.appendChild(internalBtn);
-            tile.appendChild(issueWrap);
-            tile._rawBtn      = rawBtn;
-            tile._stockBtn    = stockBtn;
-            tile._internalBtn = internalBtn;
+            // (Per-tile R/S/I circles removed — all issues are tagged from the top bar / keyboard)
 
             // Selection checkbox — bottom-RIGHT corner
             const cbWrap = document.createElement('div');
@@ -4882,15 +4919,6 @@
             cbWrap.appendChild(cb);
             tile.appendChild(cbWrap);
             tile._checkbox = cb;
-
-            // Hover overlay
-            const hoverOv = document.createElement('div');
-            hoverOv.style.cssText = 'position:absolute;inset:0;display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;opacity:0;transition:opacity 0.15s;z-index:4;';
-            if (st === 'issue') { hoverOv.style.background='rgba(16,185,129,0.8)'; hoverOv.style.color='#fff'; hoverOv.textContent='✓ Mark OK'; }
-            else                { hoverOv.style.background='rgba(239,68,68,0.8)';  hoverOv.style.color='#fff'; hoverOv.textContent='✕ Mark Issue'; }
-            tile.addEventListener('mouseenter', () => hoverOv.style.opacity='1');
-            tile.addEventListener('mouseleave', () => hoverOv.style.opacity='0');
-            tile.appendChild(hoverOv);
 
             if (!firstUrl) {
                 const broken = document.createElement('div');
@@ -4929,10 +4957,14 @@
             }
             tile.dataset.vinIdx = idx;
 
-            // Click on tile body = navigate to VIN (issue set via checkboxes only)
+            // Single click = focus this tile (tag it from the top bar / keyboard).
+            // Double click = open Single view for a closer look.
             tile.addEventListener('click', (e) => {
                 if (e.target.type === 'checkbox' || e.target.tagName === 'LABEL') return;
-                // Clicking a tile: select this VIN and switch to single view
+                select1ImgVIN(idx);
+            });
+            tile.addEventListener('dblclick', (e) => {
+                if (e.target.type === 'checkbox' || e.target.tagName === 'LABEL') return;
                 select1ImgVIN(idx);
                 setImg1View('single');
             });
@@ -4987,39 +5019,19 @@
     // Kept for tile body click / submit path — no-op now (issue set via radio only)
     function toggle1ImgIssue(idx) { /* handled by radio buttons */ }
 
-    // Update tile border + badge + radio button appearance in-place
+    // Update tile border + short-code badge in-place
     function updateTileIssueState(idx, st) {
         const tile = document.getElementById('img1-tile-' + idx);
         if (!tile) return;
-        const color = stateColor(st);
-        tile.style.outline = st ? '2px solid ' + color : '2px solid transparent';
-        // stBadge = children[1]
-        const stBadge = tile.children[1];
-        if (stBadge && stBadge.style.position === 'absolute') {
-            const txt = stateBadgeText(st);
-            stBadge.textContent = txt || '';
-            if (st === 'raw' || st === 'stock' || st === 'internal') {
-                stBadge.style.cssText = 'position:absolute;top:5px;left:5px;z-index:5;width:18px;height:18px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:10px;font-weight:800;box-shadow:0 1px 3px rgba(0,0,0,0.25);';
-                stBadge.style.background = color; stBadge.style.color = '#fff';
-            } else if (st === 'ok') {
-                stBadge.style.cssText = 'position:absolute;top:5px;left:5px;z-index:5;font-size:8px;font-weight:800;padding:2px 5px;border-radius:4px;white-space:nowrap;';
-                stBadge.style.background = '#10b981'; stBadge.style.color = '#fff';
-            } else {
-                stBadge.style.background = 'transparent'; stBadge.style.color = 'transparent';
-            }
+        // Outline: keep checkbox-selection (indigo) if selected, else reflect issue state
+        if (selectedVINIndices && selectedVINIndices.has(idx)) {
+            tile.style.outline = '3px solid #6366f1';
+        } else {
+            tile.style.outline = (st && st !== 'pending') ? '2px solid ' + stateColor(st) : '2px solid transparent';
         }
-        // Refresh circle button appearance
-        const refreshBtn = (btn, value) => {
-            if (!btn) return;
-            const active = (st === value);
-            const c = stateColor(value);
-            btn.style.background = active ? c : 'rgba(255,255,255,0.95)';
-            btn.style.color      = active ? '#fff' : c;
-            btn.style.outline    = active ? 'none' : '2px solid ' + c;
-        };
-        refreshBtn(tile._rawBtn,      'raw');
-        refreshBtn(tile._stockBtn,   'stock');
-        refreshBtn(tile._internalBtn,'issue');
+        // Short-code state badge (top-left)
+        const stBadge = tile.querySelector('.img1-state-badge') || tile.children[1];
+        applyStateBadge(stBadge, st);
     }
 
     function submit1ImgReview(idx, status) {
@@ -5508,68 +5520,40 @@
                 svNav(1);  // svNav auto-marks OK if unreviewed
                 return;
             }
-            if (e.key === 'ArrowRight' || e.key === 'ArrowDown') {
+            // Arrow keys — grid view follows the visual grid geometry (↑/↓ = full row).
+            if (e.key === 'ArrowRight' || e.key === 'ArrowLeft' || e.key === 'ArrowUp' || e.key === 'ArrowDown') {
                 e.preventDefault();
-                if (img1ViewMode === 'single') svNav(1);
-                else if (img1ViewMode === 'all') { const n = Math.min(currentImg1Idx+1, currentImg1VINs.length-1); render1ImgAllView(n); }
-                else { const n = Math.min(currentImg1Idx+1, currentImg1VINs.length-1); select1ImgVIN(n); }
-                return;
-            }
-            if (e.key === 'ArrowLeft' || e.key === 'ArrowUp') {
-                e.preventDefault();
-                if (img1ViewMode === 'single') svNav(-1);
-                else if (img1ViewMode === 'all') { const p = Math.max(currentImg1Idx-1, 0); render1ImgAllView(p); }
-                else { const p = Math.max(currentImg1Idx-1, 0); select1ImgVIN(p); }
-                return;
-            }
-            // r → Raw, s → Stock
-            if ((e.key === 'r' || e.key === 'R') && currentImg1Idx >= 0) {
-                e.preventDefault();
-                if (img1ViewMode === 'single' || img1ViewMode === 'all') svToggleIssue('raw');
-                else {
-                    const v = currentImg1VINs[currentImg1Idx];
-                    const cur = getImg1Review(currentImg1Team.teamId, v.vin, v.rooftop || '');
-                    const ns = cur === 'raw' ? null : 'raw';
-                    setImg1Review(currentImg1Team.teamId, v.vin, ns, '');
-                    updateImg1ProgressBadge();
-                    updateTileIssueState(currentImg1Idx, ns);
-                    render1ImgSidebar();
+                if (img1ViewMode === 'single') {
+                    svNav((e.key === 'ArrowRight' || e.key === 'ArrowDown') ? 1 : -1);
+                } else if (img1ViewMode === 'all') {
+                    const d = (e.key === 'ArrowRight' || e.key === 'ArrowDown') ? 1 : -1;
+                    const cur = currentImg1Idx < 0 ? 0 : currentImg1Idx;
+                    const n = Math.max(0, Math.min(currentImg1VINs.length - 1, cur + d));
+                    render1ImgAllView(n);
+                } else { // grid
+                    const cols = ((typeof ZOOM_COLS !== 'undefined' && ZOOM_COLS[currentGridZoom - 1]) || 4);
+                    const cur  = currentImg1Idx < 0 ? 0 : currentImg1Idx;
+                    const last = currentImg1VINs.length - 1;
+                    let n = cur;
+                    if      (e.key === 'ArrowRight') n = Math.min(cur + 1, last);
+                    else if (e.key === 'ArrowLeft')  n = Math.max(cur - 1, 0);
+                    else if (e.key === 'ArrowDown')  n = Math.min(cur + cols, last);
+                    else if (e.key === 'ArrowUp')    n = Math.max(cur - cols, 0);
+                    select1ImgVIN(n);
                 }
                 return;
             }
-            if ((e.key === 's' || e.key === 'S') && currentImg1Idx >= 0) {
+            // Issue shortcuts — same letters as the header bar, in every 1st-image view.
+            // In grid view they tag the focused tile (or all checkbox-selected tiles).
+            const img1IssueShortcuts = {
+                'r':'raw','R':'raw','s':'stock','S':'stock','i':'issue','I':'issue',
+                'o':'banner','O':'banner','b':'background','B':'background','q':'quality','Q':'quality',
+                'h':'hero','H':'hero','p':'photo_na','P':'photo_na','u':'unsupported','U':'unsupported',
+                'e':'sequence','E':'sequence'
+            };
+            if (img1IssueShortcuts[e.key] && currentImg1Idx >= 0) {
                 e.preventDefault();
-                if (img1ViewMode === 'single' || img1ViewMode === 'all') svToggleIssue('stock');
-                else {
-                    const v = currentImg1VINs[currentImg1Idx];
-                    const cur = getImg1Review(currentImg1Team.teamId, v.vin, v.rooftop || '');
-                    const ns = cur === 'stock' ? null : 'stock';
-                    setImg1Review(currentImg1Team.teamId, v.vin, ns, '');
-                    updateImg1ProgressBadge();
-                    updateTileIssueState(currentImg1Idx, ns);
-                    render1ImgSidebar();
-                }
-                return;
-            }
-            if ((e.key === 'i' || e.key === 'I') && currentImg1Idx >= 0) {
-                e.preventDefault();
-                if (img1ViewMode === 'single' || img1ViewMode === 'all') svToggleIssue('issue');
-                else {
-                    const v = currentImg1VINs[currentImg1Idx];
-                    const cur = getImg1Review(currentImg1Team.teamId, v.vin, v.rooftop || '');
-                    const ns = cur === 'issue' ? null : 'issue';
-                    setImg1Review(currentImg1Team.teamId, v.vin, ns, '');
-                    updateImg1ProgressBadge();
-                    updateTileIssueState(currentImg1Idx, ns);
-                    render1ImgSidebar();
-                }
-                return;
-            }
-            // Sub-issue shortcuts (single view only) — now all single-select
-            const subShortcuts = { 'o':'banner','O':'banner','b':'background','B':'background','q':'quality','Q':'quality','h':'hero','H':'hero','p':'photo_na','P':'photo_na','u':'unsupported','U':'unsupported','e':'sequence','E':'sequence' };
-            if ((img1ViewMode === 'single' || img1ViewMode === 'all') && subShortcuts[e.key] && currentImg1Idx >= 0) {
-                e.preventDefault();
-                svToggleIssue(subShortcuts[e.key]);
+                svToggleIssue(img1IssueShortcuts[e.key]);
                 return;
             }
             return;
