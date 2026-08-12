@@ -2728,6 +2728,7 @@
     // 1ST IMAGE VIEW TOGGLE (grid / single)
     // =========================================================================
     let img1ViewMode = 'grid'; // 'grid' | 'single'
+    let img1SpaceHeld = false;  // true while Space is held → arrow keys paint-select tiles (grid)
 
     // Grid zoom: 1=2col, 2=3col, 3=4col(default), 4=6col, 5=8col
     const ZOOM_COLS = [2, 3, 4, 6, 8];
@@ -2767,6 +2768,7 @@
 
     function setImg1View(mode) {
         img1ViewMode = mode;
+        img1SpaceHeld = false;   // reset paint-select state on any view change
         const gridArea   = document.getElementById('image-area');
         const singleArea = document.getElementById('single-view-area');
         const allArea    = document.getElementById('img1-all-view');
@@ -5491,6 +5493,36 @@
         setTimeout(() => { fb.style.opacity = '0'; }, 1500);
     });
 
+    // ── Space-drag multi-select helpers (grid view) ──
+    // Always-select a single tile (used while painting with Space held)
+    function img1SelectTile(idx) {
+        if (idx < 0 || idx >= currentImg1VINs.length) return;
+        if (selectedVINIndices.has(idx)) return;   // already selected — leave it
+        selectedVINIndices.add(idx);
+        lastCheckedIdx = idx;
+        updateBulkBar();
+        render1ImgVinList();
+        updateTileSelectionStyle(idx);
+    }
+    // Always-select every tile in the focused tile's grid row (Shift+Space)
+    function img1SelectRow(idx) {
+        if (idx < 0 || idx >= currentImg1VINs.length) return;
+        const cols = ((typeof ZOOM_COLS !== 'undefined' && ZOOM_COLS[currentGridZoom - 1]) || 4);
+        const last = currentImg1VINs.length - 1;
+        const rowStart = Math.floor(idx / cols) * cols;
+        const rowEnd   = Math.min(rowStart + cols - 1, last);
+        for (let i = rowStart; i <= rowEnd; i++) selectedVINIndices.add(i);
+        lastCheckedIdx = rowEnd;
+        updateBulkBar();
+        render1ImgVinList();
+        for (let i = rowStart; i <= rowEnd; i++) updateTileSelectionStyle(i);
+    }
+    // Releasing Space (or losing window focus) ends paint mode
+    document.addEventListener('keyup', (e) => {
+        if (e.key === ' ' || e.code === 'Space') img1SpaceHeld = false;
+    });
+    window.addEventListener('blur', () => { img1SpaceHeld = false; });
+
     // Keyboard shortcuts on review page:
     //   Enter   -> Submit (Approve if no issues/comment, else Reject)
     //   1-6     -> Toggle issue chips (Sequence/Banner/Background/Quality/Hero/NoExterior)
@@ -5517,11 +5549,19 @@
             if (e.key === 'g' || e.key === 'G') { e.preventDefault(); setImg1View('grid'); return; }
             if (e.key === 'f' || e.key === 'F') { e.preventDefault(); setImg1View('single'); return; }
             if (e.key === 'a' || e.key === 'A') { e.preventDefault(); if (currentImg1Idx < 0) currentImg1Idx = 0; setImg1View('all'); return; }
-            // Space — toggle multi-select (checkbox) of the focused tile; grid view only
+            // Space — multi-select (grid view only):
+            //   • plain Space tap toggles the focused tile
+            //   • hold Space + arrow keys → paint-select each tile you move onto
+            //   • Shift+Space → select the whole row of the focused tile
             if (e.key === ' ' || e.code === 'Space') {
                 if (img1ViewMode === 'grid' && currentImg1Idx >= 0 && !inInput && !(active && active.tagName === 'BUTTON')) {
                     e.preventDefault();
-                    toggleVINSelect(currentImg1Idx, { shiftKey: false });
+                    if (e.shiftKey) {
+                        img1SelectRow(currentImg1Idx);        // Shift+Space → whole row
+                    } else {
+                        img1SpaceHeld = true;                 // hold to paint while arrowing
+                        if (!e.repeat) toggleVINSelect(currentImg1Idx, { shiftKey: false });
+                    }
                 }
                 return;
             }
@@ -5576,6 +5616,7 @@
                     else if (e.key === 'ArrowDown')  n = Math.min(cur + cols, last);
                     else if (e.key === 'ArrowUp')    n = Math.max(cur - cols, 0);
                     select1ImgVIN(n);
+                    if (img1SpaceHeld) img1SelectTile(n);   // paint-select while Space held
                 }
                 return;
             }
