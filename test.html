@@ -989,6 +989,11 @@
                     <button onclick="closeCompleteModal()" class="flex-1 bg-white border border-slate-300 text-slate-700 font-semibold py-2.5 rounded-lg hover:bg-slate-50 transition">
                         Cancel
                     </button>
+                    <!-- CSV-only (no BigQuery, no Sheet) — shown in 1st-image mode -->
+                    <button id="complete-csvonly-btn" class="hidden flex-1 bg-white border border-blue-300 text-blue-700 font-semibold py-2.5 rounded-lg hover:bg-blue-50 transition flex items-center justify-center space-x-2">
+                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"/></svg>
+                        <span>Download CSV</span>
+                    </button>
                     <button id="complete-ok-btn" class="flex-1 bg-blue-600 hover:bg-blue-700 text-white font-bold py-2.5 rounded-lg shadow-sm transition flex items-center justify-center space-x-2">
                         <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"/></svg>
                         <span>OK — Download & Exit</span>
@@ -4754,6 +4759,10 @@
         if (sep) sep.style.display = anySub ? '' : 'none';
     }
 
+    // Selection helpers (toggleVINSelect / selectAllVINs / clearVINSelection) call
+    // render1ImgVinList() — it's the 1st-image VIN sidebar renderer.
+    function render1ImgVinList() { return render1ImgSidebar(); }
+
     function render1ImgSidebar() {
         const list = document.getElementById('vin-list');
         const searchTerm = (document.getElementById('vin-search').value || '').toLowerCase().trim();
@@ -5127,6 +5136,11 @@
         const okBtn = document.getElementById('complete-ok-btn');
         okBtn.__1imgMode = true;
         resetCompleteOkBtn();
+        // 1st-image mode: offer a CSV-only export alongside the BigQuery+CSV submit
+        const csvOnlyBtn = document.getElementById('complete-csvonly-btn');
+        if (csvOnlyBtn) csvOnlyBtn.classList.remove('hidden');
+        const okLbl = okBtn.querySelector('span');
+        if (okLbl) okLbl.textContent = 'Save to BigQuery + CSV';
         document.getElementById('complete-modal').classList.add('active');
     }
 
@@ -5291,6 +5305,11 @@
         document.getElementById('complete-approved').innerText = approved;
         document.getElementById('complete-rejected').innerText = rejected;
         document.getElementById('complete-total').innerText = currentTeamVINs.length;
+        // VIN-review mode: no CSV-only button (single OK), reset primary label
+        const csvOnlyBtn = document.getElementById('complete-csvonly-btn');
+        if (csvOnlyBtn) csvOnlyBtn.classList.add('hidden');
+        const okBtnV = document.getElementById('complete-ok-btn');
+        if (okBtnV) { okBtnV.__1imgMode = false; resetCompleteOkBtn(); }
         document.getElementById('complete-modal').classList.add('active');
     }
     function closeCompleteModal() { document.getElementById('complete-modal').classList.remove('active'); }
@@ -5392,6 +5411,15 @@
         }
     });
 
+    // CSV-only export (1st-image mode): download the CSV and exit WITHOUT pushing
+    // to BigQuery (and, with Sheet writing disabled, nothing is stored server-side).
+    document.getElementById('complete-csvonly-btn').addEventListener('click', () => {
+        download1ImgCSV();
+        closeCompleteModal();
+        restore1ImgMode();
+        showPage('page-dashboard');
+    });
+
     document.getElementById('vin-search').addEventListener('input', () => {
         if (reviewMode === '1img') {
             render1ImgSidebar();
@@ -5489,6 +5517,14 @@
             if (e.key === 'g' || e.key === 'G') { e.preventDefault(); setImg1View('grid'); return; }
             if (e.key === 'f' || e.key === 'F') { e.preventDefault(); setImg1View('single'); return; }
             if (e.key === 'a' || e.key === 'A') { e.preventDefault(); if (currentImg1Idx < 0) currentImg1Idx = 0; setImg1View('all'); return; }
+            // Space — toggle multi-select (checkbox) of the focused tile; grid view only
+            if (e.key === ' ' || e.code === 'Space') {
+                if (img1ViewMode === 'grid' && currentImg1Idx >= 0 && !inInput && !(active && active.tagName === 'BUTTON')) {
+                    e.preventDefault();
+                    toggleVINSelect(currentImg1Idx, { shiftKey: false });
+                }
+                return;
+            }
             if (e.key === 'Enter' && currentImg1Idx >= 0) {
                 e.preventDefault();
                 toggle1ImgIssue(currentImg1Idx);
