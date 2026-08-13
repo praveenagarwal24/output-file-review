@@ -1314,10 +1314,33 @@
 
     function showError(msg) {
         const toast = document.getElementById('error-toast');
+        toast.style.background = '';   // reset any bgToast color back to the red class
         document.getElementById('error-message').innerText = msg;
         toast.classList.remove('translate-y-20');
         clearTimeout(window._toastTimer);
         window._toastTimer = setTimeout(() => toast.classList.add('translate-y-20'), 5000);
+    }
+
+    // Colored toast: kind = 'info' (blue) | 'success' (green) | 'error' (red, sticks longer)
+    function bgToast(msg, kind) {
+        const toast = document.getElementById('error-toast');
+        const msgEl = document.getElementById('error-message');
+        if (!toast || !msgEl) return;
+        msgEl.innerText = msg;
+        toast.style.background = kind === 'success' ? '#059669'
+                              : kind === 'info'    ? '#2563eb'
+                                                   : '#dc2626';
+        toast.classList.remove('translate-y-20');
+        clearTimeout(window._toastTimer);
+        window._toastTimer = setTimeout(() => toast.classList.add('translate-y-20'),
+                                        kind === 'error' ? 15000 : 4500);
+    }
+
+    // Pre-warm the Apps Script web app so the first BigQuery save isn't slowed by a
+    // cold start. POST '[]' → server returns { ok:true, inserted:0 } instantly.
+    function warmUpBQ() {
+        try { fetch(BQ_WEBAPP_URL, { method: 'POST', body: '[]', keepalive: true }).catch(() => {}); }
+        catch (e) {}
     }
 
     function escapeHtml(s) {
@@ -2547,17 +2570,59 @@
         return files;
     }
 
-    // Download one file's raw text (public files are CORS-enabled on the API host).
-    // Download a Drive CSV's text THROUGH the Apps Script backend (BQ_WEBAPP_URL).
-    // Direct browser downloads of larger Drive files fail with "Failed to fetch"
-    // (alt=media redirects to a non-CORS host); the server-side proxy avoids that.
+    // Classify a downloaded response so we can tell a REAL csv apart from an
+    // HTML/error/empty page. 'ok' = has data rows, 'header-only' = valid csv but
+    // no data rows (genuinely empty rooftop), everything else = not usable.
+    function _driveCsvStatus(text) {
+        if (text == null) return 'none';
+        const s = String(text).replace(/^\uFEFF/, '').trim();
+        if (!s) return 'empty';
+        if (s[0] === '<') return 'html';                 // an HTML error/login page
+        if (/^ERROR\b/i.test(s)) return 'error';         // proxy explicit error
+        try { return parseCSV(text).rows.length > 0 ? 'ok' : 'header-only'; }
+        catch (e) { return 'bad'; }
+    }
+
+    // Download one CSV file's raw text. Tries the Apps Script proxy first (handles
+    // large files + CORS), and if that comes back as a non-CSV / empty / error
+    // page it falls back to a DIRECT Drive API download. Whichever returns a real
+    // CSV wins. If neither does, we throw so the UI shows "—" (a fetch problem)
+    // rather than a misleading "0 rows".
     async function fetchDriveCsvText(fileId) {
-        const url = BQ_WEBAPP_URL + '?action=driveFile&id=' + encodeURIComponent(fileId);
-        const res = await fetch(url, { cache: 'no-store', redirect: 'follow' });
-        if (!res.ok) throw new Error('HTTP ' + res.status);
-        const text = await res.text();
-        if (/^ERROR\b/i.test(text)) throw new Error(text.slice(0, 200));
-        return text;
+        let firstUsableButEmpty = null;   // 'header-only' text to use only if nothing better
+        let lastErr = '';
+
+        // Strategy 1 — Apps Script proxy
+        try {
+            const res = await fetch(BQ_WEBAPP_URL + '?action=driveFile&id=' + encodeURIComponent(fileId),
+                                    { cache: 'no-store', redirect: 'follow' });
+            if (res.ok) {
+                const t = await res.text();
+                const st = _driveCsvStatus(t);
+                if (st === 'ok') return t;
+                if (st === 'header-only' && firstUsableButEmpty == null) firstUsableButEmpty = t;
+                lastErr = 'proxy:' + st + (st === 'error' ? ' ' + String(t).slice(0, 120) : '');
+            } else { lastErr = 'proxy HTTP ' + res.status; }
+        } catch (e) { lastErr = 'proxy ' + ((e && e.message) || e); }
+
+        // Strategy 2 — direct Drive API alt=media (works for smaller public files)
+        try {
+            const durl = 'https://www.googleapis.com/drive/v3/files/' + encodeURIComponent(fileId)
+                       + '?alt=media&supportsAllDrives=true&key=' + encodeURIComponent(DRIVE_API_KEY);
+            const res = await fetch(durl, { cache: 'no-store', redirect: 'follow' });
+            if (res.ok) {
+                const t = await res.text();
+                const st = _driveCsvStatus(t);
+                if (st === 'ok') return t;
+                if (st === 'header-only' && firstUsableButEmpty == null) firstUsableButEmpty = t;
+                if (!lastErr) lastErr = 'direct:' + st;
+            } else if (!lastErr) { lastErr = 'direct HTTP ' + res.status; }
+        } catch (e) { if (!lastErr) lastErr = 'direct ' + ((e && e.message) || e); }
+
+        // A genuinely-empty-but-valid CSV → return it (count shows "0 rows").
+        if (firstUsableButEmpty != null) return firstUsableButEmpty;
+        // Otherwise it was HTML / empty / error → surface as an error ("—").
+        throw new Error(lastErr || 'download failed');
     }
 
     // Parse one file's CSV text into synthetic All_Data-shaped rows.
@@ -3120,6 +3185,8 @@
     // target already holds this value, clear it instead. value === null clears.
     function applyImg1Issue(value) {
         if (!currentImg1Team) return;
+        // Did this action target a MULTI-selection (vs. just the focused tile)?
+        const usedSelection = (img1ViewMode === 'grid' && selectedVINIndices && selectedVINIndices.size > 0);
         const targets = img1IssueTargets();
         if (!targets.length) return;
         let newSt = value;
@@ -3133,9 +3200,16 @@
         targets.forEach(i => {
             setImg1ReviewForIdx(i, newSt);
             updateTileIssueState(i, newSt);
-            if (selectedVINIndices && selectedVINIndices.has(i)) updateTileSelectionStyle(i);
         });
         updateImg1ProgressBadge();
+        // After tagging a multi-selection, CLEAR the selection so the next tag
+        // starts fresh; repaint those tiles to drop the selection outline/checkbox.
+        if (usedSelection) {
+            const cleared = targets.slice();
+            selectedVINIndices.clear();
+            cleared.forEach(i => updateTileSelectionStyle(i));
+            try { updateBulkBar(); } catch (e) {}
+        }
         // Header bar reflects the focused tile's state
         const fIdx = currentImg1Idx >= 0 ? currentImg1Idx : targets[0];
         const fv   = currentImg1VINs[fIdx];
@@ -4020,6 +4094,7 @@
     function openTeamReview(team) {
         currentTeam = team;
         currentVINIndex = -1;
+        warmUpBQ();   // pre-warm the web app so the eventual BigQuery save is fast
 
         document.getElementById('review-team-name').innerText = team.name;
         renderReviewTeamId(team.teamId, team.entId);
@@ -4669,6 +4744,7 @@
 
     function openTeam1stImage(team) {
         reviewMode = '1img';
+        warmUpBQ();   // pre-warm the web app so the eventual BigQuery save is fast
         startReviewTimer();
         img1ViewMode = 'grid';
         // Keep currentGridZoom as-is — preserve user's zoom preference within session
@@ -5307,7 +5383,7 @@
     async function pushToBigQuery(rows) {
         if (!rows || !rows.length) return { ok: true, inserted: 0 };
         const CHUNK_SIZE  = 500;
-        const MAX_RETRIES = 4;
+        const MAX_RETRIES = 2;   // light per-chunk retry; saveTeamToBQ retries the whole save up to 3×
         const chunks = [];
         for (let i = 0; i < rows.length; i += CHUNK_SIZE) chunks.push(rows.slice(i, i + CHUNK_SIZE));
 
@@ -5349,14 +5425,33 @@
             if (!chunkDone) errors.push('Chunk ' + (ci + 1) + ': ' + lastErr);
         }
 
-        // Success ONLY if every row was confirmed saved.
+        // Success ONLY if every row was confirmed saved. (Silent \u2014 the caller
+        // decides how to surface success/failure; saveTeamToBQ handles retries + UI.)
         if (errors.length > 0 || totalInserted !== rows.length) {
             console.error('[BQ] incomplete save', { totalInserted, expected: rows.length, errors });
-            alert('BigQuery save INCOMPLETE: ' + totalInserted + '/' + rows.length + ' rows saved.\n' +
-                  errors.join('\n') + '\nCSV downloaded \u2014 data not lost. Please retry or report this.');
             return { ok: false, inserted: totalInserted, error: errors.join('; ') };
         }
         return { ok: true, inserted: totalInserted };
+    }
+
+    // Background BigQuery save: retry the WHOLE push up to 3 times; on success show a
+    // green toast, on final failure a sticky red toast telling the user the team was
+    // NOT saved (their CSV is already downloaded, so nothing is lost).
+    async function saveTeamToBQ(rows, teamLabel) {
+        if (!rows || !rows.length) return true;
+        let result = null;
+        for (let attempt = 1; attempt <= 3; attempt++) {
+            result = await pushToBigQuery(rows);
+            if (result.ok) {
+                bgToast('\u2713 ' + teamLabel + ' saved to BigQuery (' + result.inserted + ' rows).', 'success');
+                return true;
+            }
+            if (attempt < 3) await new Promise(r => setTimeout(r, 1500 * attempt));
+        }
+        bgToast('\u26a0 ' + teamLabel + ' was NOT saved to BigQuery (' +
+                ((result && result.inserted) || 0) + '/' + rows.length + ' rows) after 3 tries. ' +
+                'Your CSV was downloaded \u2014 please re-open the team and submit again.', 'error');
+        return false;
     }
 
     function download1ImgCSV() {
@@ -5457,15 +5552,18 @@
             }
             btn.__1imgMode = false;
 
-            // Build BQ rows from ALL VINs (reviewed + pending)
-            const teamId  = currentImg1Team?.teamId || '';
-            const now     = new Date();
-            const bqRows  = [];
+            // Build BQ rows — only VINs that were actually MARKED (skip untouched
+            // "Pending"). Pending VINs are saved only if promoted to OK via the
+            // "mark all Done" prompt, which sets their state to 'ok' beforehand.
+            const teamId    = currentImg1Team?.teamId || '';
+            const teamLabel = currentImg1Team?.rooftop || currentImg1Team?.name || teamId;
+            const now       = new Date();
+            const bqRows    = [];
             (currentImg1VINs || []).forEach(v => {
                 const rooftop = v.rooftop || currentImg1Team?.rooftop || '';
                 const st      = getImg1Review(teamId, v.vin, rooftop);
-                const stLabel = st ? (stateLabel(st) || st) : 'Pending';
-                const issType = !st ? 'Pending' : st === 'ok' ? 'OK' : stLabel;
+                if (!st) return;                       // skip pending / unmarked VINs
+                const issType = st === 'ok' ? 'OK' : (stateLabel(st) || st);
                 bqRows.push({
                     review_date:     now.toISOString().slice(0, 10),
                     reviewed_at:     now.toISOString(),
@@ -5488,39 +5586,19 @@
                 });
             });
 
-            // Show uploading state in button
-            const okBtnEl = document.getElementById('complete-ok-btn');
-            const origText = okBtnEl.innerHTML;
-            okBtnEl.disabled = true;
-
-            // Live timer while saving
-            let elapsed = 0;
-            const timerInterval = setInterval(() => {
-                elapsed++;
-                okBtnEl.innerHTML = '<span>⏳ Saving to BigQuery... ' + elapsed + 's</span>';
-            }, 1000);
-            okBtnEl.innerHTML = '<span>⏳ Saving to BigQuery... 0s</span>';
-
-            // AWAIT BQ push before closing
-            if (bqRows.length > 0) {
-                const result = await pushToBigQuery(bqRows);
-                clearInterval(timerInterval);
-                if (result.ok) {
-                    okBtnEl.innerHTML = '<span>✓ Saved ' + result.inserted + ' rows in ' + elapsed + 's — downloading CSV...</span>';
-                    okBtnEl.style.background = '#10b981';
-                    await new Promise(r => setTimeout(r, 800));
-                } else {
-                    okBtnEl.innerHTML = '<span>⚠ Saved ' + (result.inserted || 0) + '/' + bqRows.length + ' — CSV downloaded</span>';
-                    okBtnEl.style.background = '#f59e0b';
-                    await new Promise(r => setTimeout(r, 800));
-                }
-            }
-
-            // CSV always downloads regardless of BQ result
+            // Instant UX: download the CSV and return to the dashboard right away.
+            // The BigQuery save runs in the BACKGROUND (retries up to 3×, then a
+            // sticky alert if it still fails — the CSV is already saved either way).
             download1ImgCSV();
             closeCompleteModal();
             restore1ImgMode();
             showPage('page-dashboard');
+            if (bqRows.length > 0) {
+                bgToast('Saving ' + teamLabel + ' to BigQuery in the background… (' + bqRows.length + ' rows)', 'info');
+                saveTeamToBQ(bqRows, teamLabel);   // fire-and-forget (retries + notifies on its own)
+            } else {
+                bgToast('No marked VINs to save for ' + teamLabel + '.', 'info');
+            }
         } else {
             downloadCSV();
             closeCompleteModal();
@@ -5622,16 +5700,17 @@
         updateTileSelectionStyle(idx);
     }
     // Toggle every tile in the focused tile's grid row (Shift+Space tap):
-    // if the whole row is already selected → clear it, else select the whole row.
+    // if ANY tile in the row is already selected → DESELECT the whole row,
+    // otherwise select the whole row. (So Shift+Space reliably un-selects.)
     function img1ToggleRow(idx) {
         if (idx < 0 || idx >= currentImg1VINs.length) return;
         const cols = ((typeof ZOOM_COLS !== 'undefined' && ZOOM_COLS[currentGridZoom - 1]) || 4);
         const last = currentImg1VINs.length - 1;
         const rowStart = Math.floor(idx / cols) * cols;
         const rowEnd   = Math.min(rowStart + cols - 1, last);
-        let allSel = true;
-        for (let i = rowStart; i <= rowEnd; i++) { if (!selectedVINIndices.has(i)) { allSel = false; break; } }
-        for (let i = rowStart; i <= rowEnd; i++) { if (allSel) selectedVINIndices.delete(i); else selectedVINIndices.add(i); }
+        let anySel = false;
+        for (let i = rowStart; i <= rowEnd; i++) { if (selectedVINIndices.has(i)) { anySel = true; break; } }
+        for (let i = rowStart; i <= rowEnd; i++) { if (anySel) selectedVINIndices.delete(i); else selectedVINIndices.add(i); }
         lastCheckedIdx = rowEnd;
         updateBulkBar();
         render1ImgVinList();
