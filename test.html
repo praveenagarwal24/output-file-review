@@ -2728,7 +2728,10 @@
     // 1ST IMAGE VIEW TOGGLE (grid / single)
     // =========================================================================
     let img1ViewMode = 'grid'; // 'grid' | 'single'
-    let img1SpaceHeld = false;  // true while Space is held → arrow keys paint-select tiles (grid)
+    let img1SpaceHeld = false;  // Space held → arrow keys paint-SELECT tiles (grid)
+    let img1ShiftDrag = false;  // Shift+Space held → arrow keys paint-UNSELECT tiles (grid)
+    let img1ShiftMoved = false; // did an arrow fire during a Shift+Space hold? (tap vs drag)
+    let img1ShiftRowAnchor = -1;// tile where Shift+Space was pressed (row-toggle on tap)
 
     // Grid zoom: 1=2col, 2=3col, 3=4col(default), 4=6col, 5=8col
     const ZOOM_COLS = [2, 3, 4, 6, 8];
@@ -2768,7 +2771,7 @@
 
     function setImg1View(mode) {
         img1ViewMode = mode;
-        img1SpaceHeld = false;   // reset paint-select state on any view change
+        img1SpaceHeld = false; img1ShiftDrag = false; img1ShiftMoved = false; img1ShiftRowAnchor = -1;  // reset paint state on any view change
         const gridArea   = document.getElementById('image-area');
         const singleArea = document.getElementById('single-view-area');
         const allArea    = document.getElementById('img1-all-view');
@@ -3675,8 +3678,10 @@
                 .forEach(k => localStorage.removeItem(k));
         } catch (e) {}
         // Reset in-memory state
-        reviews     = {};
-        img1Reviews = {};
+        reviews      = {};
+        img1Reviews  = {};
+        img1Comments = {};
+        try { Object.keys(subIssues).forEach(k => delete subIssues[k]); } catch (e) {}
         // Clear image URL caches so fresh loads happen
         try { _urlCache.clear(); } catch (e) {}
         try { _svPreloadCache.clear(); } catch (e) {}
@@ -3685,17 +3690,29 @@
     document.getElementById('clear-cache-btn').addEventListener('click', () => {
         const confirmed = confirm(
             'Clear locally stored review progress from this device?\n\n' +
-            'Your reviews are saved in the Google Sheet — they will be restored\n' +
-            'from the sheet the next time you load an enterprise.\n\n' +
+            '⚠ This PERMANENTLY deletes review progress stored on this device.\n' +
+            'It is NOT backed up to the Google Sheet and CANNOT be restored.\n' +
+            'Only reviews you have already submitted (to BigQuery) are safe.\n\n' +
             'You will stay signed in. This only clears the local review cache.'
         );
         if (!confirmed) return;
 
         clearReviewCache();
 
-        // Re-render dashboard to show cleared counts
+        // Reflect the cleared state in whatever view is currently open
+        try { selectedVINIndices.clear(); } catch (e) {}
+        try { updateBulkBar(); } catch (e) {}
+        if (reviewMode === '1img' && currentImg1Team) {
+            render1ImgGallery();
+            render1ImgSidebar();
+            updateImg1ProgressBadge();
+        } else if (reviewMode === 'vin' && currentTeam && currentTeamVINs &&
+                   currentVINIndex >= 0 && currentTeamVINs[currentVINIndex]) {
+            try { renderImages(currentTeamVINs[currentVINIndex]); } catch (e) {}
+        }
+        // Re-render dashboard too so its counts are fresh on return
         renderDashboard();
-        showError('Local cache cleared (you are still signed in). Reload the enterprise to restore from the sheet.');
+        showError('Local review cache cleared. Unsubmitted progress on this device has been removed.');
     });
 
     // =========================================================================
@@ -5494,34 +5511,47 @@
     });
 
     // ── Space-drag multi-select helpers (grid view) ──
-    // Always-select a single tile (used while painting with Space held)
-    function img1SelectTile(idx) {
+    // Paint one tile to a target state (selecting=true → add, false → remove)
+    function img1PaintTile(idx, selecting) {
         if (idx < 0 || idx >= currentImg1VINs.length) return;
-        if (selectedVINIndices.has(idx)) return;   // already selected — leave it
-        selectedVINIndices.add(idx);
+        const has = selectedVINIndices.has(idx);
+        if (selecting && !has)      selectedVINIndices.add(idx);
+        else if (!selecting && has) selectedVINIndices.delete(idx);
+        else return;                                // no change
         lastCheckedIdx = idx;
         updateBulkBar();
         render1ImgVinList();
         updateTileSelectionStyle(idx);
     }
-    // Always-select every tile in the focused tile's grid row (Shift+Space)
-    function img1SelectRow(idx) {
+    // Toggle every tile in the focused tile's grid row (Shift+Space tap):
+    // if the whole row is already selected → clear it, else select the whole row.
+    function img1ToggleRow(idx) {
         if (idx < 0 || idx >= currentImg1VINs.length) return;
         const cols = ((typeof ZOOM_COLS !== 'undefined' && ZOOM_COLS[currentGridZoom - 1]) || 4);
         const last = currentImg1VINs.length - 1;
         const rowStart = Math.floor(idx / cols) * cols;
         const rowEnd   = Math.min(rowStart + cols - 1, last);
-        for (let i = rowStart; i <= rowEnd; i++) selectedVINIndices.add(i);
+        let allSel = true;
+        for (let i = rowStart; i <= rowEnd; i++) { if (!selectedVINIndices.has(i)) { allSel = false; break; } }
+        for (let i = rowStart; i <= rowEnd; i++) { if (allSel) selectedVINIndices.delete(i); else selectedVINIndices.add(i); }
         lastCheckedIdx = rowEnd;
         updateBulkBar();
         render1ImgVinList();
         for (let i = rowStart; i <= rowEnd; i++) updateTileSelectionStyle(i);
     }
-    // Releasing Space (or losing window focus) ends paint mode
+    // Releasing Space resolves a Shift+Space TAP (no arrow movement) → toggle the row,
+    // and ends any paint drag. Losing window focus also ends drag state.
     document.addEventListener('keyup', (e) => {
-        if (e.key === ' ' || e.code === 'Space') img1SpaceHeld = false;
+        if (e.key === ' ' || e.code === 'Space') {
+            if (img1ShiftDrag && !img1ShiftMoved && img1ViewMode === 'grid') {
+                img1ToggleRow(img1ShiftRowAnchor >= 0 ? img1ShiftRowAnchor : currentImg1Idx);
+            }
+            img1SpaceHeld = false; img1ShiftDrag = false; img1ShiftMoved = false; img1ShiftRowAnchor = -1;
+        }
     });
-    window.addEventListener('blur', () => { img1SpaceHeld = false; });
+    window.addEventListener('blur', () => {
+        img1SpaceHeld = false; img1ShiftDrag = false; img1ShiftMoved = false; img1ShiftRowAnchor = -1;
+    });
 
     // Keyboard shortcuts on review page:
     //   Enter   -> Submit (Approve if no issues/comment, else Reject)
@@ -5550,16 +5580,18 @@
             if (e.key === 'f' || e.key === 'F') { e.preventDefault(); setImg1View('single'); return; }
             if (e.key === 'a' || e.key === 'A') { e.preventDefault(); if (currentImg1Idx < 0) currentImg1Idx = 0; setImg1View('all'); return; }
             // Space — multi-select (grid view only):
-            //   • plain Space tap toggles the focused tile
-            //   • hold Space + arrow keys → paint-select each tile you move onto
-            //   • Shift+Space → select the whole row of the focused tile
+            //   • plain Space tap        → toggle the focused tile
+            //   • hold Space + arrows    → paint-SELECT each tile you move onto
+            //   • Shift+Space tap        → toggle the whole row of the focused tile
+            //   • hold Shift+Space+arrows→ paint-UNSELECT each tile you move onto
             if (e.key === ' ' || e.code === 'Space') {
                 if (img1ViewMode === 'grid' && currentImg1Idx >= 0 && !inInput && !(active && active.tagName === 'BUTTON')) {
                     e.preventDefault();
                     if (e.shiftKey) {
-                        img1SelectRow(currentImg1Idx);        // Shift+Space → whole row
+                        // Defer: decide row-toggle (tap) vs unselect-drag (hold+arrow) on release
+                        if (!e.repeat) { img1ShiftDrag = true; img1ShiftMoved = false; img1ShiftRowAnchor = currentImg1Idx; }
                     } else {
-                        img1SpaceHeld = true;                 // hold to paint while arrowing
+                        img1SpaceHeld = true;                 // hold to paint-select while arrowing
                         if (!e.repeat) toggleVINSelect(currentImg1Idx, { shiftKey: false });
                     }
                 }
@@ -5616,7 +5648,15 @@
                     else if (e.key === 'ArrowDown')  n = Math.min(cur + cols, last);
                     else if (e.key === 'ArrowUp')    n = Math.max(cur - cols, 0);
                     select1ImgVIN(n);
-                    if (img1SpaceHeld) img1SelectTile(n);   // paint-select while Space held
+                    if (img1SpaceHeld) {
+                        img1PaintTile(n, true);              // paint-SELECT while Space held
+                    } else if (img1ShiftDrag) {
+                        if (!img1ShiftMoved) {               // first move → also unselect the anchor
+                            img1ShiftMoved = true;
+                            if (img1ShiftRowAnchor >= 0) img1PaintTile(img1ShiftRowAnchor, false);
+                        }
+                        img1PaintTile(n, false);             // paint-UNSELECT while Shift+Space held
+                    }
                 }
                 return;
             }
