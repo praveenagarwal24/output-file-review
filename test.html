@@ -1012,14 +1012,6 @@
                font-size:18px;line-height:1;align-items:center;justify-content:center;"
         title="Back to top">↑</button>
 
-    <!-- Dashboard: floating bar to clear cache for the ticked teams -->
-    <div id="dash-clear-bar" style="display:none;position:fixed;bottom:20px;left:50%;transform:translateX(-50%);z-index:180;background:#0f172a;color:#fff;border-radius:12px;box-shadow:0 8px 30px rgba(0,0,0,.35);padding:10px 14px;align-items:center;gap:10px;">
-        <span id="dash-clear-count" style="font-size:13px;font-weight:700;white-space:nowrap;"></span>
-        <button onclick="dashClearSelectAll()" style="font-size:11px;font-weight:600;padding:6px 10px;border-radius:8px;border:1px solid rgba(255,255,255,.25);background:transparent;color:#fff;cursor:pointer;">Select all</button>
-        <button onclick="dashClearNone()" style="font-size:11px;font-weight:600;padding:6px 10px;border-radius:8px;border:1px solid rgba(255,255,255,.25);background:transparent;color:#fff;cursor:pointer;">Clear selection</button>
-        <button onclick="doDashClearSelected()" style="font-size:11px;font-weight:700;padding:6px 12px;border-radius:8px;border:none;background:#e11d48;color:#fff;cursor:pointer;display:flex;align-items:center;gap:6px;">🗑 Clear cache for selected</button>
-    </div>
-
     <div id="error-toast" class="fixed bottom-4 right-4 bg-red-600 text-white px-5 py-3 rounded-lg shadow-2xl transform translate-y-20 transition-transform duration-300 flex items-center space-x-3 z-[200] max-w-md">
         <svg class="w-5 h-5 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
         <span id="error-message" class="text-sm font-medium"></span>
@@ -1302,8 +1294,6 @@
         clearCacheBtn.style.display = showBtns ? 'flex' : 'none';
         // When returning to dashboard, re-render so the per-team progress is current
         if (pageId === 'page-dashboard' && teamsList.length) renderDashboard();
-        // Keep the "clear selected teams" bar tied to the dashboard only
-        try { updateDashClearBar(); } catch (e) {}
     }
 
     function goHome() {
@@ -1821,24 +1811,12 @@
             teamsList.reduce((s, t) => s + t.vinCount, 0), 'VINs total');
     }
 
-    // Split a pipe-or-comma separated URL string into an array of clean URLs.
-    // IMPORTANT: some CDN URLs contain LITERAL commas in the path (e.g. Dealer
-    // eProcess links embed the trim name: ".../Used-2024-Nissan-Titan-...w
-    // Navigation,HeatedMirrors,SiriusXM&18%22Wheels-ID..."). A naive comma split
-    // shredded one valid URL into several broken fragments. So we only treat a
-    // comma as a separator when the NEXT token is another http(s) URL.
+    // Split a pipe-or-comma separated URL string into an array of clean URLs
     function splitUrls(raw) {
         if (!raw) return [];
-        raw = String(raw).trim();
-        if (!raw) return [];
-        // Pipe-separated is unambiguous — URLs never contain '|'
-        if (raw.includes('|')) return raw.split('|').map(u => u.trim()).filter(Boolean);
-        // Full URLs present → split ONLY on commas that precede another http(s) URL
-        if (/https?:\/\//i.test(raw)) {
-            return raw.split(/\s*,\s*(?=https?:\/\/)/i).map(u => u.trim()).filter(Boolean);
-        }
-        // No protocol → legacy naive comma split
-        return raw.split(',').map(u => u.trim()).filter(Boolean);
+        // Try pipe first (most common), then comma
+        const sep = raw.includes('|') ? '|' : ',';
+        return raw.split(sep).map(u => u.trim()).filter(Boolean);
     }
 
     // =========================================================================
@@ -2750,10 +2728,7 @@
     // 1ST IMAGE VIEW TOGGLE (grid / single)
     // =========================================================================
     let img1ViewMode = 'grid'; // 'grid' | 'single'
-    let img1SpaceHeld = false;  // Space held → arrow keys paint-SELECT tiles (grid)
-    let img1ShiftDrag = false;  // Shift+Space held → arrow keys paint-UNSELECT tiles (grid)
-    let img1ShiftMoved = false; // did an arrow fire during a Shift+Space hold? (tap vs drag)
-    let img1ShiftRowAnchor = -1;// tile where Shift+Space was pressed (row-toggle on tap)
+    let img1SpaceHeld = false;  // true while Space is held → arrow keys paint-select tiles (grid)
 
     // Grid zoom: 1=2col, 2=3col, 3=4col(default), 4=6col, 5=8col
     const ZOOM_COLS = [2, 3, 4, 6, 8];
@@ -2793,7 +2768,7 @@
 
     function setImg1View(mode) {
         img1ViewMode = mode;
-        img1SpaceHeld = false; img1ShiftDrag = false; img1ShiftMoved = false; img1ShiftRowAnchor = -1;  // reset paint state on any view change
+        img1SpaceHeld = false;   // reset paint-select state on any view change
         const gridArea   = document.getElementById('image-area');
         const singleArea = document.getElementById('single-view-area');
         const allArea    = document.getElementById('img1-all-view');
@@ -3700,122 +3675,27 @@
                 .forEach(k => localStorage.removeItem(k));
         } catch (e) {}
         // Reset in-memory state
-        reviews      = {};
-        img1Reviews  = {};
-        img1Comments = {};
-        try { Object.keys(subIssues).forEach(k => delete subIssues[k]); } catch (e) {}
+        reviews     = {};
+        img1Reviews = {};
         // Clear image URL caches so fresh loads happen
         try { _urlCache.clear(); } catch (e) {}
         try { _svPreloadCache.clear(); } catch (e) {}
     }
 
-    // Scoped clear — remove ONLY one team's local review data, leaving all other
-    // teams untouched. Mirrors img1CountForTeam's key scheme so counts stay correct.
-    function clearTeamReviewCache(t) {
-        if (!t) return;
-        if (t.teamId === 'csv-all-rooftops') {
-            // Virtual "All Rooftops" session — clear every all-rooftops key
-            Object.keys(img1Reviews ).forEach(k => { if (k === 'csv-all-rooftops' || k.startsWith('csv-all-rooftops::')) delete img1Reviews[k];  });
-            Object.keys(img1Comments).forEach(k => { if (k === 'csv-all-rooftops' || k.startsWith('csv-all-rooftops::')) delete img1Comments[k]; });
-            try { Object.keys(subIssues).forEach(sk => { if (sk.startsWith('csv-all-rooftops::')) delete subIssues[sk]; }); } catch (e) {}
-            if (reviews['csv-all-rooftops']) delete reviews['csv-all-rooftops'];
-            persist1ImgReviews(); persistReviews();
-            return;
-        }
-        const keys = t.rooftop
-            ? [t.teamId + '::' + t.rooftop, 'csv-all-rooftops::' + t.rooftop, t.teamId]
-            : [t.teamId];
-        keys.forEach(k => { delete img1Reviews[k]; delete img1Comments[k]; });
-        if (reviews[t.teamId]) delete reviews[t.teamId];
-        const prefixes = t.rooftop
-            ? [t.teamId + '::' + t.rooftop + '::', 'csv-all-rooftops::' + t.rooftop + '::']
-            : [t.teamId + '::'];
-        try { Object.keys(subIssues).forEach(sk => { if (prefixes.some(p => sk.startsWith(p))) delete subIssues[sk]; }); } catch (e) {}
-        persist1ImgReviews(); persistReviews();
-    }
-
-    // ── Dashboard "clear which teams" selection (checkboxes on the team cards) ──
-    const dashClearSelected = new Set();   // teamIds ticked for clearing
-    function toggleDashClear(safeRef) {
-        const t = window['__teamRef_' + safeRef];
-        if (!t) return;
-        if (dashClearSelected.has(t.teamId)) dashClearSelected.delete(t.teamId);
-        else dashClearSelected.add(t.teamId);
-        updateDashClearBar();
-    }
-    function dashClearSelectAll() {
-        (teamsList || []).forEach(t => dashClearSelected.add(t.teamId));
-        document.querySelectorAll('.dash-clear-cb').forEach(cb => { cb.checked = true; });
-        updateDashClearBar();
-    }
-    function dashClearNone() {
-        dashClearSelected.clear();
-        document.querySelectorAll('.dash-clear-cb').forEach(cb => { cb.checked = false; });
-        updateDashClearBar();
-    }
-    function updateDashClearBar() {
-        const bar = document.getElementById('dash-clear-bar');
-        if (!bar) return;
-        const onDash = document.getElementById('page-dashboard').classList.contains('active');
-        const n = dashClearSelected.size;
-        if (onDash && n > 0) {
-            document.getElementById('dash-clear-count').textContent = n + ' team' + (n === 1 ? '' : 's') + ' selected';
-            bar.style.display = 'flex';
-        } else {
-            bar.style.display = 'none';
-        }
-    }
-    function doDashClearSelected() {
-        if (!dashClearSelected.size) {
-            showError('Tick the teams you want to clear (checkbox on each card), then press Clear.');
-            return;
-        }
-        const teams = [...dashClearSelected].map(id => (teamsList || []).find(t => t.teamId === id)).filter(Boolean);
-        const names = teams.map(t => t.rooftop || t.name);
-        const ok = confirm(
-            'Permanently clear local review progress for ' + teams.length + ' team' + (teams.length === 1 ? '' : 's') + '?\n\n' +
-            names.join(', ') + '\n\n' +
-            '⚠ This is NOT backed up to the Google Sheet and CANNOT be restored.\n' +
-            'Only reviews already submitted (to BigQuery) are safe.'
-        );
-        if (!ok) return;
-        teams.forEach(t => clearTeamReviewCache(t));
-        dashClearSelected.clear();
-        renderDashboard();
-        updateDashClearBar();
-        showError('Cleared local reviews for ' + teams.length + ' team' + (teams.length === 1 ? '' : 's') + '.');
-    }
-
     document.getElementById('clear-cache-btn').addEventListener('click', () => {
-        const onReview = document.getElementById('page-review').classList.contains('active');
-        if (onReview) {
-            // Scoped: clear ONLY the team currently being reviewed
-            const t = (reviewMode === '1img') ? currentImg1Team : currentTeam;
-            if (!t) { showError('No team is open to clear.'); return; }
-            const label = t.rooftop || t.name || t.teamId;
-            const ok = confirm(
-                'Clear local review progress for “' + label + '” on this device?\n\n' +
-                '⚠ This PERMANENTLY deletes this team’s review progress stored on this\n' +
-                'device. It is NOT backed up to the Google Sheet and CANNOT be restored.\n' +
-                'Only reviews you have already submitted (to BigQuery) are safe.\n\n' +
-                'You will stay signed in. Other teams are NOT affected.'
-            );
-            if (!ok) return;
-            clearTeamReviewCache(t);
-            // Reflect the cleared state in the open review view
-            try { selectedVINIndices.clear(); } catch (e) {}
-            try { updateBulkBar(); } catch (e) {}
-            if (reviewMode === '1img' && currentImg1Team) {
-                render1ImgGallery(); render1ImgSidebar(); updateImg1ProgressBadge();
-            } else if (reviewMode === 'vin' && currentTeam && currentTeamVINs &&
-                       currentVINIndex >= 0 && currentTeamVINs[currentVINIndex]) {
-                try { renderImages(currentTeamVINs[currentVINIndex]); } catch (e) {}
-            }
-            showError('Cleared local reviews for “' + label + '”. Other teams untouched.');
-            return;
-        }
-        // Dashboard: clear the teams ticked on the cards
-        doDashClearSelected();
+        const confirmed = confirm(
+            'Clear locally stored review progress from this device?\n\n' +
+            'Your reviews are saved in the Google Sheet — they will be restored\n' +
+            'from the sheet the next time you load an enterprise.\n\n' +
+            'You will stay signed in. This only clears the local review cache.'
+        );
+        if (!confirmed) return;
+
+        clearReviewCache();
+
+        // Re-render dashboard to show cleared counts
+        renderDashboard();
+        showError('Local cache cleared (you are still signed in). Reload the enterprise to restore from the sheet.');
     });
 
     // =========================================================================
@@ -3943,18 +3823,12 @@
 
                 const card = document.createElement('div');
                 card.className = "bg-white p-5 rounded-xl border border-slate-200 shadow-sm card-hover transition cursor-pointer flex flex-col justify-between min-h-[128px]";
-                card.style.position = 'relative';
                 // 1st image review progress
                 const img1ReviewedCount = img1CountForTeam(t);
                 const img1Pct = t.vinCount > 0 ? Math.round((img1ReviewedCount / t.vinCount) * 100) : 0;
-                const _safeRef = t.teamId.replace(/[^a-z0-9]/gi, '_');
 
                 card.innerHTML = `
-                    <input type="checkbox" class="dash-clear-cb" title="Select to clear this team's local reviews"
-                        ${dashClearSelected.has(t.teamId) ? 'checked' : ''}
-                        onclick="event.stopPropagation();toggleDashClear('${_safeRef}')"
-                        style="position:absolute;top:9px;right:9px;width:15px;height:15px;cursor:pointer;accent-color:#e11d48;z-index:6;">
-                    <div class="flex flex-col space-y-0.5" style="padding-right:20px">
+                    <div class="flex flex-col space-y-0.5">
                         <h3 class="font-bold text-[#1a202c] text-[15px] leading-tight truncate" title="${escapeHtml(t.rooftop || t.name)}">${escapeHtml(t.rooftop || t.name)}</h3>
                     </div>
                     <div class="flex items-center justify-between mt-3">
@@ -3984,7 +3858,6 @@
                 window['__teamRef_' + t.teamId.replace(/[^a-z0-9]/gi,'_')] = t;
                 grid.appendChild(card);
             });
-        updateDashClearBar();
     }
 
     document.getElementById('team-search').addEventListener('input', renderDashboard);
@@ -5621,47 +5494,34 @@
     });
 
     // ── Space-drag multi-select helpers (grid view) ──
-    // Paint one tile to a target state (selecting=true → add, false → remove)
-    function img1PaintTile(idx, selecting) {
+    // Always-select a single tile (used while painting with Space held)
+    function img1SelectTile(idx) {
         if (idx < 0 || idx >= currentImg1VINs.length) return;
-        const has = selectedVINIndices.has(idx);
-        if (selecting && !has)      selectedVINIndices.add(idx);
-        else if (!selecting && has) selectedVINIndices.delete(idx);
-        else return;                                // no change
+        if (selectedVINIndices.has(idx)) return;   // already selected — leave it
+        selectedVINIndices.add(idx);
         lastCheckedIdx = idx;
         updateBulkBar();
         render1ImgVinList();
         updateTileSelectionStyle(idx);
     }
-    // Toggle every tile in the focused tile's grid row (Shift+Space tap):
-    // if the whole row is already selected → clear it, else select the whole row.
-    function img1ToggleRow(idx) {
+    // Always-select every tile in the focused tile's grid row (Shift+Space)
+    function img1SelectRow(idx) {
         if (idx < 0 || idx >= currentImg1VINs.length) return;
         const cols = ((typeof ZOOM_COLS !== 'undefined' && ZOOM_COLS[currentGridZoom - 1]) || 4);
         const last = currentImg1VINs.length - 1;
         const rowStart = Math.floor(idx / cols) * cols;
         const rowEnd   = Math.min(rowStart + cols - 1, last);
-        let allSel = true;
-        for (let i = rowStart; i <= rowEnd; i++) { if (!selectedVINIndices.has(i)) { allSel = false; break; } }
-        for (let i = rowStart; i <= rowEnd; i++) { if (allSel) selectedVINIndices.delete(i); else selectedVINIndices.add(i); }
+        for (let i = rowStart; i <= rowEnd; i++) selectedVINIndices.add(i);
         lastCheckedIdx = rowEnd;
         updateBulkBar();
         render1ImgVinList();
         for (let i = rowStart; i <= rowEnd; i++) updateTileSelectionStyle(i);
     }
-    // Releasing Space resolves a Shift+Space TAP (no arrow movement) → toggle the row,
-    // and ends any paint drag. Losing window focus also ends drag state.
+    // Releasing Space (or losing window focus) ends paint mode
     document.addEventListener('keyup', (e) => {
-        if (e.key === ' ' || e.code === 'Space') {
-            if (img1ShiftDrag && !img1ShiftMoved && img1ViewMode === 'grid') {
-                img1ToggleRow(img1ShiftRowAnchor >= 0 ? img1ShiftRowAnchor : currentImg1Idx);
-            }
-            img1SpaceHeld = false; img1ShiftDrag = false; img1ShiftMoved = false; img1ShiftRowAnchor = -1;
-        }
+        if (e.key === ' ' || e.code === 'Space') img1SpaceHeld = false;
     });
-    window.addEventListener('blur', () => {
-        img1SpaceHeld = false; img1ShiftDrag = false; img1ShiftMoved = false; img1ShiftRowAnchor = -1;
-    });
+    window.addEventListener('blur', () => { img1SpaceHeld = false; });
 
     // Keyboard shortcuts on review page:
     //   Enter   -> Submit (Approve if no issues/comment, else Reject)
@@ -5690,18 +5550,16 @@
             if (e.key === 'f' || e.key === 'F') { e.preventDefault(); setImg1View('single'); return; }
             if (e.key === 'a' || e.key === 'A') { e.preventDefault(); if (currentImg1Idx < 0) currentImg1Idx = 0; setImg1View('all'); return; }
             // Space — multi-select (grid view only):
-            //   • plain Space tap        → toggle the focused tile
-            //   • hold Space + arrows    → paint-SELECT each tile you move onto
-            //   • Shift+Space tap        → toggle the whole row of the focused tile
-            //   • hold Shift+Space+arrows→ paint-UNSELECT each tile you move onto
+            //   • plain Space tap toggles the focused tile
+            //   • hold Space + arrow keys → paint-select each tile you move onto
+            //   • Shift+Space → select the whole row of the focused tile
             if (e.key === ' ' || e.code === 'Space') {
                 if (img1ViewMode === 'grid' && currentImg1Idx >= 0 && !inInput && !(active && active.tagName === 'BUTTON')) {
                     e.preventDefault();
                     if (e.shiftKey) {
-                        // Defer: decide row-toggle (tap) vs unselect-drag (hold+arrow) on release
-                        if (!e.repeat) { img1ShiftDrag = true; img1ShiftMoved = false; img1ShiftRowAnchor = currentImg1Idx; }
+                        img1SelectRow(currentImg1Idx);        // Shift+Space → whole row
                     } else {
-                        img1SpaceHeld = true;                 // hold to paint-select while arrowing
+                        img1SpaceHeld = true;                 // hold to paint while arrowing
                         if (!e.repeat) toggleVINSelect(currentImg1Idx, { shiftKey: false });
                     }
                 }
@@ -5758,15 +5616,7 @@
                     else if (e.key === 'ArrowDown')  n = Math.min(cur + cols, last);
                     else if (e.key === 'ArrowUp')    n = Math.max(cur - cols, 0);
                     select1ImgVIN(n);
-                    if (img1SpaceHeld) {
-                        img1PaintTile(n, true);              // paint-SELECT while Space held
-                    } else if (img1ShiftDrag) {
-                        if (!img1ShiftMoved) {               // first move → also unselect the anchor
-                            img1ShiftMoved = true;
-                            if (img1ShiftRowAnchor >= 0) img1PaintTile(img1ShiftRowAnchor, false);
-                        }
-                        img1PaintTile(n, false);             // paint-UNSELECT while Shift+Space held
-                    }
+                    if (img1SpaceHeld) img1SelectTile(n);   // paint-select while Space held
                 }
                 return;
             }
