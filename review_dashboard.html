@@ -5,6 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Spyne · Review Dashboard</title>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<script src="https://accounts.google.com/gsi/client" async defer></script>
 <style>
 :root{--bg:#0f172a;--card:#1e293b;--border:#334155;--text:#f8fafc;--muted:#94a3b8;--ok:#10b981;--issue:#f97316;--blue:#3b82f6;--violet:#8b5cf6;--header-bg:rgba(15,23,42,.96);--bar-bg:rgba(30,41,59,.85);--thead-bg:#1e293b;--tfoot-bg:#16233a;--hover:rgba(255,255,255,.03);--hover2:rgba(255,255,255,.05);--row-border:rgba(51,65,85,.55);--btn-hover:#475569;--shadow:0 1px 2px rgba(0,0,0,.35);--dot-stroke:#0f172a}
 :root[data-theme="light"]{--bg:#eef2f7;--card:#ffffff;--border:#e2e8f0;--text:#0f172a;--muted:#64748b;--ok:#059669;--issue:#ea580c;--blue:#2563eb;--violet:#7c3aed;--header-bg:rgba(255,255,255,.92);--bar-bg:rgba(255,255,255,.85);--thead-bg:#f1f5f9;--tfoot-bg:#eef2f7;--hover:rgba(15,23,42,.03);--hover2:rgba(15,23,42,.05);--row-border:rgba(226,232,240,.9);--btn-hover:#cbd5e1;--shadow:0 1px 2px rgba(15,23,42,.06),0 2px 8px rgba(15,23,42,.05);--dot-stroke:#ffffff}
@@ -217,8 +218,29 @@ tr:hover td{background:var(--hover)}
 @media(max-width:768px){.kpi-grid{grid-template-columns:1fr 1fr}.charts-row,.tables-row,.issues-row{grid-template-columns:1fr}main,#filter-bar,header{padding-left:14px;padding-right:14px}}
 </style>
 <script>(function(){try{var t=localStorage.getItem('dash_theme');if(t!=='light'&&t!=='dark')t=(window.matchMedia&&matchMedia('(prefers-color-scheme: light)').matches)?'light':'dark';document.documentElement.setAttribute('data-theme',t);}catch(e){document.documentElement.setAttribute('data-theme','dark');}})();</script>
+<style>
+#auth-gate{position:fixed;inset:0;z-index:9999;background:var(--bg);display:flex;align-items:center;justify-content:center;padding:24px}
+#auth-gate .ag-card{background:var(--card);border:1px solid var(--border);border-radius:16px;padding:34px 40px;box-shadow:var(--shadow);max-width:380px;width:100%;text-align:center}
+#auth-gate .ag-title{font-size:18px;font-weight:800;margin-bottom:6px;color:var(--text)}
+#auth-gate .ag-sub{font-size:12px;color:var(--muted);margin-bottom:22px;line-height:1.5}
+#gsi-btn{display:flex;justify-content:center;min-height:44px}
+#auth-msg{margin-top:16px;font-size:12px;color:#ef4444;min-height:16px;line-height:1.5}
+body.locked{overflow:hidden}
+#user-chip{display:none;align-items:center;gap:7px;font-size:11px;color:var(--muted)}
+#user-chip img{width:22px;height:22px;border-radius:50%}
+#user-chip .uc-out{cursor:pointer;color:var(--blue);font-weight:600}
+</style>
 </head>
-<body>
+<body class="locked">
+
+<div id="auth-gate">
+  <div class="ag-card">
+    <div class="ag-title">Website Review Dashboard</div>
+    <div class="ag-sub">Sign in with an authorized Google account to view this dashboard.</div>
+    <div id="gsi-btn"></div>
+    <div id="auth-msg"></div>
+  </div>
+</div>
 
 <header>
   <div class="brand">
@@ -229,6 +251,7 @@ tr:hover td{background:var(--hover)}
     </div>
   </div>
   <div class="hdr-right">
+    <span id="user-chip"><img id="uc-img" alt=""><span id="uc-email"></span><span class="uc-out" onclick="signOut()">Sign out</span></span>
     <span id="last-updated"></span>
     <button class="btn icon-btn" id="theme-btn" onclick="toggleTheme()" title="Toggle light / dark"></button>
     <button class="btn" id="refresh-btn" onclick="loadAll()">
@@ -346,6 +369,41 @@ setThemeIcon();
 const BQ  = 'https://script.google.com/macros/s/AKfycbxS1D1FkX2q_wQhh4U6LbzQKAgSRwzQGr0gEpmaM1rT8Sqig7ghr54ChYe9dor3PIaG/exec';
 const TBL = '`inspired-frame-453018-r2.spyne_reviews.image_reviews`';
 const ENT = '`inspired-frame-453018-r2.spyne_reviews.spyne_rooftop_enterprises`';
+
+// ── Google Sign-In access control ──
+// 1) Create an OAuth 2.0 Client ID (Web) in Google Cloud Console, add this site as an
+//    Authorized JavaScript origin, and paste the Client ID below.
+// 2) The SAME Client ID + the allowed-email list must be set in Code.gs (server-side is
+//    what actually enforces access; this page only gates the UI for a clean experience).
+const OAUTH_CLIENT_ID = '108193022090-ps76d9cbosaoqnelf9qmurlldsuj95og.apps.googleusercontent.com';
+let AUTH_TOKEN=null, AUTH_EMAIL=null, _booted=false;
+function _decodeJwt(t){ try{ return JSON.parse(decodeURIComponent(atob(t.split('.')[1].replace(/-/g,'+').replace(/_/g,'/')).split('').map(c=>'%'+('00'+c.charCodeAt(0).toString(16)).slice(-2)).join(''))); }catch(e){ return {}; } }
+function _isAuthErr(m){ return /not authoriz|unauthor|invalid token|no token|expired/i.test(m||''); }
+function showAuthGate(msg){ const g=document.getElementById('auth-gate'); if(g) g.style.display='flex'; document.body.classList.add('locked'); const m=document.getElementById('auth-msg'); if(m) m.textContent=msg||''; }
+function hideAuthGate(){ const g=document.getElementById('auth-gate'); if(g) g.style.display='none'; document.body.classList.remove('locked'); }
+function onGoogleSignIn(resp){
+  AUTH_TOKEN = resp && resp.credential;
+  const p=_decodeJwt(AUTH_TOKEN||''); AUTH_EMAIL=(p.email||'').toLowerCase();
+  const chip=document.getElementById('user-chip');
+  if(chip){ chip.style.display='flex'; document.getElementById('uc-email').textContent=AUTH_EMAIL; const im=document.getElementById('uc-img'); if(p.picture){ im.src=p.picture; im.style.display=''; } else { im.style.display='none'; } }
+  hideAuthGate();
+  if(!_booted){ _booted=true; loadFilterOptions(); loadAll(); } else { loadAll(); }
+}
+function onAuthFail(err){
+  AUTH_TOKEN=null;
+  try{ google.accounts.id.disableAutoSelect(); }catch(e){}
+  showAuthGate(_isAuthErr(err)&&/not authoriz|unauthor/i.test(err)
+    ? ('The account '+(AUTH_EMAIL||'')+' is not on the access list. Ask the admin to add you, then sign in again.')
+    : 'Your session expired or is invalid. Please sign in again.');
+}
+function signOut(){ AUTH_TOKEN=null; AUTH_EMAIL=null; try{ google.accounts.id.disableAutoSelect(); }catch(e){} const chip=document.getElementById('user-chip'); if(chip) chip.style.display='none'; showAuthGate(''); }
+function initAuth(){
+  if(!(window.google && google.accounts && google.accounts.id)){ return setTimeout(initAuth,200); }
+  showAuthGate('');
+  google.accounts.id.initialize({ client_id: OAUTH_CLIENT_ID, callback: onGoogleSignIn, auto_select: true });
+  google.accounts.id.renderButton(document.getElementById('gsi-btn'), { theme:'filled_blue', size:'large', text:'signin_with', shape:'pill' });
+  try{ google.accounts.id.prompt(); }catch(e){}
+}
 // Reviews enriched from spyne_rooftop_enterprises: ENTERPRISE NAME via enterprise_id
 // (clean 1:1 key), TEAM/ROOFTOP NAME + segment/ARR via team_id.
 // POCs (CS/AE/OB) are account-level: mapped by enterprise_id FIRST (higher coverage),
@@ -520,9 +578,10 @@ document.getElementById('dp-dropdown').addEventListener('click', e=>e.stopPropag
 
 // ── BQ ──
 async function query(sql) {
-  const res=await fetch(BQ+'?query='+encodeURIComponent(sql),{redirect:'follow'});
+  const url=BQ+'?query='+encodeURIComponent(sql)+(AUTH_TOKEN?'&id_token='+encodeURIComponent(AUTH_TOKEN):'');
+  const res=await fetch(url,{redirect:'follow'});
   const d=await res.json();
-  if(!d.ok) throw new Error(d.error||'Query failed');
+  if(!d.ok){ if(_isAuthErr(d.error)) onAuthFail(d.error); throw new Error(d.error||'Query failed'); }
   return d.rows;
 }
 
@@ -534,9 +593,10 @@ async function runQueries(sqls){
   if(_batchOk===false) return Promise.all(sqls.map(query));
   let d=null;
   try{
-    const res=await fetch(BQ,{method:'POST',headers:{'Content-Type':'text/plain;charset=utf-8'},body:JSON.stringify({action:'batch',queries:sqls}),redirect:'follow'});
+    const res=await fetch(BQ,{method:'POST',headers:{'Content-Type':'text/plain;charset=utf-8'},body:JSON.stringify({action:'batch',queries:sqls,idToken:AUTH_TOKEN}),redirect:'follow'});
     d=await res.json();
   }catch(e){ d=null; }
+  if(d && d.ok===false && _isAuthErr(d.error)){ onAuthFail(d.error); throw new Error(d.error); }
   if(d && d.ok && Array.isArray(d.results) && d.results.length===sqls.length){
     _batchOk=true;
     return d.results.map(r=>{ if(r && r.ok) return r.rows||[]; throw new Error((r && r.error)||'Query failed'); });
@@ -923,6 +983,7 @@ async function loadFilterOptions(){
 }
 
 async function loadAll(){
+  if(!AUTH_TOKEN){ showAuthGate(''); return; }
   const btn=document.getElementById('refresh-btn'); btn.classList.add('loading');
   const mc=document.getElementById('main-content');
   mc.innerHTML='<div class="loading-overlay"><div class="spinner"></div><div style="color:var(--muted);font-size:12px">Querying BigQuery…</div></div>';
@@ -1087,8 +1148,8 @@ UNION ALL SELECT * FROM (SELECT 'worst', CAST(team_id AS STRING), MAX(enterprise
 
 // init — set All time active
 document.querySelectorAll('.qs-item').forEach(i=>{ if(i.textContent.trim()==='All time') i.classList.add('active'); else i.classList.remove('active'); });
-loadFilterOptions();
-loadAll();
+// Boot: show the Google Sign-In gate; data loads only after an authorized sign-in.
+initAuth();
 </script>
 </body>
 </html>
