@@ -1012,6 +1012,14 @@
                font-size:18px;line-height:1;align-items:center;justify-content:center;"
         title="Back to top">↑</button>
 
+    <!-- Dashboard: floating bar to clear cache for the ticked teams -->
+    <div id="dash-clear-bar" style="display:none;position:fixed;bottom:20px;left:50%;transform:translateX(-50%);z-index:180;background:#0f172a;color:#fff;border-radius:12px;box-shadow:0 8px 30px rgba(0,0,0,.35);padding:10px 14px;align-items:center;gap:10px;">
+        <span id="dash-clear-count" style="font-size:13px;font-weight:700;white-space:nowrap;"></span>
+        <button onclick="dashClearSelectAll()" style="font-size:11px;font-weight:600;padding:6px 10px;border-radius:8px;border:1px solid rgba(255,255,255,.25);background:transparent;color:#fff;cursor:pointer;">Select all</button>
+        <button onclick="dashClearNone()" style="font-size:11px;font-weight:600;padding:6px 10px;border-radius:8px;border:1px solid rgba(255,255,255,.25);background:transparent;color:#fff;cursor:pointer;">Clear selection</button>
+        <button onclick="doDashClearSelected()" style="font-size:11px;font-weight:700;padding:6px 12px;border-radius:8px;border:none;background:#e11d48;color:#fff;cursor:pointer;display:flex;align-items:center;gap:6px;">🗑 Clear cache for selected</button>
+    </div>
+
     <div id="error-toast" class="fixed bottom-4 right-4 bg-red-600 text-white px-5 py-3 rounded-lg shadow-2xl transform translate-y-20 transition-transform duration-300 flex items-center space-x-3 z-[200] max-w-md">
         <svg class="w-5 h-5 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
         <span id="error-message" class="text-sm font-medium"></span>
@@ -1294,6 +1302,8 @@
         clearCacheBtn.style.display = showBtns ? 'flex' : 'none';
         // When returning to dashboard, re-render so the per-team progress is current
         if (pageId === 'page-dashboard' && teamsList.length) renderDashboard();
+        // Keep the "clear selected teams" bar tied to the dashboard only
+        try { updateDashClearBar(); } catch (e) {}
     }
 
     function goHome() {
@@ -3687,32 +3697,113 @@
         try { _svPreloadCache.clear(); } catch (e) {}
     }
 
-    document.getElementById('clear-cache-btn').addEventListener('click', () => {
-        const confirmed = confirm(
-            'Clear locally stored review progress from this device?\n\n' +
-            '⚠ This PERMANENTLY deletes review progress stored on this device.\n' +
-            'It is NOT backed up to the Google Sheet and CANNOT be restored.\n' +
-            'Only reviews you have already submitted (to BigQuery) are safe.\n\n' +
-            'You will stay signed in. This only clears the local review cache.'
-        );
-        if (!confirmed) return;
-
-        clearReviewCache();
-
-        // Reflect the cleared state in whatever view is currently open
-        try { selectedVINIndices.clear(); } catch (e) {}
-        try { updateBulkBar(); } catch (e) {}
-        if (reviewMode === '1img' && currentImg1Team) {
-            render1ImgGallery();
-            render1ImgSidebar();
-            updateImg1ProgressBadge();
-        } else if (reviewMode === 'vin' && currentTeam && currentTeamVINs &&
-                   currentVINIndex >= 0 && currentTeamVINs[currentVINIndex]) {
-            try { renderImages(currentTeamVINs[currentVINIndex]); } catch (e) {}
+    // Scoped clear — remove ONLY one team's local review data, leaving all other
+    // teams untouched. Mirrors img1CountForTeam's key scheme so counts stay correct.
+    function clearTeamReviewCache(t) {
+        if (!t) return;
+        if (t.teamId === 'csv-all-rooftops') {
+            // Virtual "All Rooftops" session — clear every all-rooftops key
+            Object.keys(img1Reviews ).forEach(k => { if (k === 'csv-all-rooftops' || k.startsWith('csv-all-rooftops::')) delete img1Reviews[k];  });
+            Object.keys(img1Comments).forEach(k => { if (k === 'csv-all-rooftops' || k.startsWith('csv-all-rooftops::')) delete img1Comments[k]; });
+            try { Object.keys(subIssues).forEach(sk => { if (sk.startsWith('csv-all-rooftops::')) delete subIssues[sk]; }); } catch (e) {}
+            if (reviews['csv-all-rooftops']) delete reviews['csv-all-rooftops'];
+            persist1ImgReviews(); persistReviews();
+            return;
         }
-        // Re-render dashboard too so its counts are fresh on return
+        const keys = t.rooftop
+            ? [t.teamId + '::' + t.rooftop, 'csv-all-rooftops::' + t.rooftop, t.teamId]
+            : [t.teamId];
+        keys.forEach(k => { delete img1Reviews[k]; delete img1Comments[k]; });
+        if (reviews[t.teamId]) delete reviews[t.teamId];
+        const prefixes = t.rooftop
+            ? [t.teamId + '::' + t.rooftop + '::', 'csv-all-rooftops::' + t.rooftop + '::']
+            : [t.teamId + '::'];
+        try { Object.keys(subIssues).forEach(sk => { if (prefixes.some(p => sk.startsWith(p))) delete subIssues[sk]; }); } catch (e) {}
+        persist1ImgReviews(); persistReviews();
+    }
+
+    // ── Dashboard "clear which teams" selection (checkboxes on the team cards) ──
+    const dashClearSelected = new Set();   // teamIds ticked for clearing
+    function toggleDashClear(safeRef) {
+        const t = window['__teamRef_' + safeRef];
+        if (!t) return;
+        if (dashClearSelected.has(t.teamId)) dashClearSelected.delete(t.teamId);
+        else dashClearSelected.add(t.teamId);
+        updateDashClearBar();
+    }
+    function dashClearSelectAll() {
+        (teamsList || []).forEach(t => dashClearSelected.add(t.teamId));
+        document.querySelectorAll('.dash-clear-cb').forEach(cb => { cb.checked = true; });
+        updateDashClearBar();
+    }
+    function dashClearNone() {
+        dashClearSelected.clear();
+        document.querySelectorAll('.dash-clear-cb').forEach(cb => { cb.checked = false; });
+        updateDashClearBar();
+    }
+    function updateDashClearBar() {
+        const bar = document.getElementById('dash-clear-bar');
+        if (!bar) return;
+        const onDash = document.getElementById('page-dashboard').classList.contains('active');
+        const n = dashClearSelected.size;
+        if (onDash && n > 0) {
+            document.getElementById('dash-clear-count').textContent = n + ' team' + (n === 1 ? '' : 's') + ' selected';
+            bar.style.display = 'flex';
+        } else {
+            bar.style.display = 'none';
+        }
+    }
+    function doDashClearSelected() {
+        if (!dashClearSelected.size) {
+            showError('Tick the teams you want to clear (checkbox on each card), then press Clear.');
+            return;
+        }
+        const teams = [...dashClearSelected].map(id => (teamsList || []).find(t => t.teamId === id)).filter(Boolean);
+        const names = teams.map(t => t.rooftop || t.name);
+        const ok = confirm(
+            'Permanently clear local review progress for ' + teams.length + ' team' + (teams.length === 1 ? '' : 's') + '?\n\n' +
+            names.join(', ') + '\n\n' +
+            '⚠ This is NOT backed up to the Google Sheet and CANNOT be restored.\n' +
+            'Only reviews already submitted (to BigQuery) are safe.'
+        );
+        if (!ok) return;
+        teams.forEach(t => clearTeamReviewCache(t));
+        dashClearSelected.clear();
         renderDashboard();
-        showError('Local review cache cleared. Unsubmitted progress on this device has been removed.');
+        updateDashClearBar();
+        showError('Cleared local reviews for ' + teams.length + ' team' + (teams.length === 1 ? '' : 's') + '.');
+    }
+
+    document.getElementById('clear-cache-btn').addEventListener('click', () => {
+        const onReview = document.getElementById('page-review').classList.contains('active');
+        if (onReview) {
+            // Scoped: clear ONLY the team currently being reviewed
+            const t = (reviewMode === '1img') ? currentImg1Team : currentTeam;
+            if (!t) { showError('No team is open to clear.'); return; }
+            const label = t.rooftop || t.name || t.teamId;
+            const ok = confirm(
+                'Clear local review progress for “' + label + '” on this device?\n\n' +
+                '⚠ This PERMANENTLY deletes this team’s review progress stored on this\n' +
+                'device. It is NOT backed up to the Google Sheet and CANNOT be restored.\n' +
+                'Only reviews you have already submitted (to BigQuery) are safe.\n\n' +
+                'You will stay signed in. Other teams are NOT affected.'
+            );
+            if (!ok) return;
+            clearTeamReviewCache(t);
+            // Reflect the cleared state in the open review view
+            try { selectedVINIndices.clear(); } catch (e) {}
+            try { updateBulkBar(); } catch (e) {}
+            if (reviewMode === '1img' && currentImg1Team) {
+                render1ImgGallery(); render1ImgSidebar(); updateImg1ProgressBadge();
+            } else if (reviewMode === 'vin' && currentTeam && currentTeamVINs &&
+                       currentVINIndex >= 0 && currentTeamVINs[currentVINIndex]) {
+                try { renderImages(currentTeamVINs[currentVINIndex]); } catch (e) {}
+            }
+            showError('Cleared local reviews for “' + label + '”. Other teams untouched.');
+            return;
+        }
+        // Dashboard: clear the teams ticked on the cards
+        doDashClearSelected();
     });
 
     // =========================================================================
@@ -3840,12 +3931,18 @@
 
                 const card = document.createElement('div');
                 card.className = "bg-white p-5 rounded-xl border border-slate-200 shadow-sm card-hover transition cursor-pointer flex flex-col justify-between min-h-[128px]";
+                card.style.position = 'relative';
                 // 1st image review progress
                 const img1ReviewedCount = img1CountForTeam(t);
                 const img1Pct = t.vinCount > 0 ? Math.round((img1ReviewedCount / t.vinCount) * 100) : 0;
+                const _safeRef = t.teamId.replace(/[^a-z0-9]/gi, '_');
 
                 card.innerHTML = `
-                    <div class="flex flex-col space-y-0.5">
+                    <input type="checkbox" class="dash-clear-cb" title="Select to clear this team's local reviews"
+                        ${dashClearSelected.has(t.teamId) ? 'checked' : ''}
+                        onclick="event.stopPropagation();toggleDashClear('${_safeRef}')"
+                        style="position:absolute;top:9px;right:9px;width:15px;height:15px;cursor:pointer;accent-color:#e11d48;z-index:6;">
+                    <div class="flex flex-col space-y-0.5" style="padding-right:20px">
                         <h3 class="font-bold text-[#1a202c] text-[15px] leading-tight truncate" title="${escapeHtml(t.rooftop || t.name)}">${escapeHtml(t.rooftop || t.name)}</h3>
                     </div>
                     <div class="flex items-center justify-between mt-3">
@@ -3875,6 +3972,7 @@
                 window['__teamRef_' + t.teamId.replace(/[^a-z0-9]/gi,'_')] = t;
                 grid.appendChild(card);
             });
+        updateDashClearBar();
     }
 
     document.getElementById('team-search').addEventListener('input', renderDashboard);
