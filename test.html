@@ -1821,12 +1821,24 @@
             teamsList.reduce((s, t) => s + t.vinCount, 0), 'VINs total');
     }
 
-    // Split a pipe-or-comma separated URL string into an array of clean URLs
+    // Split a pipe-or-comma separated URL string into an array of clean URLs.
+    // IMPORTANT: some CDN URLs contain LITERAL commas in the path (e.g. Dealer
+    // eProcess links embed the trim name: ".../Used-2024-Nissan-Titan-...w
+    // Navigation,HeatedMirrors,SiriusXM&18%22Wheels-ID..."). A naive comma split
+    // shredded one valid URL into several broken fragments. So we only treat a
+    // comma as a separator when the NEXT token is another http(s) URL.
     function splitUrls(raw) {
         if (!raw) return [];
-        // Try pipe first (most common), then comma
-        const sep = raw.includes('|') ? '|' : ',';
-        return raw.split(sep).map(u => u.trim()).filter(Boolean);
+        raw = String(raw).trim();
+        if (!raw) return [];
+        // Pipe-separated is unambiguous — URLs never contain '|'
+        if (raw.includes('|')) return raw.split('|').map(u => u.trim()).filter(Boolean);
+        // Full URLs present → split ONLY on commas that precede another http(s) URL
+        if (/https?:\/\//i.test(raw)) {
+            return raw.split(/\s*,\s*(?=https?:\/\/)/i).map(u => u.trim()).filter(Boolean);
+        }
+        // No protocol → legacy naive comma split
+        return raw.split(',').map(u => u.trim()).filter(Boolean);
     }
 
     // =========================================================================
