@@ -34,6 +34,24 @@ header{display:flex;align-items:center;justify-content:space-between;padding:12p
 .filter-sep{width:1px;height:22px;background:var(--border)}
 .filter-select{background:var(--card);border:1px solid var(--border);color:var(--text);padding:5px 10px;border-radius:8px;font-size:11px;font-family:'Inter',sans-serif;min-width:140px;cursor:pointer}
 .filter-select:focus{outline:none;border-color:var(--blue)}
+.ms{position:relative;display:inline-block}
+.ms-box{display:flex;align-items:center;gap:6px;background:var(--card);border:1px solid var(--border);color:var(--text);padding:5px 10px;border-radius:8px;font-size:11px;font-family:'Inter',sans-serif;min-width:150px;max-width:230px;cursor:pointer}
+.ms-box:hover,.ms-box.open{border-color:var(--blue)}
+.ms-label{flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;text-align:left}
+.ms-label.ph{color:var(--muted)}
+.ms-clear{color:var(--muted);font-size:12px;line-height:1;padding:0 3px;border-radius:4px;display:none}
+.ms-clear:hover{color:#ef4444}
+.ms-caret{color:var(--muted);font-size:9px}
+.ms-panel{position:absolute;top:calc(100% + 4px);left:0;z-index:200;width:250px;background:var(--card);border:1px solid var(--border);border-radius:10px;box-shadow:var(--shadow);padding:8px;display:none}
+.ms-panel.open{display:block}
+.ms-search{width:100%;box-sizing:border-box;background:var(--bar-bg);border:1px solid var(--border);color:var(--text);padding:6px 8px;border-radius:7px;font-size:11px;font-family:'Inter',sans-serif;margin-bottom:6px}
+.ms-search:focus{outline:none;border-color:var(--blue)}
+.ms-list{max-height:240px;overflow-y:auto}
+.ms-opt{display:flex;align-items:center;gap:8px;padding:5px 6px;border-radius:6px;font-size:11px;cursor:pointer;white-space:nowrap;overflow:hidden}
+.ms-opt:hover{background:var(--bar-bg)}
+.ms-opt input{cursor:pointer;accent-color:var(--blue);flex:none}
+.ms-opt span{overflow:hidden;text-overflow:ellipsis}
+.ms-empty{padding:10px;text-align:center;color:var(--muted);font-size:10px}
 
 /* segment tabs */
 #seg-tabs{display:flex;gap:6px;padding:9px 28px;background:var(--bar-bg);border-bottom:1px solid var(--border)}
@@ -280,16 +298,28 @@ tr:hover td{background:var(--hover)}
 
   <div class="filter-sep"></div>
   <span class="filter-label">Enterprise</span>
-  <select id="sel-enterprise" class="filter-select" onchange="loadAll()"><option value="">All enterprises</option></select>
+  <div class="ms" id="ms-enterprise">
+    <div class="ms-box" onclick="msToggle('enterprise')"><span class="ms-label ph" id="ms-lbl-enterprise">All enterprises</span><span class="ms-clear" id="ms-clr-enterprise" title="Clear" onclick="msClear(event,'enterprise')">✕</span><span class="ms-caret">▾</span></div>
+    <div class="ms-panel" id="ms-panel-enterprise"><input class="ms-search" id="ms-search-enterprise" placeholder="Search enterprises…" oninput="msFilter('enterprise')" onclick="event.stopPropagation()"><div class="ms-list" id="ms-list-enterprise"></div></div>
+  </div>
 
   <span class="filter-label">Rooftop</span>
-  <select id="sel-rooftop" class="filter-select" onchange="loadAll()"><option value="">All rooftops</option></select>
+  <div class="ms" id="ms-rooftop">
+    <div class="ms-box" onclick="msToggle('rooftop')"><span class="ms-label ph" id="ms-lbl-rooftop">All rooftops</span><span class="ms-clear" id="ms-clr-rooftop" title="Clear" onclick="msClear(event,'rooftop')">✕</span><span class="ms-caret">▾</span></div>
+    <div class="ms-panel" id="ms-panel-rooftop"><input class="ms-search" id="ms-search-rooftop" placeholder="Search rooftops…" oninput="msFilter('rooftop')" onclick="event.stopPropagation()"><div class="ms-list" id="ms-list-rooftop"></div></div>
+  </div>
 
   <span class="filter-label">Reviewer</span>
-  <select id="sel-reviewer" class="filter-select" onchange="loadAll()"><option value="">All reviewers</option></select>
+  <div class="ms" id="ms-reviewer">
+    <div class="ms-box" onclick="msToggle('reviewer')"><span class="ms-label ph" id="ms-lbl-reviewer">All reviewers</span><span class="ms-clear" id="ms-clr-reviewer" title="Clear" onclick="msClear(event,'reviewer')">✕</span><span class="ms-caret">▾</span></div>
+    <div class="ms-panel" id="ms-panel-reviewer"><input class="ms-search" id="ms-search-reviewer" placeholder="Search reviewers…" oninput="msFilter('reviewer')" onclick="event.stopPropagation()"><div class="ms-list" id="ms-list-reviewer"></div></div>
+  </div>
 
   <span class="filter-label">POC</span>
-  <select id="sel-poc" class="filter-select" onchange="loadAll()"><option value="">All POCs</option></select>
+  <div class="ms" id="ms-poc">
+    <div class="ms-box" onclick="msToggle('poc')"><span class="ms-label ph" id="ms-lbl-poc">All POCs</span><span class="ms-clear" id="ms-clr-poc" title="Clear" onclick="msClear(event,'poc')">✕</span><span class="ms-caret">▾</span></div>
+    <div class="ms-panel" id="ms-panel-poc"><input class="ms-search" id="ms-search-poc" placeholder="Search POCs…" oninput="msFilter('poc')" onclick="event.stopPropagation()"><div class="ms-list" id="ms-list-poc"></div></div>
+  </div>
 </div>
 
 <div class="modal-ov" id="modal-ov" onclick="if(event.target===this)closeModal()">
@@ -711,22 +741,37 @@ function drill(type){
   enableSort(mb);
 }
 
+// ── Searchable multi-select filters (type to search, checkbox multi-pick, per-filter ✕ clear) ──
+const MS={
+  enterprise:{opts:[],sel:new Set(),ph:'All enterprises'},
+  rooftop:{opts:[],sel:new Set(),ph:'All rooftops'},
+  reviewer:{opts:[],sel:new Set(),ph:'All reviewers'},
+  poc:{opts:[],sel:new Set(),ph:'All POCs'}
+};
+const _esc=s=>(''+s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+function msVals(key){ return [...MS[key].sel]; }
+function msLabelText(key){ const m=MS[key],n=m.sel.size; if(!n) return m.ph; if(n===1){ const v=[...m.sel][0], o=m.opts.find(o=>o.value===v); return o?o.label:v; } return n+' selected'; }
+function msUpdateLabel(key){ const m=MS[key], lbl=document.getElementById('ms-lbl-'+key); if(!lbl) return; lbl.textContent=msLabelText(key); lbl.classList.toggle('ph', m.sel.size===0); document.getElementById('ms-clr-'+key).style.display = m.sel.size ? 'inline' : 'none'; }
+function msRenderList(key,q){ const m=MS[key]; q=(q||'').trim().toLowerCase(); const list=document.getElementById('ms-list-'+key); const items=m.opts.filter(o=>!q||o.label.toLowerCase().includes(q)||o.value.toLowerCase().includes(q)); if(!items.length){ list.innerHTML='<div class="ms-empty">No matches</div>'; return; } list.innerHTML=items.map(o=>`<label class="ms-opt" title="${_esc(o.title||o.label)}"><input type="checkbox" ${m.sel.has(o.value)?'checked':''} value="${_esc(o.value)}" onchange="msPick('${key}',this.value)"><span>${_esc(o.label)}</span></label>`).join(''); }
+function msToggle(key){ const p=document.getElementById('ms-panel-'+key), box=p.previousElementSibling, isOpen=p.classList.contains('open'); document.querySelectorAll('.ms-panel.open').forEach(x=>x.classList.remove('open')); document.querySelectorAll('.ms-box.open').forEach(x=>x.classList.remove('open')); if(!isOpen){ msRenderList(key,''); p.classList.add('open'); box.classList.add('open'); const s=document.getElementById('ms-search-'+key); s.value=''; setTimeout(()=>s.focus(),0); } }
+function msFilter(key){ msRenderList(key, document.getElementById('ms-search-'+key).value); }
+function msPick(key,value){ const m=MS[key]; if(m.sel.has(value)) m.sel.delete(value); else m.sel.add(value); msUpdateLabel(key); loadAll(); }
+function msClear(ev,key){ ev.stopPropagation(); MS[key].sel.clear(); msUpdateLabel(key); const p=document.getElementById('ms-panel-'+key); if(p.classList.contains('open')) msRenderList(key, document.getElementById('ms-search-'+key).value); loadAll(); }
+document.addEventListener('click',e=>{ if(!e.target.closest('.ms')){ document.querySelectorAll('.ms-panel.open').forEach(x=>x.classList.remove('open')); document.querySelectorAll('.ms-box.open').forEach(x=>x.classList.remove('open')); } });
+
 function buildWhere(opts={}) {
   const parts=[];
   if(!opts.noDate){
     if(dfrom) parts.push(`review_date >= '${dfrom}'`);
     if(dto)   parts.push(`review_date <= '${dto}'`);
   }
-  const rt=document.getElementById('sel-rooftop')?.value;
-  if(rt) parts.push(`rooftop = '${rt.replace(/'/g,"\\'")}'`);
-  const rv=document.getElementById('sel-reviewer')?.value;
-  if(rv) parts.push(`reviewer = '${rv.replace(/'/g,"\\'")}'`);
-  const ent=document.getElementById('sel-enterprise')?.value;
-  if(ent) parts.push(`enterprise_name = '${ent.replace(/'/g,"\\'")}'`);
+  const inList=vals=>vals.map(v=>`'${(''+v).replace(/'/g,"\\'")}'`).join(',');
+  const rt=msVals('rooftop');     if(rt.length)  parts.push(`rooftop IN (${inList(rt)})`);
+  const rv=msVals('reviewer');    if(rv.length)  parts.push(`reviewer IN (${inList(rv)})`);
+  const ent=msVals('enterprise'); if(ent.length) parts.push(`enterprise_name IN (${inList(ent)})`);
   if(segTab==='Others') parts.push(`(customer_segment IS NULL OR customer_segment NOT IN ('Ent','Mid','SMB'))`);
   else if(segTab) parts.push(`customer_segment = '${segTab.replace(/'/g,"\\'")}'`);
-  const poc=document.getElementById('sel-poc')?.value;
-  if(poc){const p=poc.replace(/'/g,"\\'");parts.push(`(ae_poc_email = '${p}' OR ob_poc_email = '${p}' OR cs_poc_email = '${p}')`);}
+  const poc=msVals('poc'); if(poc.length){ const L=inList(poc); parts.push(`(ae_poc_email IN (${L}) OR ob_poc_email IN (${L}) OR cs_poc_email IN (${L}))`); }
   return parts.length ? 'WHERE '+parts.join(' AND ') : '';
 }
 
@@ -869,11 +914,11 @@ async function loadFilterOptions(){
       `SELECT DISTINCT reviewer FROM ${TBL} WHERE reviewer IS NOT NULL ORDER BY reviewer`,
       `SELECT DISTINCT poc FROM (SELECT ae_poc_email AS poc FROM ${SRC} UNION DISTINCT SELECT ob_poc_email FROM ${SRC} UNION DISTINCT SELECT cs_poc_email FROM ${SRC}) WHERE poc IS NOT NULL AND poc != '' ORDER BY poc`
     ]);
-    const es=document.getElementById('sel-enterprise'),rs=document.getElementById('sel-rooftop'),rvs2=document.getElementById('sel-reviewer'),ps=document.getElementById('sel-poc');
-    ents.forEach(r=>{const o=document.createElement('option');o.value=r.enterprise_name;o.textContent=r.enterprise_name;es.appendChild(o);});
-    rts.forEach(r=>{const o=document.createElement('option');o.value=r.rooftop;o.textContent=r.rooftop;rs.appendChild(o);});
-    rvs.forEach(r=>{const o=document.createElement('option');o.value=r.reviewer;o.textContent=r.reviewer.split('@')[0];o.title=r.reviewer;rvs2.appendChild(o);});
-    pocs.forEach(r=>{const o=document.createElement('option');o.value=r.poc;o.textContent=r.poc.split('@')[0];o.title=r.poc;ps.appendChild(o);});
+    MS.enterprise.opts=ents.filter(r=>r.enterprise_name).map(r=>({value:r.enterprise_name,label:r.enterprise_name,title:r.enterprise_name}));
+    MS.rooftop.opts=rts.filter(r=>r.rooftop).map(r=>({value:r.rooftop,label:r.rooftop,title:r.rooftop}));
+    MS.reviewer.opts=rvs.filter(r=>r.reviewer).map(r=>({value:r.reviewer,label:r.reviewer.split('@')[0],title:r.reviewer}));
+    MS.poc.opts=pocs.filter(r=>r.poc).map(r=>({value:r.poc,label:r.poc.split('@')[0],title:r.poc}));
+    ['enterprise','rooftop','reviewer','poc'].forEach(k=>msUpdateLabel(k));
   }catch(e){console.warn('filter options:',e);}
 }
 
@@ -888,12 +933,13 @@ async function loadAll(){
     // A shared filtered CTE feeds every aggregate via UNION ALL with a `_k` tag +
     // a generic wide schema (s1..s6 strings, n1..n7 ints); parsed back below.
     const COMB = `
-WITH s AS (SELECT * FROM ${SRC} ${W})
+WITH s AS (SELECT * FROM ${SRC} ${W}),
+tsp AS (SELECT team_id, COUNT(DISTINCT rooftop) span FROM s WHERE team_id IS NOT NULL GROUP BY team_id)
 SELECT 'ov' _k, CAST(NULL AS STRING) s1, CAST(NULL AS STRING) s2, CAST(NULL AS STRING) s3, CAST(NULL AS STRING) s4, CAST(NULL AS STRING) s5, CAST(NULL AS STRING) s6, COUNT(*) n1, COUNTIF(issue_type='OK' OR issue_type='Pending') n2, COUNTIF(issue_type NOT IN ('OK','Pending')) n3, COUNT(DISTINCT reviewer) n4, COUNT(DISTINCT rooftop) n5, COUNT(DISTINCT COALESCE(enterprise_name, enterprise)) n6, COUNT(DISTINCT vin) n7 FROM s
 UNION ALL SELECT 'iss', issue_type, NULL,NULL,NULL,NULL,NULL, COUNT(*), NULL,NULL,NULL,NULL,NULL,NULL FROM s GROUP BY issue_type
 UNION ALL SELECT 'rv', reviewer, CAST(MAX(review_date) AS STRING), NULL,NULL,NULL,NULL, COUNT(*), COUNTIF(issue_type='OK' OR issue_type='Pending'), COUNTIF(issue_type NOT IN ('OK','Pending')), COUNT(DISTINCT rooftop), NULL,NULL,NULL FROM s GROUP BY reviewer
 UNION ALL SELECT 'rvit', reviewer, issue_type, NULL,NULL,NULL,NULL, COUNT(*), NULL,NULL,NULL,NULL,NULL,NULL FROM s WHERE issue_type NOT IN ('OK','Pending') GROUP BY reviewer, issue_type
-UNION ALL SELECT 'rt', rooftop, ANY_VALUE(enterprise), ANY_VALUE(enterprise_name), ANY_VALUE(apld_team_name), ANY_VALUE(cs_poc_email), CAST(MAX(review_date) AS STRING), COUNT(DISTINCT vin), COUNT(*), COUNTIF(issue_type='OK' OR issue_type='Pending'), COUNTIF(issue_type NOT IN ('OK','Pending')), NULL,NULL,NULL FROM s GROUP BY rooftop
+UNION ALL SELECT 'rt', s.rooftop, ANY_VALUE(s.enterprise), ANY_VALUE(s.enterprise_name), ANY_VALUE(CASE WHEN tsp.span > 1 THEN s.rooftop ELSE COALESCE(NULLIF(s.apld_team_name,''), s.rooftop) END), ANY_VALUE(s.cs_poc_email), CAST(MAX(s.review_date) AS STRING), COUNT(DISTINCT s.vin), COUNT(*), COUNTIF(s.issue_type='OK' OR s.issue_type='Pending'), COUNTIF(s.issue_type NOT IN ('OK','Pending')), NULL,NULL,NULL FROM s LEFT JOIN tsp ON s.team_id = tsp.team_id GROUP BY s.rooftop
 UNION ALL SELECT 'rtit', rooftop, issue_type, NULL,NULL,NULL,NULL, COUNT(*), NULL,NULL,NULL,NULL,NULL,NULL FROM s WHERE issue_type NOT IN ('OK','Pending') GROUP BY rooftop, issue_type
 UNION ALL SELECT 'cs', cs_poc_email, NULL,NULL,NULL,NULL, CAST(MAX(review_date) AS STRING), COUNT(DISTINCT rooftop), COUNT(DISTINCT vin), COUNT(*), COUNTIF(issue_type='OK' OR issue_type='Pending'), COUNTIF(issue_type NOT IN ('OK','Pending')), NULL,NULL FROM s GROUP BY cs_poc_email
 UNION ALL SELECT 'csit', cs_poc_email, issue_type, NULL,NULL,NULL,NULL, COUNT(*), NULL,NULL,NULL,NULL,NULL,NULL FROM s WHERE issue_type NOT IN ('OK','Pending') GROUP BY cs_poc_email, issue_type
