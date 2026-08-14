@@ -692,7 +692,7 @@
                                 <button id="sv-ha-btn" onclick="svToggleIssue('hero')"       title="h" class="sv-issue-btn-hdr">Hero Angle <small style="opacity:.55;font-size:9px">(h)</small></button>
                                 <button id="sv-p-btn"  onclick="svToggleIssue('photo_na')"  title="p" class="sv-issue-btn-hdr">Photo NA <small style="opacity:.55;font-size:9px">(p)</small></button>
                                 <button id="sv-u-btn"  onclick="svToggleIssue('unsupported')" title="u" class="sv-issue-btn-hdr">Unsupported Vehicle <small style="opacity:.55;font-size:9px">(u)</small></button>
-                                <button id="sv-seq-btn" onclick="svToggleIssue('sequence')" title="e" class="sv-issue-btn-hdr">Sequence <small style="opacity:.55;font-size:9px">(e)</small></button>
+                                <button id="sv-seq-btn" onclick="svToggleIssue('sequence')" title="e" class="sv-issue-btn-hdr">Error <small style="opacity:.55;font-size:9px">(e)</small></button>
                                 <div class="w-px h-4 bg-slate-200 mx-0.5"></div>
                                 <button id="sv-ok-btn" onclick="svMarkOk()"
                                     class="px-2.5 py-1 rounded-md text-[11px] font-bold bg-emerald-500 hover:bg-emerald-600 text-white transition flex items-center space-x-1">
@@ -2844,6 +2844,18 @@
         slider.style.setProperty('--pct', ((val - 1) / 4) * 100 + '%');
     }
 
+    // Ctrl +/- keyboard zoom for the grid (and All view). zoomIn = bigger images = fewer columns.
+    function nudgeGridZoom(zoomIn) {
+        if (img1ViewMode === 'single') return;   // single view has no zoom
+        const cur  = (img1ViewMode === 'all') ? allViewZoom : currentGridZoom;
+        let next = zoomIn ? cur - 1 : cur + 1;    // lower level = fewer cols = bigger
+        next = Math.max(1, Math.min(5, next));
+        if (next === cur) return;
+        const slider = document.getElementById('grid-zoom-slider');
+        if (slider) slider.value = next;
+        applyGridZoom(next);
+    }
+
     function setImg1View(mode) {
         img1ViewMode = mode;
         img1SpaceHeld = false; img1ShiftDrag = false; img1ShiftMoved = false; img1ShiftRowAnchor = -1;  // reset paint state on any view change
@@ -4659,12 +4671,12 @@
     }
     function stateLabel(st) {
         const map = { ok:'OK', raw:'Raw', stock:'Stock', issue:'Bad Input',
-                      banner:'Banner', background:'Background', quality:'Quality', hero:'Hero Angle', photo_na:'Photo NA', unsupported:'Unsupported Vehicle', sequence:'Sequence', issue:'Bad Input' };
+                      banner:'Banner', background:'Background', quality:'Quality', hero:'Hero Angle', photo_na:'Photo NA', unsupported:'Unsupported Vehicle', sequence:'Error', issue:'Bad Input' };
         return map[st] || '';
     }
     function stateBadgeText(st) {
         const map = { ok:'✓', raw:'R', stock:'S', issue:'I',
-                      banner:'Bn', background:'Bg', quality:'Ql', hero:'HA', photo_na:'P', unsupported:'U', sequence:'Sq' };
+                      banner:'Bn', background:'Bg', quality:'Ql', hero:'HA', photo_na:'P', unsupported:'U', sequence:'Er' };
         return map[st] || '';
     }
 
@@ -4944,7 +4956,7 @@
         setpill('pg-hero',     hero,     'Hero Angle');
         setpill('pg-photo',    photo_na_count, 'Photo NA');
         setpill('pg-unsupported', unsupported_count, 'Unsupported Vehicle');
-        setpill('pg-sequence', sequence_count, 'Sequence');
+        setpill('pg-sequence', sequence_count, 'Error');
         // pending pill removed
 
         const anySub = banner + bg + quality + hero + photo_na_count > 0;
@@ -5051,6 +5063,19 @@
         if (img1ViewMode === 'grid') svUpdateControls(st);
 
         render1ImgSidebar();
+        scrollSidebarToIdx(idx);   // keep the focused VIN visible in the left list
+    }
+
+    // Scroll ONLY the left VIN list (not the page) so the given VIN row is visible.
+    function scrollSidebarToIdx(idx) {
+        const listEl = document.getElementById('vin-list');
+        if (!listEl) return;
+        const item = listEl.querySelector('.vin-item[data-idx="' + idx + '"]');
+        if (!item) return;   // may be filtered out by an active search
+        const lr = listEl.getBoundingClientRect();
+        const ir = item.getBoundingClientRect();
+        if (ir.top < lr.top)         listEl.scrollTop -= (lr.top - ir.top) + 8;
+        else if (ir.bottom > lr.bottom) listEl.scrollTop += (ir.bottom - lr.bottom) + 8;
     }
 
     // Render the full 1st-image gallery (ALL VINs, 1st image each, in a grid).
@@ -5744,6 +5769,12 @@
 
         // ── 1st Image mode shortcuts ──
         if (reviewMode === '1img') {
+            // Ctrl +/- → grid zoom in/out. Mapped to Ctrl (NOT Cmd) so it doesn't
+            // collide with the browser's own Cmd +/- page zoom on Mac.
+            if (e.ctrlKey && !e.metaKey && !e.altKey) {
+                if (e.key === '=' || e.key === '+' || e.code === 'Equal' || e.code === 'NumpadAdd')      { e.preventDefault(); nudgeGridZoom(true);  return; }
+                if (e.key === '-' || e.key === '_' || e.code === 'Minus' || e.code === 'NumpadSubtract') { e.preventDefault(); nudgeGridZoom(false); return; }
+            }
             if (inSearch) return;
             // Esc closes the enlarge lightbox first (before falling through to view switch)
             const _lb = document.getElementById('img1-lightbox');
