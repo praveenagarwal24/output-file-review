@@ -381,18 +381,7 @@ const OAUTH_CLIENT_ID = '108193022090-ps76d9cbosaoqnelf9qmurlldsuj95og.apps.goog
 // add/remove people. (Keep the server-side ALLOWLIST in Code.gs in sync for real security.)
 const AUTH_ALLOWED = new Set([
   'praveen@spyne.ai',
-  'kishor@spyne.ai',
-  'ajay.devrani@spyne.co.in',
-  'raj.tripathi@spyne.ai',
-  'ranbir.manoranjan@spyne.ai',
-  'khushi.gautam@spyne.co.in',
-  'shweta.gupta@spyne.co.in',
-  'tannu.singh@spyne.co.in',
-  'vijay.gautam@spyne.co.in',
-  'karmendra.singh@spyne.co.in',
-  'anup.gupta@spyne.co.in',
-  'praveenagarwal24@gmail.com',
-  'dhruv.kumar@spyne.co.in'
+  'sumit.rana@spyne.ai',
 ]);
 let AUTH_TOKEN=null, AUTH_EMAIL=null, _booted=false;
 function _decodeJwt(t){ try{ return JSON.parse(decodeURIComponent(atob(t.split('.')[1].replace(/-/g,'+').replace(/_/g,'/')).split('').map(c=>'%'+('00'+c.charCodeAt(0).toString(16)).slice(-2)).join(''))); }catch(e){ return {}; } }
