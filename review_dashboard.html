@@ -714,11 +714,11 @@ async function drillIssue(it){
 }
 
 async function drillRooftop(rt){
-  const cols=[['team_id','Rooftop ID','mono'],['vin','VIN','vin'],['enterprise','Enterprise'],['issue_type','Issue'],['reviewer','Reviewer'],['review_date','Date']];
+  const cols=[['team_id','Rooftop ID','mono'],['vin','VIN','vin'],['rooftop','Store'],['enterprise','Enterprise'],['issue_type','Issue'],['reviewer','Reviewer'],['review_date','Date']];
   openDrillLoading('Rooftop · '+rt+' — loading VINs…');
   try{
     const W=buildWhere();
-    const sql=`SELECT vin, COALESCE(enterprise_name, enterprise) as enterprise, issue_type, reviewer, review_date, team_id FROM ${SRC} ${W} ${W?'AND':'WHERE'} rooftop='${(rt||'').replace(/'/g,"\\'")}' ORDER BY review_date DESC`;
+    const sql=`SELECT vin, COALESCE(enterprise_name, enterprise) as enterprise, issue_type, reviewer, review_date, team_id, rooftop FROM ${SRC} ${W} ${W?'AND':'WHERE'} COALESCE(NULLIF(team_id,''), rooftop)='${(rt||'').replace(/'/g,"\\'")}' ORDER BY review_date DESC`;
     const rows=await query(sql);
     renderVinDrill('Rooftop · '+rt+' — VIN list ('+rows.length.toLocaleString()+')', rows, cols);
   }catch(e){ drillError(e); }
@@ -750,11 +750,11 @@ async function _breakdownFetch(condField, val, opts={}){
   const W=opts.noDate?buildWhere({noDate:true}):buildWhere();
   const cond=(val==null||val==='')?`${W?'AND':'WHERE'} (${condField} IS NULL OR ${condField}='')`:`${W?'AND':'WHERE'} ${condField}='${(val||'').replace(/'/g,"\\'")}'`;
   const [baseR, brk] = await runQueries([
-    `SELECT rooftop, ANY_VALUE(team_id) as team_id, ANY_VALUE(COALESCE(enterprise_name, enterprise)) as enterprise, COUNT(DISTINCT vin) as vins, COUNT(*) as total, COUNTIF(issue_type NOT IN ('OK','Pending')) as issue_cnt FROM ${SRC} ${W} ${cond} GROUP BY rooftop ORDER BY total DESC`,
-    `SELECT rooftop, issue_type, COUNT(*) as cnt FROM ${SRC} ${W} ${cond} AND issue_type NOT IN ('OK','Pending') GROUP BY rooftop, issue_type`
+    `SELECT COALESCE(NULLIF(team_id,''), rooftop) as rt_key, ANY_VALUE(team_id) as team_id, ANY_VALUE(CASE WHEN NULLIF(team_id,'') IS NOT NULL THEN COALESCE(NULLIF(apld_team_name,''), NULLIF(rooftop,'')) ELSE COALESCE(NULLIF(rooftop,''), NULLIF(apld_team_name,'')) END) as rooftop, ANY_VALUE(COALESCE(enterprise_name, enterprise)) as enterprise, COUNT(DISTINCT vin) as vins, COUNT(*) as total, COUNTIF(issue_type NOT IN ('OK','Pending')) as issue_cnt FROM ${SRC} ${W} ${cond} GROUP BY rt_key ORDER BY total DESC`,
+    `SELECT COALESCE(NULLIF(team_id,''), rooftop) as rt_key, issue_type, COUNT(*) as cnt FROM ${SRC} ${W} ${cond} AND issue_type NOT IN ('OK','Pending') GROUP BY rt_key, issue_type`
   ]);
-  const by={}; brk.forEach(r=>{ if(!by[r.rooftop]) by[r.rooftop]={}; by[r.rooftop][r.issue_type]=N(r.cnt); });
-  return baseR.map(r=>({rooftop:r.rooftop, team_id:r.team_id, enterprise:r.enterprise, vins:r.vins, total:r.total, issue_cnt:r.issue_cnt, by:by[r.rooftop]||{}}));
+  const by={}; brk.forEach(r=>{ if(!by[r.rt_key]) by[r.rt_key]={}; by[r.rt_key][r.issue_type]=N(r.cnt); });
+  return baseR.map(r=>({rooftop:r.rooftop, team_id:r.team_id, enterprise:r.enterprise, vins:r.vins, total:r.total, issue_cnt:r.issue_cnt, by:by[r.rt_key]||{}}));
 }
 
 async function drillDayBreakdown(dateStr){
@@ -1007,29 +1007,31 @@ async function loadAll(){
     // A shared filtered CTE feeds every aggregate via UNION ALL with a `_k` tag +
     // a generic wide schema (s1..s6 strings, n1..n7 ints); parsed back below.
     const COMB = `
-WITH s AS (SELECT * FROM ${SRC} ${W})
-SELECT 'ov' _k, CAST(NULL AS STRING) s1, CAST(NULL AS STRING) s2, CAST(NULL AS STRING) s3, CAST(NULL AS STRING) s4, CAST(NULL AS STRING) s5, CAST(NULL AS STRING) s6, COUNT(*) n1, COUNTIF(issue_type='OK' OR issue_type='Pending') n2, COUNTIF(issue_type NOT IN ('OK','Pending')) n3, COUNT(DISTINCT reviewer) n4, COUNT(DISTINCT rooftop) n5, COUNT(DISTINCT COALESCE(enterprise_name, enterprise)) n6, COUNT(DISTINCT vin) n7 FROM s
+WITH s AS (SELECT *, COALESCE(NULLIF(team_id,''), rooftop) AS rt_key, CASE WHEN NULLIF(team_id,'') IS NOT NULL THEN COALESCE(NULLIF(apld_team_name,''), NULLIF(rooftop,'')) ELSE COALESCE(NULLIF(rooftop,''), NULLIF(apld_team_name,'')) END AS rt_name FROM ${SRC} ${W})
+SELECT 'ov' _k, CAST(NULL AS STRING) s1, CAST(NULL AS STRING) s2, CAST(NULL AS STRING) s3, CAST(NULL AS STRING) s4, CAST(NULL AS STRING) s5, CAST(NULL AS STRING) s6, COUNT(*) n1, COUNTIF(issue_type='OK' OR issue_type='Pending') n2, COUNTIF(issue_type NOT IN ('OK','Pending')) n3, COUNT(DISTINCT reviewer) n4, COUNT(DISTINCT rt_key) n5, COUNT(DISTINCT COALESCE(enterprise_name, enterprise)) n6, COUNT(DISTINCT vin) n7 FROM s
 UNION ALL SELECT 'iss', issue_type, NULL,NULL,NULL,NULL,NULL, COUNT(*), NULL,NULL,NULL,NULL,NULL,NULL FROM s GROUP BY issue_type
-UNION ALL SELECT 'rv', reviewer, CAST(MAX(review_date) AS STRING), NULL,NULL,NULL,NULL, COUNT(*), COUNTIF(issue_type='OK' OR issue_type='Pending'), COUNTIF(issue_type NOT IN ('OK','Pending')), COUNT(DISTINCT rooftop), NULL,NULL,NULL FROM s GROUP BY reviewer
+UNION ALL SELECT 'rv', reviewer, CAST(MAX(review_date) AS STRING), NULL,NULL,NULL,NULL, COUNT(*), COUNTIF(issue_type='OK' OR issue_type='Pending'), COUNTIF(issue_type NOT IN ('OK','Pending')), COUNT(DISTINCT rt_key), NULL,NULL,NULL FROM s GROUP BY reviewer
 UNION ALL SELECT 'rvit', reviewer, issue_type, NULL,NULL,NULL,NULL, COUNT(*), NULL,NULL,NULL,NULL,NULL,NULL FROM s WHERE issue_type NOT IN ('OK','Pending') GROUP BY reviewer, issue_type
-UNION ALL SELECT 'rt', s.rooftop, ANY_VALUE(s.enterprise), ANY_VALUE(s.enterprise_name), ANY_VALUE(CASE WHEN NULLIF(s.team_id,'') IS NOT NULL THEN COALESCE(NULLIF(s.apld_team_name,''), NULLIF(s.rooftop,'')) ELSE COALESCE(NULLIF(s.rooftop,''), NULLIF(s.apld_team_name,'')) END), ANY_VALUE(s.cs_poc_email), CAST(MAX(s.review_date) AS STRING), COUNT(DISTINCT s.vin), COUNT(*), COUNTIF(s.issue_type='OK' OR s.issue_type='Pending'), COUNTIF(s.issue_type NOT IN ('OK','Pending')), NULL,NULL,NULL FROM s GROUP BY s.rooftop
-UNION ALL SELECT 'rtit', rooftop, issue_type, NULL,NULL,NULL,NULL, COUNT(*), NULL,NULL,NULL,NULL,NULL,NULL FROM s WHERE issue_type NOT IN ('OK','Pending') GROUP BY rooftop, issue_type
-UNION ALL SELECT 'cs', cs_poc_email, NULL,NULL,NULL,NULL, CAST(MAX(review_date) AS STRING), COUNT(DISTINCT rooftop), COUNT(DISTINCT vin), COUNT(*), COUNTIF(issue_type='OK' OR issue_type='Pending'), COUNTIF(issue_type NOT IN ('OK','Pending')), NULL,NULL FROM s GROUP BY cs_poc_email
+UNION ALL SELECT 'rt', s.rt_key, ANY_VALUE(s.enterprise), ANY_VALUE(s.enterprise_name), ANY_VALUE(s.rt_name), ANY_VALUE(s.cs_poc_email), CAST(MAX(s.review_date) AS STRING), COUNT(DISTINCT s.vin), COUNT(*), COUNTIF(s.issue_type='OK' OR s.issue_type='Pending'), COUNTIF(s.issue_type NOT IN ('OK','Pending')), NULL,NULL,NULL FROM s GROUP BY s.rt_key
+UNION ALL SELECT 'rtit', rt_key, issue_type, NULL,NULL,NULL,NULL, COUNT(*), NULL,NULL,NULL,NULL,NULL,NULL FROM s WHERE issue_type NOT IN ('OK','Pending') GROUP BY rt_key, issue_type
+UNION ALL SELECT 'cs', cs_poc_email, NULL,NULL,NULL,NULL, CAST(MAX(review_date) AS STRING), COUNT(DISTINCT rt_key), COUNT(DISTINCT vin), COUNT(*), COUNTIF(issue_type='OK' OR issue_type='Pending'), COUNTIF(issue_type NOT IN ('OK','Pending')), NULL,NULL FROM s GROUP BY cs_poc_email
 UNION ALL SELECT 'csit', cs_poc_email, issue_type, NULL,NULL,NULL,NULL, COUNT(*), NULL,NULL,NULL,NULL,NULL,NULL FROM s WHERE issue_type NOT IN ('OK','Pending') GROUP BY cs_poc_email, issue_type
 UNION ALL SELECT * FROM (SELECT 'worst', CAST(team_id AS STRING), MAX(enterprise_name), MAX(apld_team_name), MAX(ae_poc_email), MAX(ob_poc_email), MAX(cs_poc_email), COUNTIF(issue_type NOT IN ('OK','Pending')), NULL,NULL,NULL,NULL,NULL,NULL FROM s WHERE enterprise_name IS NOT NULL GROUP BY team_id ORDER BY 8 DESC LIMIT 1)`;
-    const TREND = `SELECT review_date, COUNT(*) as cnt, COUNTIF(issue_type NOT IN ('OK','Pending')) as iss, COUNT(DISTINCT vin) as vins, COUNT(DISTINCT rooftop) as rts, COUNT(DISTINCT COALESCE(enterprise_name, enterprise)) as ents FROM ${SRC} ${WND} GROUP BY review_date ORDER BY review_date`;
+    const TREND = `SELECT review_date, COUNT(*) as cnt, COUNTIF(issue_type NOT IN ('OK','Pending')) as iss, COUNT(DISTINCT vin) as vins, COUNT(DISTINCT COALESCE(NULLIF(team_id,''), rooftop)) as rts, COUNT(DISTINCT COALESCE(enterprise_name, enterprise)) as ents FROM ${SRC} ${WND} GROUP BY review_date ORDER BY review_date`;
     // TOP Enterprise/Rooftop/CS by ACCURACY on a LATEST-review-per-VIN basis (each VIN counted
     // once, its most recent verdict). Qualify with >=100 latest-review VINs; if none qualify the
     // (n>=100) sort key collapses so the best-accuracy row still wins (auto-relax).
     // Ties on accuracy broken by higher volume. Numeric/junk enterprise names excluded.
     // (Top REVIEWER is by VOLUME instead — highest total reviews — taken from rvR[0], not here.)
     const TOPS = `WITH latest AS (
-      SELECT enterprise_name, rooftop, team_id, cs_poc_email, reviewer, issue_type
+      SELECT enterprise_name, rt_key, rt_name, team_id, cs_poc_email, reviewer, issue_type
       FROM (SELECT enterprise_name, rooftop, team_id, cs_poc_email, reviewer, issue_type,
+              COALESCE(NULLIF(team_id,''), rooftop) AS rt_key,
+              CASE WHEN NULLIF(team_id,'') IS NOT NULL THEN COALESCE(NULLIF(apld_team_name,''), NULLIF(rooftop,'')) ELSE COALESCE(NULLIF(rooftop,''), NULLIF(apld_team_name,'')) END AS rt_name,
               ROW_NUMBER() OVER (PARTITION BY team_id, vin ORDER BY reviewed_at DESC) rn
             FROM ${SRC} ${W}) WHERE rn=1),
     e  AS (SELECT 'ent' k, enterprise_name nm, CAST(NULL AS STRING) tid, COUNT(*) n, ROUND(100*COUNTIF(issue_type IN ('OK','Pending'))/COUNT(*),1) acc FROM latest WHERE enterprise_name IS NOT NULL AND enterprise_name!='' AND NOT REGEXP_CONTAINS(enterprise_name, r'^[0-9]+$') GROUP BY nm),
-    r2 AS (SELECT 'rt'  k, rooftop nm, ANY_VALUE(team_id) tid, COUNT(*) n, ROUND(100*COUNTIF(issue_type IN ('OK','Pending'))/COUNT(*),1) acc FROM latest WHERE rooftop IS NOT NULL AND rooftop!='' GROUP BY nm),
+    r2 AS (SELECT 'rt'  k, ANY_VALUE(rt_name) nm, ANY_VALUE(team_id) tid, COUNT(*) n, ROUND(100*COUNTIF(issue_type IN ('OK','Pending'))/COUNT(*),1) acc FROM latest WHERE rt_key IS NOT NULL AND rt_key!='' GROUP BY rt_key),
     c  AS (SELECT 'cs'  k, cs_poc_email nm, CAST(NULL AS STRING) tid, COUNT(*) n, ROUND(100*COUNTIF(issue_type IN ('OK','Pending'))/COUNT(*),1) acc FROM latest WHERE cs_poc_email IS NOT NULL AND cs_poc_email!='' GROUP BY nm)
     SELECT * FROM (SELECT * FROM e  ORDER BY (n>=100) DESC, acc DESC, n DESC LIMIT 1)
     UNION ALL SELECT * FROM (SELECT * FROM r2 ORDER BY (n>=100) DESC, acc DESC, n DESC LIMIT 1)
