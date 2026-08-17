@@ -376,6 +376,24 @@ const ENT = '`inspired-frame-453018-r2.spyne_reviews.spyne_rooftop_enterprises`'
 // 2) The SAME Client ID + the allowed-email list must be set in Code.gs (server-side is
 //    what actually enforces access; this page only gates the UI for a clean experience).
 const OAUTH_CLIENT_ID = '108193022090-ps76d9cbosaoqnelf9qmurlldsuj95og.apps.googleusercontent.com';
+// Client-side allowlist (same mechanism as the review app). Only these Google emails may
+// use the dashboard; non-allowed accounts are rejected right at sign-in. Edit this list to
+// add/remove people. (Keep the server-side ALLOWLIST in Code.gs in sync for real security.)
+const AUTH_ALLOWED = new Set([
+  'praveen@spyne.ai',
+  'kishor@spyne.ai',
+  'ajay.devrani@spyne.co.in',
+  'raj.tripathi@spyne.ai',
+  'ranbir.manoranjan@spyne.ai',
+  'khushi.gautam@spyne.co.in',
+  'shweta.gupta@spyne.co.in',
+  'tannu.singh@spyne.co.in',
+  'vijay.gautam@spyne.co.in',
+  'karmendra.singh@spyne.co.in',
+  'anup.gupta@spyne.co.in',
+  'praveenagarwal24@gmail.com',
+  'dhruv.kumar@spyne.co.in'
+]);
 let AUTH_TOKEN=null, AUTH_EMAIL=null, _booted=false;
 function _decodeJwt(t){ try{ return JSON.parse(decodeURIComponent(atob(t.split('.')[1].replace(/-/g,'+').replace(/_/g,'/')).split('').map(c=>'%'+('00'+c.charCodeAt(0).toString(16)).slice(-2)).join(''))); }catch(e){ return {}; } }
 function _isAuthErr(m){ return /not authoriz|unauthor|invalid token|no token|expired/i.test(m||''); }
@@ -384,6 +402,12 @@ function hideAuthGate(){ const g=document.getElementById('auth-gate'); if(g) g.s
 function onGoogleSignIn(resp){
   AUTH_TOKEN = resp && resp.credential;
   const p=_decodeJwt(AUTH_TOKEN||''); AUTH_EMAIL=(p.email||'').toLowerCase();
+  if(!AUTH_ALLOWED.has(AUTH_EMAIL)){
+    AUTH_TOKEN=null; try{ google.accounts.id.disableAutoSelect(); }catch(e){}
+    const c0=document.getElementById('user-chip'); if(c0) c0.style.display='none';
+    showAuthGate('Not authorised: '+(AUTH_EMAIL||'this account')+'. Ask the admin to add you to the access list.');
+    return;
+  }
   const chip=document.getElementById('user-chip');
   if(chip){ chip.style.display='flex'; document.getElementById('uc-email').textContent=AUTH_EMAIL; const im=document.getElementById('uc-img'); if(p.picture){ im.src=p.picture; im.style.display=''; } else { im.style.display='none'; } }
   hideAuthGate();
@@ -994,13 +1018,12 @@ async function loadAll(){
     // A shared filtered CTE feeds every aggregate via UNION ALL with a `_k` tag +
     // a generic wide schema (s1..s6 strings, n1..n7 ints); parsed back below.
     const COMB = `
-WITH s AS (SELECT * FROM ${SRC} ${W}),
-tsp AS (SELECT team_id, COUNT(DISTINCT rooftop) span FROM s WHERE team_id IS NOT NULL GROUP BY team_id)
+WITH s AS (SELECT * FROM ${SRC} ${W})
 SELECT 'ov' _k, CAST(NULL AS STRING) s1, CAST(NULL AS STRING) s2, CAST(NULL AS STRING) s3, CAST(NULL AS STRING) s4, CAST(NULL AS STRING) s5, CAST(NULL AS STRING) s6, COUNT(*) n1, COUNTIF(issue_type='OK' OR issue_type='Pending') n2, COUNTIF(issue_type NOT IN ('OK','Pending')) n3, COUNT(DISTINCT reviewer) n4, COUNT(DISTINCT rooftop) n5, COUNT(DISTINCT COALESCE(enterprise_name, enterprise)) n6, COUNT(DISTINCT vin) n7 FROM s
 UNION ALL SELECT 'iss', issue_type, NULL,NULL,NULL,NULL,NULL, COUNT(*), NULL,NULL,NULL,NULL,NULL,NULL FROM s GROUP BY issue_type
 UNION ALL SELECT 'rv', reviewer, CAST(MAX(review_date) AS STRING), NULL,NULL,NULL,NULL, COUNT(*), COUNTIF(issue_type='OK' OR issue_type='Pending'), COUNTIF(issue_type NOT IN ('OK','Pending')), COUNT(DISTINCT rooftop), NULL,NULL,NULL FROM s GROUP BY reviewer
 UNION ALL SELECT 'rvit', reviewer, issue_type, NULL,NULL,NULL,NULL, COUNT(*), NULL,NULL,NULL,NULL,NULL,NULL FROM s WHERE issue_type NOT IN ('OK','Pending') GROUP BY reviewer, issue_type
-UNION ALL SELECT 'rt', s.rooftop, ANY_VALUE(s.enterprise), ANY_VALUE(s.enterprise_name), ANY_VALUE(CASE WHEN tsp.span > 1 THEN s.rooftop ELSE COALESCE(NULLIF(s.apld_team_name,''), s.rooftop) END), ANY_VALUE(s.cs_poc_email), CAST(MAX(s.review_date) AS STRING), COUNT(DISTINCT s.vin), COUNT(*), COUNTIF(s.issue_type='OK' OR s.issue_type='Pending'), COUNTIF(s.issue_type NOT IN ('OK','Pending')), NULL,NULL,NULL FROM s LEFT JOIN tsp ON s.team_id = tsp.team_id GROUP BY s.rooftop
+UNION ALL SELECT 'rt', s.rooftop, ANY_VALUE(s.enterprise), ANY_VALUE(s.enterprise_name), ANY_VALUE(CASE WHEN NULLIF(s.team_id,'') IS NOT NULL THEN COALESCE(NULLIF(s.apld_team_name,''), NULLIF(s.rooftop,'')) ELSE COALESCE(NULLIF(s.rooftop,''), NULLIF(s.apld_team_name,'')) END), ANY_VALUE(s.cs_poc_email), CAST(MAX(s.review_date) AS STRING), COUNT(DISTINCT s.vin), COUNT(*), COUNTIF(s.issue_type='OK' OR s.issue_type='Pending'), COUNTIF(s.issue_type NOT IN ('OK','Pending')), NULL,NULL,NULL FROM s GROUP BY s.rooftop
 UNION ALL SELECT 'rtit', rooftop, issue_type, NULL,NULL,NULL,NULL, COUNT(*), NULL,NULL,NULL,NULL,NULL,NULL FROM s WHERE issue_type NOT IN ('OK','Pending') GROUP BY rooftop, issue_type
 UNION ALL SELECT 'cs', cs_poc_email, NULL,NULL,NULL,NULL, CAST(MAX(review_date) AS STRING), COUNT(DISTINCT rooftop), COUNT(DISTINCT vin), COUNT(*), COUNTIF(issue_type='OK' OR issue_type='Pending'), COUNTIF(issue_type NOT IN ('OK','Pending')), NULL,NULL FROM s GROUP BY cs_poc_email
 UNION ALL SELECT 'csit', cs_poc_email, issue_type, NULL,NULL,NULL,NULL, COUNT(*), NULL,NULL,NULL,NULL,NULL,NULL FROM s WHERE issue_type NOT IN ('OK','Pending') GROUP BY cs_poc_email, issue_type
