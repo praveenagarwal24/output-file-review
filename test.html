@@ -4784,20 +4784,25 @@
         // show the four copyable fields in that same row instead.
         if (nameEl) nameEl.style.display = 'none';
         if (idEl)   idEl.style.display   = 'none';
-        const field = (label, value) => {
+        const field = (label, value, href) => {
             if (value === undefined || value === null || value === '') return '';
             const v = escapeHtml(String(value));
+            const valHtml = href
+                ? '<a href="' + escapeHtml(href) + '" target="_blank" rel="noopener" class="text-[11px] font-semibold text-blue-600 hover:underline font-mono" title="Open in Spyne Console">' + v + '</a>'
+                : '<span class="text-[11px] font-semibold text-slate-700 font-mono">' + v + '</span>';
             return '<span class="inline-flex items-center gap-1 bg-slate-50 border border-slate-200 rounded-md px-2 py-0.5">' +
                      '<span class="text-[9px] font-bold uppercase tracking-wide text-slate-400">' + escapeHtml(label) + '</span>' +
-                     '<span class="text-[11px] font-semibold text-slate-700 font-mono">' + v + '</span>' +
+                     valHtml +
                      '<button type="button" data-copy="' + v + '" onclick="copyValue(this)" class="text-slate-400 hover:text-blue-600 transition p-0.5 rounded" title="Copy ' + escapeHtml(label) + '">' +
                        '<svg class="copy-ic w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"/></svg>' +
                        '<svg class="copy-ok w-3 h-3 hidden text-emerald-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/></svg>' +
                      '</button>' +
                    '</span>';
         };
+        // Team ID keeps the Spyne Console deep-link (as the old chip had) AND a copy icon.
         el.innerHTML = field('Enterprise', info.enterprise_name) + field('Ent ID', info.enterprise_id)
-                     + field('Team', info.team_name) + field('Team ID', info.team_id);
+                     + field('Team', info.team_name)
+                     + field('Team ID', info.team_id, info.team_id ? reviewConsoleUrl(info.team_id, info.enterprise_id) : '');
         el.classList.remove('hidden');
     }
 
@@ -5857,6 +5862,9 @@
             ];
             const lines = [header.join(',')];
             const outTeamId = bqTeamId(currentImg1Team) || currentImg1Team.teamId;
+            // Mirror BQ: when resolved, the "Rooftop" column carries the real team_name.
+            const rinfoCsv  = resolvedTeamInfo[currentImg1Team.teamId] || currentImg1Team.resolvedInfo || null;
+            const outRooftop = (rinfoCsv && rinfoCsv.team_name) || '';
             currentImg1VINs.forEach((v, idx) => {
                 const teamId  = currentImg1Team.teamId;
                 const rooftop = v.rooftop || '';
@@ -5868,7 +5876,7 @@
                 const issueType = stLabel && st !== 'ok' ? stLabel : st === 'ok' ? 'OK' : 'Pending';
                 const row = [
                     idx + 1,
-                    csvCell(rooftop || currentImg1Team.rooftop || currentImg1Team.name),
+                    csvCell(outRooftop || rooftop || currentImg1Team.rooftop || currentImg1Team.name),
                     csvCell(v.condition || ''),
                     csvCell(outTeamId),
                     csvCell(v.vin),
@@ -5953,18 +5961,24 @@
             const teamLabel = currentImg1Team?.rooftop || currentImg1Team?.name || teamId;
             const now       = new Date();
             const bqRows    = [];
+            // Resolved identity (Metabase) — write the REAL enterprise_name into `enterprise`
+            // and the REAL team_name into `rooftop`; fall back to CSV labels when unresolved.
+            const rinfo        = resolvedTeamInfo[teamId] || currentImg1Team?.resolvedInfo || null;
+            const bqEnterprise = (rinfo && rinfo.enterprise_name) || selectedEnterprise || currentImg1Team?.name || '';
+            const bqEntId      = (rinfo && rinfo.enterprise_id)   || currentImg1Team?.entId || selectedEnterpriseId || '';
             (currentImg1VINs || []).forEach(v => {
                 const rooftop = v.rooftop || currentImg1Team?.rooftop || '';
                 const st      = getImg1Review(teamId, v.vin, rooftop);
                 if (!st) return;                       // skip pending / unmarked VINs
                 const issType = st === 'ok' ? 'OK' : (stateLabel(st) || st);
+                const bqRooftop = (rinfo && rinfo.team_name) || rooftop;   // team_name → rooftop in BQ
                 bqRows.push({
                     review_date:     now.toISOString().slice(0, 10),
                     reviewed_at:     now.toISOString(),
                     reviewer:        reviewerNow,
-                    enterprise:      selectedEnterprise || currentImg1Team?.name || '',
-                    enterprise_id:   currentImg1Team?.entId || selectedEnterpriseId || '',
-                    rooftop:         rooftop,
+                    enterprise:      bqEnterprise,
+                    enterprise_id:   bqEntId,
+                    rooftop:         bqRooftop,
                     condition:       v.condition || '',
                     team_id:         bqTeamId(currentImg1Team) || teamId,
                     vin:             v.vin,
