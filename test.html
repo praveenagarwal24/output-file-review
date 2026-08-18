@@ -4732,6 +4732,7 @@
     // if it's missing (synthetic 'drive-ent-001') we skip the lookup entirely.
     const resolvedTeamIds = {};   // synthetic teamId -> real team_id (session cache)
     const teamIdLookupInFlight = {};
+    const teamIdNotFound = {};     // synthetic teamId -> true when Metabase returned no team_id
 
     // team_id to WRITE (CSV + BQ): the resolved real id if we have one, else as-is.
     function bqTeamId(team) {
@@ -4770,6 +4771,8 @@
     // Resolve + apply the real team_id for a rooftop (non-blocking, cached).
     async function resolveTeamIdForTeam(team) {
         if (!teamNeedsTeamIdLookup(team)) return;
+        // Already known-missing this session → prompt right away (skip the slow re-query).
+        if (teamIdNotFound[team.teamId]) { promptTeamNotInSpyne(team); return; }
         if (teamIdLookupInFlight[team.teamId]) return;
         teamIdLookupInFlight[team.teamId] = true;
         try {
@@ -4797,14 +4800,35 @@
                 }
                 if (typeof bgToast === 'function') bgToast('team_id resolved: ' + real, 'success');
             } else {
-                const why = (data && data.error) ? (' — ' + data.error) : '';
-                if (typeof bgToast === 'function') bgToast('Could not resolve a team_id for this rooftop (kept as-is).' + why, 'info');
+                // No team_id — this rooftop isn't set up in Spyne. Ask the reviewer.
+                teamIdNotFound[team.teamId] = true;
+                promptTeamNotInSpyne(team);
             }
         } catch (e) {
             console.warn('[team_id] lookup failed', e);
+            // Couldn't reach the lookup — treat as not-found and ask the reviewer.
+            teamIdNotFound[team.teamId] = true;
+            promptTeamNotInSpyne(team);
         } finally {
             teamIdLookupInFlight[team.teamId] = false;
         }
+    }
+    // Go back to the teams list (same as the header "Teams" button).
+    function goBackToTeamsPage() {
+        if (reviewMode === '1img') restore1ImgMode();
+        stopReviewTimer();
+        showPage('page-dashboard');
+    }
+    // Shown when a rooftop has no team_id in Spyne: OK = review anyway, Cancel = go back.
+    function promptTeamNotInSpyne(team) {
+        // Only prompt if this rooftop is STILL the one open (the lookup resolves ~30s later).
+        const openTeam = (reviewMode === '1img') ? currentImg1Team : currentTeam;
+        if (!openTeam || openTeam.teamId !== team.teamId) return;
+        const label = team.rooftop || team.name || 'this rooftop';
+        const msg = 'Heads up: “' + label + '” doesn’t appear to be set up in Spyne yet, '
+                  + 'so we couldn’t attach a Team ID to it.\n\n'
+                  + 'Press OK to review it anyway, or Cancel to go back to the teams page.';
+        if (!confirm(msg)) goBackToTeamsPage();
     }
     let reviewMode = 'vin'; // 'vin' | '1img'
 
