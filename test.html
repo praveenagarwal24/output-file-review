@@ -4169,6 +4169,28 @@
                 `;
                 window['__teamRef_' + t.teamId.replace(/[^a-z0-9]/gi,'_')] = t;
                 grid.appendChild(card);
+                // Mark rooftops that came back with no team_id from Spyne — a slanted
+                // double line (bottom-left → top-right) with "NOT IN SPYNE" set at the
+                // SAME angle as the lines, sitting in the gap between them.
+                if (teamIdNotFound[t.teamId]) {
+                    card.style.overflow = 'hidden';
+                    // Two parallel "/" lines, straddling the centre diagonal, gap ≈ 24 (doubled).
+                    card.insertAdjacentHTML('beforeend',
+                        '<div style="position:absolute;inset:0;border-radius:12px;pointer-events:none;overflow:hidden;">' +
+                          '<svg viewBox="0 0 100 100" preserveAspectRatio="none" style="position:absolute;inset:0;width:100%;height:100%;">' +
+                            '<line x1="0" y1="112" x2="100" y2="12" stroke="#dc2626" stroke-width="1.5" vector-effect="non-scaling-stroke"/>' +
+                            '<line x1="0" y1="88"  x2="100" y2="-12" stroke="#dc2626" stroke-width="1.5" vector-effect="non-scaling-stroke"/>' +
+                          '</svg>' +
+                          '<span class="notinspyne-tag" style="position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);background:#fee2e2;color:#b91c1c;font-size:10px;font-weight:800;letter-spacing:.04em;padding:2px 8px;border-radius:5px;box-shadow:0 1px 4px rgba(0,0,0,.18);white-space:nowrap;">NOT IN SPYNE</span>' +
+                        '</div>');
+                    // Rotate the tag to match the drawn diagonal (angle depends on the card's
+                    // actual width:height, since the SVG line is corner-to-corner).
+                    const tagEl = card.querySelector('.notinspyne-tag');
+                    if (tagEl && card.clientWidth) {
+                        const ang = Math.atan2(-card.clientHeight, card.clientWidth) * 180 / Math.PI;
+                        tagEl.style.transform = 'translate(-50%,-50%) rotate(' + ang.toFixed(1) + 'deg)';
+                    }
+                }
             });
         updateDashClearBar();
     }
@@ -4819,16 +4841,45 @@
         stopReviewTimer();
         showPage('page-dashboard');
     }
+    // Centered custom confirm modal (replaces the browser's top-of-window confirm()).
+    function showCenteredConfirm(opts) {
+        opts = opts || {};
+        const prev = document.getElementById('center-confirm-modal');
+        if (prev) prev.remove();
+        const ov = document.createElement('div');
+        ov.id = 'center-confirm-modal';
+        ov.style.cssText = 'position:fixed;inset:0;z-index:10000;display:flex;align-items:center;justify-content:center;background:rgba(15,23,42,0.55);';
+        ov.innerHTML =
+            '<div style="background:#fff;border-radius:16px;max-width:440px;width:90%;padding:22px 24px;box-shadow:0 24px 60px rgba(0,0,0,.35);">' +
+              '<div style="display:flex;align-items:center;gap:9px;margin-bottom:8px;">' +
+                '<span style="display:inline-flex;align-items:center;justify-content:center;width:26px;height:26px;border-radius:50%;background:#fee2e2;color:#b91c1c;font-weight:800;flex-shrink:0;">!</span>' +
+                '<h3 style="font-size:16px;font-weight:700;color:#0f172a;margin:0;">' + escapeHtml(opts.title || 'Please confirm') + '</h3>' +
+              '</div>' +
+              '<p style="font-size:13px;color:#475569;line-height:1.55;margin:0 0 18px;white-space:pre-line;">' + escapeHtml(opts.message || '') + '</p>' +
+              '<div style="display:flex;justify-content:flex-end;gap:10px;">' +
+                '<button id="cc-cancel" style="padding:8px 16px;border-radius:9px;border:1px solid #e2e8f0;background:#f8fafc;color:#334155;font-size:13px;font-weight:600;cursor:pointer;">' + escapeHtml(opts.cancelText || 'Cancel') + '</button>' +
+                '<button id="cc-ok" style="padding:8px 18px;border-radius:9px;border:none;background:#2563eb;color:#fff;font-size:13px;font-weight:700;cursor:pointer;">' + escapeHtml(opts.okText || 'OK') + '</button>' +
+              '</div>' +
+            '</div>';
+        document.body.appendChild(ov);
+        const close = () => ov.remove();
+        ov.querySelector('#cc-ok').onclick     = () => { close(); if (opts.onOk) opts.onOk(); };
+        ov.querySelector('#cc-cancel').onclick = () => { close(); if (opts.onCancel) opts.onCancel(); };
+    }
+
     // Shown when a rooftop has no team_id in Spyne: OK = review anyway, Cancel = go back.
     function promptTeamNotInSpyne(team) {
         // Only prompt if this rooftop is STILL the one open (the lookup resolves ~30s later).
         const openTeam = (reviewMode === '1img') ? currentImg1Team : currentTeam;
         if (!openTeam || openTeam.teamId !== team.teamId) return;
         const label = team.rooftop || team.name || 'this rooftop';
-        const msg = 'Heads up: “' + label + '” doesn’t appear to be set up in Spyne yet, '
-                  + 'so we couldn’t attach a Team ID to it.\n\n'
-                  + 'Press OK to review it anyway, or Cancel to go back to the teams page.';
-        if (!confirm(msg)) goBackToTeamsPage();
+        showCenteredConfirm({
+            title:      'Team not found in Spyne',
+            message:    '“' + label + '” doesn’t appear to be set up in Spyne yet, so we couldn’t attach a Team ID to it.\n\nYou can review it anyway, or go back to the teams page.',
+            okText:     'Review anyway',
+            cancelText: 'Back to teams',
+            onCancel:   goBackToTeamsPage
+        });
     }
     let reviewMode = 'vin'; // 'vin' | '1img'
 
