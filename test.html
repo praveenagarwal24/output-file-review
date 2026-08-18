@@ -4753,11 +4753,13 @@
         if (!eid || eid === 'drive-ent-001' || eid === 'csv-ent-001') return false;  // no real enterprise_id → skip
         return true;
     }
-    // Sample max(5, ceil(5% of distinct VINs)) VINs at random.
+    // Sample up to 5 distinct VINs at random (the Metabase query is slow, and 5 is
+    // plenty for the majority-team_id lookup).
+    const TEAMID_SAMPLE_SIZE = 5;
     function sampleVinsForLookup(vins) {
         const uniq = [...new Set((vins || []).map(v => v && v.vin).filter(Boolean))];
         if (!uniq.length) return [];
-        const n = Math.min(uniq.length, Math.max(5, Math.ceil(uniq.length * 0.05)));
+        const n = Math.min(uniq.length, TEAMID_SAMPLE_SIZE);
         // Fisher–Yates partial shuffle for a random sample.
         for (let i = 0; i < n; i++) {
             const j = i + Math.floor(Math.random() * (uniq.length - i));
@@ -4776,11 +4778,15 @@
                        : [];
             const vins = sampleVinsForLookup(src);
             if (!vins.length) return;
+            const reqBody = { action: 'resolveTeamId', enterprise_id: String(team.entId || '').trim(), vins: vins };
+            console.log('[team_id] request →', reqBody);
             const res  = await fetch(BQ_WEBAPP_URL, {
                 method: 'POST', redirect: 'follow',
-                body: JSON.stringify({ action: 'resolveTeamId', enterprise_id: String(team.entId || '').trim(), vins: vins })
+                body: JSON.stringify(reqBody)
             });
-            const data = await res.json().catch(() => ({}));
+            const raw  = await res.text();
+            let data = {}; try { data = JSON.parse(raw); } catch (e) { /* non-JSON */ }
+            console.log('[team_id] response ←', res.status, raw);   // diagnostics: shows exactly what the server said
             const real = data && data.ok ? String(data.team_id || '').trim() : '';
             if (real) {
                 resolvedTeamIds[team.teamId] = real;
@@ -4791,10 +4797,11 @@
                 }
                 if (typeof bgToast === 'function') bgToast('team_id resolved: ' + real, 'success');
             } else {
-                if (typeof bgToast === 'function') bgToast('Could not resolve a team_id for this rooftop (kept as-is).', 'info');
+                const why = (data && data.error) ? (' — ' + data.error) : '';
+                if (typeof bgToast === 'function') bgToast('Could not resolve a team_id for this rooftop (kept as-is).' + why, 'info');
             }
         } catch (e) {
-            /* non-fatal: keep the synthetic id */
+            console.warn('[team_id] lookup failed', e);
         } finally {
             teamIdLookupInFlight[team.teamId] = false;
         }
