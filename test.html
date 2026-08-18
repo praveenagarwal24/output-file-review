@@ -571,14 +571,15 @@
                     <span class="text-sm">Teams</span>
                 </button>
                 <div class="border-l border-slate-200 h-6 mx-1"></div>
-                <div class="flex items-baseline space-x-2 flex-wrap gap-y-1">
+                <div class="flex items-center space-x-2 flex-wrap gap-y-1">
                     <h2 id="review-team-name" class="font-bold text-slate-800 text-[15px]"></h2>
                     <span id="review-team-id" class="hidden inline-flex items-center gap-1 text-[11px] font-semibold text-slate-400 tracking-wide"></span>
+                    <!-- Resolved identity (Metabase). When present this REPLACES the rooftop
+                         name + team_id chip on the SAME row (no duplicate values). -->
+                    <div id="review-team-meta" class="hidden inline-flex items-center flex-wrap gap-1.5"></div>
                 </div>
                 <!-- Enterprise metadata (from spyne_rooftop_enterprises, joined on team_id) -->
                 <div id="enterprise-meta" class="hidden items-center flex-wrap gap-1.5"></div>
-                <!-- Resolved team/enterprise identifiers (from the Metabase lookup) — each copyable -->
-                <div id="review-team-meta" class="hidden items-center flex-wrap gap-1.5"></div>
                 <!-- Progress summary bar — 1st image mode -->
                 <div id="img1-progress-bar" class="hidden items-center space-x-1 flex-wrap gap-y-1">
                     <span id="pg-reviewed" class="px-2 py-0.5 rounded-full text-[11px] font-semibold bg-slate-100 text-slate-600"></span>
@@ -4769,8 +4770,20 @@
     function renderTeamMetaStrip(info) {
         const el = document.getElementById('review-team-meta');
         if (!el) return;
+        const nameEl = document.getElementById('review-team-name');
+        const idEl   = document.getElementById('review-team-id');
         const has = info && (info.team_id || info.team_name || info.enterprise_id || info.enterprise_name);
-        if (!has) { el.classList.add('hidden'); el.innerHTML = ''; return; }
+        if (!has) {
+            // No resolved identity → keep the normal rooftop name + team_id chip.
+            el.classList.add('hidden'); el.innerHTML = '';
+            if (nameEl) nameEl.style.display = '';
+            if (idEl)   idEl.style.display   = '';
+            return;
+        }
+        // Have resolved identity → drop the old rooftop name + the duplicate team_id chip,
+        // show the four copyable fields in that same row instead.
+        if (nameEl) nameEl.style.display = 'none';
+        if (idEl)   idEl.style.display   = 'none';
         const field = (label, value) => {
             if (value === undefined || value === null || value === '') return '';
             const v = escapeHtml(String(value));
