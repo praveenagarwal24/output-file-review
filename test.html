@@ -4738,14 +4738,19 @@
         if (!team) return '';
         return resolvedTeamIds[team.teamId] || team.resolvedTeamId || team.teamId || '';
     }
-    // A rooftop needs a lookup only when its id is synthetic AND we have a real
-    // enterprise_id AND we haven't already resolved it.
+    // A rooftop needs a lookup only when its id is one the app FABRICATED (because the
+    // CSV had no team_id) AND we have a real enterprise_id AND we haven't resolved it yet.
+    // Synthetic ids are 'csv-<rooftop>' (Upload-CSV path) or 'drive-<rooftop>' (Drive path);
+    // a real team_id from the CSV has neither prefix. Skip the "All Rooftops" aggregate.
     function teamNeedsTeamIdLookup(team) {
         if (!team || !team.teamId) return false;
-        if (resolvedTeamIds[team.teamId]) return false;
-        if (!String(team.teamId).startsWith('drive-')) return false;   // came from CSV → real already
+        const tid = String(team.teamId);
+        if (tid === 'csv-all-rooftops') return false;                  // virtual aggregate — skip
+        if (resolvedTeamIds[tid]) return false;
+        const isSynthetic = tid.startsWith('drive-') || tid.startsWith('csv-');
+        if (!isSynthetic) return false;                                // real team_id from CSV → done
         const eid = String(team.entId || '').trim();
-        if (!eid || eid === 'drive-ent-001') return false;             // no real enterprise_id → skip
+        if (!eid || eid === 'drive-ent-001' || eid === 'csv-ent-001') return false;  // no real enterprise_id → skip
         return true;
     }
     // Sample max(5, ceil(5% of distinct VINs)) VINs at random.
