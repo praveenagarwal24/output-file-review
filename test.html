@@ -2262,6 +2262,30 @@
         } catch (e) { return []; }
     }
 
+    // ── Auto-release of abandoned picks ────────────────────────────────────────
+    // Scenario to fix: a reviewer picks rooftop X, backs out WITHOUT reviewing, then
+    // picks rooftop Y instead. X used to stay "picked" for everyone else until the
+    // server's 4-hour TTL. We remember the rooftops this reviewer currently holds
+    // (persisted, so it survives coming back out to the picker) and, when they claim a
+    // DIFFERENT set, fire a `release` for the ones they dropped.
+    // NOTE: this only takes effect once the server (Code.gs) honours action:'release'.
+    function _heldClaimsKey() { return 'spyne_drive_held_' + (getCurrentUser() || 'anon'); }
+    function loadHeldClaims() {
+        try { return JSON.parse(localStorage.getItem(_heldClaimsKey()) || '[]'); } catch (e) { return []; }
+    }
+    function saveHeldClaims(items) {
+        try { localStorage.setItem(_heldClaimsKey(), JSON.stringify(items || [])); } catch (e) {}
+    }
+    async function releaseDriveRooftops(items) {
+        if (!items || !items.length) return;
+        try {
+            await fetch(BQ_WEBAPP_URL, {
+                method: 'POST', redirect: 'follow', keepalive: true,
+                body: JSON.stringify({ action: 'release', reviewer: getCurrentUser() || '', items })
+            });
+        } catch (e) { /* non-fatal */ }
+    }
+
     // Render the chained folder dropdowns + the CSV checklist for the deepest folder.
     function renderDriveNavigator() {
         const el = document.getElementById('drive-browser');
@@ -2287,40 +2311,49 @@
                  + 'onchange="driveSelectAtLevel(' + i + ', this.value)">' + opts + '</select></div>';
         });
 
-        // CSV checklist for the current (deepest) folder — only pickable ones.
-        const csvs      = driveVisibleCsvs();
+        // CSV checklist for the current (deepest) folder.
+        const csvs      = driveVisibleCsvs();        // pickable = not reviewed AND not claimed by others
         const allCsvs   = driveCurrentCsvs();
         const totalCsvs = allCsvs.length;
         const cur       = driveCurrentFolder();
         const curName   = cur ? (cur.name || '') : '';
-        // Break the hidden ones down by reason (reviewed vs in-use) so it's clear WHY.
-        const meLower = (getCurrentUser() || '').toLowerCase();
-        let reviewedCount = 0, inUseCount = 0;
+        const meLower   = (getCurrentUser() || '').toLowerCase();
+        // Rows we RENDER = everything not already reviewed. Reviewed ones stay hidden
+        // (counted in the note). Claimed-by-another are SHOWN greyed + labelled with WHO
+        // holds them (so reviewers can see who picked a rooftop instead of it just vanishing).
+        const shown = allCsvs.filter(f => {
+            const rooftop = (f.name || '').replace(/\.csv$/i, '').trim().toLowerCase();
+            return !drivePickState.reviewed.has(rooftop);
+        });
+        let reviewedCount = 0;
         allCsvs.forEach(f => {
             const rooftop = (f.name || '').replace(/\.csv$/i, '').trim().toLowerCase();
-            if (drivePickState.reviewed.has(rooftop)) { reviewedCount++; return; }
-            const c = drivePickState.claims[f.id];
-            if (c && (c.reviewer || '').toLowerCase() !== meLower) inUseCount++;
+            if (drivePickState.reviewed.has(rooftop)) reviewedCount++;
         });
-        const parts = [];
-        if (reviewedCount) parts.push(reviewedCount + ' already reviewed');
-        if (inUseCount)    parts.push(inUseCount + ' in use by another reviewer');
-        const hiddenNote = parts.length
-            ? '<div class="text-[11px] text-amber-600 px-2 pt-1">Hidden: ' + parts.join(' · ') + '</div>'
+        const hiddenNote = reviewedCount
+            ? '<div class="text-[11px] text-slate-400 px-2 pt-1">Hidden: ' + reviewedCount + ' already reviewed</div>'
             : '';
         html += '<div class="border-t border-slate-100 mt-1 pt-2">';
-        if (csvs.length) {
+        if (shown.length) {
             html += '<div class="flex items-center justify-between px-1 pb-1">'
                  + '<div class="text-[10px] uppercase tracking-wider text-slate-400 font-bold">Available CSVs in ' + escapeHtml(curName) + ' (' + csvs.length + ')</div>'
                  + '<label class="text-[11px] text-slate-500 flex items-center gap-1 cursor-pointer">'
                  + '<input type="checkbox" id="drive-select-all" onchange="driveToggleAll(this.checked)"> Select all</label></div>';
-            csvs.forEach(f => {
-                const checked = driveSelectedCsvIds.has(f.id) ? 'checked' : '';
-                const rc = driveRowCountLabel(f.id);
-                html += '<label class="w-full flex items-center gap-2 px-2 py-1.5 rounded hover:bg-slate-50 cursor-pointer text-[13px]">'
-                     + '<input type="checkbox" ' + checked + ' onchange="driveToggleCsv(\'' + f.id + '\', this.checked)">'
-                     + '<span>📄</span><span class="truncate flex-1">' + escapeHtml(f.name || '') + '</span>'
-                     + '<span class="text-[11px] text-slate-400 whitespace-nowrap" data-rowcount="' + f.id + '">' + rc + '</span></label>';
+            shown.forEach(f => {
+                const c = drivePickState.claims[f.id];
+                const takenByOther = c && (c.reviewer || '').toLowerCase() !== meLower;
+                if (takenByOther) {
+                    const who = escapeHtml(c.reviewer || 'someone');
+                    html += '<div class="w-full flex items-center gap-2 px-2 py-1.5 rounded text-[13px] cursor-not-allowed bg-slate-50" title="Picked by ' + who + '">'
+                         + '<span class="w-3 flex-shrink-0"></span>'
+                         + '<span>🔒</span><span class="truncate flex-1 text-slate-400 line-through">' + escapeHtml(f.name || '') + '</span>'
+                         + '<span class="text-[10px] text-amber-600 whitespace-nowrap font-semibold flex-shrink-0">picked by ' + who + '</span></div>';
+                } else {
+                    const checked = driveSelectedCsvIds.has(f.id) ? 'checked' : '';
+                    html += '<label class="w-full flex items-center gap-2 px-2 py-1.5 rounded hover:bg-slate-50 cursor-pointer text-[13px]">'
+                         + '<input type="checkbox" ' + checked + ' onchange="driveToggleCsv(\'' + f.id + '\', this.checked)">'
+                         + '<span>📄</span><span class="truncate flex-1">' + escapeHtml(f.name || '') + '</span></label>';
+                }
             });
             html += '<div id="drive-csv-totals" class="text-[11px] text-slate-500 px-2 pt-2"></div>';
             html += hiddenNote;
@@ -2328,7 +2361,7 @@
             const hasSub = cur && cur.folders && cur.folders.length;
             let msg;
             if (totalCsvs > 0) {
-                msg = 'No CSVs available to pick here' + (parts.length ? ' — ' + parts.join(' · ') : '') + '.';
+                msg = 'All CSVs here are already reviewed.';
             } else {
                 msg = hasSub ? 'No CSVs here — pick a sub-folder above.' : 'No CSV files in this folder.';
             }
@@ -2339,7 +2372,6 @@
         el.innerHTML = html;
         syncDriveSelectAll();
         updateDriveTotals();
-        if (csvs.length) driveCountRows(csvs);
     }
 
     function driveRowCountLabel(id) {
@@ -2372,13 +2404,12 @@
         if (!el) return;
         const csvs     = driveVisibleCsvs();
         const selected = csvs.filter(f => driveSelectedCsvIds.has(f.id));
-        let selRows = 0, selKnown = true, allRows = 0, allKnown = true;
-        csvs.forEach(f => { const v = driveRowCounts.get(f.id); if (typeof v === 'number') allRows += v; else allKnown = false; });
-        selected.forEach(f => { const v = driveRowCounts.get(f.id); if (typeof v === 'number') selRows += v; else selKnown = false; });
+        // Row counts intentionally NOT shown here — counting every CSV up front (through
+        // the Apps Script proxy) was the main source of loading slowness. Rows load only
+        // once the reviewer actually opens the selected rooftops.
         el.innerHTML = 'Selected: <b>' + selected.length + '</b> CSV' + (selected.length !== 1 ? 's' : '')
-            + ' · <b>' + selRows.toLocaleString() + (selKnown ? '' : '+') + '</b> rows'
             + '<span class="text-slate-300"> &nbsp;|&nbsp; </span>'
-            + 'Folder total: ' + csvs.length + ' CSVs · ' + allRows.toLocaleString() + (allKnown ? '' : '+') + ' rows';
+            + 'Available: ' + csvs.length + ' CSV' + (csvs.length !== 1 ? 's' : '');
     }
 
     function driveToggleCsv(id, checked) {
@@ -2403,10 +2434,8 @@
         if (!btn) return;
         const selected = driveVisibleCsvs().filter(f => driveSelectedCsvIds.has(f.id));
         const n = selected.length;
-        // A selected file is still "counting" until its row count is settled (number or 'err').
-        const pending = selected.filter(f => !driveRowCounts.has(f.id)).length;
-        // Keep the button greyed until every SELECTED CSV has finished fetching its rows.
-        const dis = n === 0 || pending > 0;
+        // No row-count gate any more — button is ready as soon as ≥1 CSV is selected.
+        const dis = n === 0;
         btn.disabled = dis;
         btn.classList.toggle('opacity-50', dis);
         btn.classList.toggle('cursor-not-allowed', dis);
@@ -2414,16 +2443,8 @@
             document.getElementById('drive-btn-text').textContent = 'Select CSV file(s) to continue →';
             return;
         }
-        if (pending > 0) {
-            document.getElementById('drive-btn-text').textContent =
-                'Counting rows… (' + pending + ' of ' + n + ' left)';
-            return;
-        }
-        // All selected counts are final → show the exact total.
-        let rows = 0;
-        selected.forEach(f => { const v = driveRowCounts.get(f.id); if (typeof v === 'number') rows += v; });
         document.getElementById('drive-btn-text').textContent =
-            'Load ' + n + ' selected CSV' + (n > 1 ? 's' : '') + ' · ' + rows.toLocaleString() + ' rows →';
+            'Load ' + n + ' selected CSV' + (n > 1 ? 's' : '') + ' →';
     }
 
     // Load a folder as the root of the navigator (fresh listing).
@@ -2790,6 +2811,14 @@
                     }
                     showError(conflicts.length + ' rooftop(s) were just taken by someone else and were skipped.');
                 }
+
+                // Release any rooftop this reviewer had claimed earlier but is NOT taking
+                // now (picked something, backed out, picked different) so it frees up for
+                // others instead of sitting "picked" until the server TTL.
+                const newIds   = new Set(selected.map(f => f.id));
+                const toRelease = loadHeldClaims().filter(h => !newIds.has(h.fileId));
+                if (toRelease.length) releaseDriveRooftops(toRelease);   // fire-and-forget
+                saveHeldClaims(selected.map(f => ({ fileId: f.id, rooftop: (f.name || '').replace(/\.csv$/i, '') })));
 
                 loadingMsg.textContent = 'Downloading ' + selected.length + ' CSV file' + (selected.length > 1 ? 's' : '') + '…';
                 const d = await buildDriveDataFromFiles(selected);
@@ -4192,11 +4221,13 @@
         warmUpBQ();   // pre-warm the web app so the eventual BigQuery save is fast
 
         document.getElementById('review-team-name').innerText = team.name;
-        renderReviewTeamId(team.teamId, team.entId);
+        renderReviewTeamId(bqTeamId(team), team.entId);
         renderEnterpriseMeta(team.teamId);
 
         const teamVins = vinsByTeam.get(team.teamId);
         currentTeamVINs = teamVins ? [...teamVins.entries()].map(([key, entry]) => { const vin = key.includes('|~|') ? key.split('|~|')[0] : key; return { vin, urls: Array.isArray(entry) ? entry : (entry.urls||[]), rooftop: Array.isArray(entry) ? '' : (entry.rooftop||''), condition: Array.isArray(entry) ? '' : (entry.condition||'') }; }) : [];
+        // Resolve the real team_id (Metabase) if this rooftop's CSV lacked one.
+        resolveTeamIdForTeam(team);
 
         showPage('page-review');
         updateProgressBadge();
@@ -4690,6 +4721,79 @@
     let currentImg1Team = null;
     let currentImg1VINs = [];
     let currentImg1Idx  = -1;
+
+    // ── team_id lookup (Drive CSVs that ship WITHOUT a team_id) ────────────────
+    // When a rooftop's CSV has no team_id, driveCsvToRows fabricates a synthetic
+    // 'drive-<slug>' id (used only as an internal storage key). On opening such a
+    // rooftop for review we resolve the REAL team_id from Metabase card 12897
+    // ("team_id identifier", Prod ClickHouse): sample a few VINs + the enterprise_id
+    // from the CSV → server runs the query → team_id. That real id is then used in
+    // the CSV export and the BigQuery rows. Enterprise_id must be present in the CSV;
+    // if it's missing (synthetic 'drive-ent-001') we skip the lookup entirely.
+    const resolvedTeamIds = {};   // synthetic teamId -> real team_id (session cache)
+    const teamIdLookupInFlight = {};
+
+    // team_id to WRITE (CSV + BQ): the resolved real id if we have one, else as-is.
+    function bqTeamId(team) {
+        if (!team) return '';
+        return resolvedTeamIds[team.teamId] || team.resolvedTeamId || team.teamId || '';
+    }
+    // A rooftop needs a lookup only when its id is synthetic AND we have a real
+    // enterprise_id AND we haven't already resolved it.
+    function teamNeedsTeamIdLookup(team) {
+        if (!team || !team.teamId) return false;
+        if (resolvedTeamIds[team.teamId]) return false;
+        if (!String(team.teamId).startsWith('drive-')) return false;   // came from CSV → real already
+        const eid = String(team.entId || '').trim();
+        if (!eid || eid === 'drive-ent-001') return false;             // no real enterprise_id → skip
+        return true;
+    }
+    // Sample max(5, ceil(5% of distinct VINs)) VINs at random.
+    function sampleVinsForLookup(vins) {
+        const uniq = [...new Set((vins || []).map(v => v && v.vin).filter(Boolean))];
+        if (!uniq.length) return [];
+        const n = Math.min(uniq.length, Math.max(5, Math.ceil(uniq.length * 0.05)));
+        // Fisher–Yates partial shuffle for a random sample.
+        for (let i = 0; i < n; i++) {
+            const j = i + Math.floor(Math.random() * (uniq.length - i));
+            const t = uniq[i]; uniq[i] = uniq[j]; uniq[j] = t;
+        }
+        return uniq.slice(0, n);
+    }
+    // Resolve + apply the real team_id for a rooftop (non-blocking, cached).
+    async function resolveTeamIdForTeam(team) {
+        if (!teamNeedsTeamIdLookup(team)) return;
+        if (teamIdLookupInFlight[team.teamId]) return;
+        teamIdLookupInFlight[team.teamId] = true;
+        try {
+            const src  = (currentImg1VINs && currentImg1VINs.length) ? currentImg1VINs
+                       : (typeof currentTeamVINs !== 'undefined' && currentTeamVINs && currentTeamVINs.length) ? currentTeamVINs
+                       : [];
+            const vins = sampleVinsForLookup(src);
+            if (!vins.length) return;
+            const res  = await fetch(BQ_WEBAPP_URL, {
+                method: 'POST', redirect: 'follow',
+                body: JSON.stringify({ action: 'resolveTeamId', enterprise_id: String(team.entId || '').trim(), vins: vins })
+            });
+            const data = await res.json().catch(() => ({}));
+            const real = data && data.ok ? String(data.team_id || '').trim() : '';
+            if (real) {
+                resolvedTeamIds[team.teamId] = real;
+                team.resolvedTeamId = real;
+                // Reflect it in the header chip if this rooftop is still open.
+                if (currentImg1Team && currentImg1Team.teamId === team.teamId) {
+                    renderReviewTeamId(real, team.entId);
+                }
+                if (typeof bgToast === 'function') bgToast('team_id resolved: ' + real, 'success');
+            } else {
+                if (typeof bgToast === 'function') bgToast('Could not resolve a team_id for this rooftop (kept as-is).', 'info');
+            }
+        } catch (e) {
+            /* non-fatal: keep the synthetic id */
+        } finally {
+            teamIdLookupInFlight[team.teamId] = false;
+        }
+    }
     let reviewMode = 'vin'; // 'vin' | '1img'
 
     // Build the review storage key — uses teamId+rooftop when available
@@ -4878,8 +4982,11 @@
 
         // Reuse the same review page — update header labels
         document.getElementById('review-team-name').innerText = team.rooftop || team.name || '1st Image Review';
-        renderReviewTeamId(team.teamId, team.entId);
+        renderReviewTeamId(bqTeamId(team), team.entId);
         renderEnterpriseMeta(team.teamId);
+        // If this rooftop's CSV had no team_id, resolve the real one from Metabase
+        // (sample VINs + enterprise_id) in the background so CSV/BQ get the right id.
+        resolveTeamIdForTeam(team);
 
         // Mode badge removed — title already says "1st Image Review"
         const modeBadge = document.getElementById('review-mode-badge');
@@ -5603,6 +5710,7 @@
                 'Issue Type', '1st Image URL', 'Comment', 'User'
             ];
             const lines = [header.join(',')];
+            const outTeamId = bqTeamId(currentImg1Team) || currentImg1Team.teamId;
             currentImg1VINs.forEach((v, idx) => {
                 const teamId  = currentImg1Team.teamId;
                 const rooftop = v.rooftop || '';
@@ -5616,7 +5724,7 @@
                     idx + 1,
                     csvCell(rooftop || currentImg1Team.rooftop || currentImg1Team.name),
                     csvCell(v.condition || ''),
-                    csvCell(teamId),
+                    csvCell(outTeamId),
                     csvCell(v.vin),
                     v.urls.length,
                     csvCell(issueType),
@@ -5712,7 +5820,7 @@
                     enterprise_id:   currentImg1Team?.entId || selectedEnterpriseId || '',
                     rooftop:         rooftop,
                     condition:       v.condition || '',
-                    team_id:         teamId,
+                    team_id:         bqTeamId(currentImg1Team) || teamId,
                     vin:             v.vin,
                     total_images:    v.urls?.length || 0,
                     issue_type:      issType,
