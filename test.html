@@ -3411,12 +3411,12 @@
         }
         lastCheckedIdx = idx;
         updateBulkBar();
-        render1ImgVinList();
-        // Update gallery tile borders to reflect new selection state
-        if (event.shiftKey && lastCheckedIdx !== null) {
-            // Range was changed — update all tiles in range
-            currentImg1VINs.forEach((_, i) => updateTileSelectionStyle(i));
+        // Update sidebar rows + gallery tiles incrementally (was a full sidebar rebuild)
+        if (event.shiftKey) {
+            // Range select changed — refresh each row/tile, no full DOM wipe
+            currentImg1VINs.forEach((_, i) => { updateSidebarRowSelection(i); updateTileSelectionStyle(i); });
         } else {
+            updateSidebarRowSelection(idx);
             updateTileSelectionStyle(idx);
         }
     }
@@ -5106,6 +5106,30 @@
         document.getElementById('legend-rejected').innerText = issue;
     }
 
+    // ---- Incremental sidebar updates (PERF) ----
+    // Navigating with arrows and paint-selecting used to call render1ImgSidebar() on
+    // EVERY keystroke, which wiped (innerHTML='') and rebuilt the whole VIN list DOM
+    // (+ a getImg1Review lookup per VIN). These two helpers touch only the affected
+    // row(s) instead, so arrow movement and selection stay snappy with 1000s of VINs.
+    function setSidebarCurrent(idx) {
+        const list = document.getElementById('vin-list');
+        if (!list) return;
+        const prev = list.querySelector('.vin-item.current');
+        if (prev && prev.dataset.idx != idx) prev.classList.remove('current');
+        const cur = list.querySelector('.vin-item[data-idx="' + idx + '"]');
+        if (cur) cur.classList.add('current');
+    }
+    function updateSidebarRowSelection(idx) {
+        const list = document.getElementById('vin-list');
+        if (!list) return;
+        const row = list.querySelector('.vin-item[data-idx="' + idx + '"]');
+        if (!row) return;
+        const sel = selectedVINIndices.has(idx);
+        row.classList.toggle('vin-selected', sel);
+        const cb = row.querySelector('.vin-checkbox');
+        if (cb) cb.checked = sel;
+    }
+
     function select1ImgVIN(idx) {
         if (idx < 0 || idx >= currentImg1VINs.length) return;
         currentImg1Idx = idx;
@@ -5145,13 +5169,15 @@
             tile.style.boxShadow = '0 0 0 3px #3b82f6, 0 0 0 5px rgba(59,130,246,0.3)';
             tile.style.zIndex = '10';
             tile.style.transform = 'scale(1.03)';
-            tile.scrollIntoView({ behavior: 'smooth', block: 'center' });
+            // 'auto'+'nearest' = no queued smooth-scroll animations stacking up during
+            // rapid arrow navigation, and only scrolls when the tile is actually off-screen.
+            tile.scrollIntoView({ behavior: 'auto', block: 'nearest' });
         }
 
         // Reflect this tile's current tag in the top issue bar (grid view)
         if (img1ViewMode === 'grid') svUpdateControls(st);
 
-        render1ImgSidebar();
+        setSidebarCurrent(idx);    // move the highlight incrementally (was a full sidebar rebuild)
         scrollSidebarToIdx(idx);   // keep the focused VIN visible in the left list
     }
 
@@ -5810,7 +5836,7 @@
         else return;                                // no change
         lastCheckedIdx = idx;
         updateBulkBar();
-        render1ImgVinList();
+        updateSidebarRowSelection(idx);             // incremental (was full sidebar rebuild)
         updateTileSelectionStyle(idx);
     }
     // Toggle every tile in the focused tile's grid row (Shift+Space tap):
@@ -5827,8 +5853,8 @@
         for (let i = rowStart; i <= rowEnd; i++) { if (anySel) selectedVINIndices.delete(i); else selectedVINIndices.add(i); }
         lastCheckedIdx = rowEnd;
         updateBulkBar();
-        render1ImgVinList();
-        for (let i = rowStart; i <= rowEnd; i++) updateTileSelectionStyle(i);
+        // Incremental per-row updates (was a full sidebar rebuild)
+        for (let i = rowStart; i <= rowEnd; i++) { updateSidebarRowSelection(i); updateTileSelectionStyle(i); }
     }
     // Releasing Space resolves a Shift+Space TAP (no arrow movement) → toggle the row,
     // and ends any paint drag. Losing window focus also ends drag state.
