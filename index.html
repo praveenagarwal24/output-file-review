@@ -571,9 +571,13 @@
                     <span class="text-sm">Teams</span>
                 </button>
                 <div class="border-l border-slate-200 h-6 mx-1"></div>
-                <div class="flex items-baseline space-x-2 flex-wrap gap-y-1">
+                <div class="flex items-center space-x-2 flex-wrap gap-y-1">
                     <h2 id="review-team-name" class="font-bold text-slate-800 text-[15px]"></h2>
                     <span id="review-team-id" class="hidden inline-flex items-center gap-1 text-[11px] font-semibold text-slate-400 tracking-wide"></span>
+                    <!-- Resolved identity (Metabase). When present this REPLACES the rooftop
+                         name + team_id chip on the SAME row (no duplicate values). -->
+                    <div id="review-team-meta" class="hidden inline-flex items-center flex-wrap gap-1.5"></div>
+                    <span id="review-team-warn" class="hidden text-[11px] font-semibold text-rose-700 bg-rose-50 border border-rose-200 rounded-md px-2 py-0.5"></span>
                 </div>
                 <!-- Enterprise metadata (from spyne_rooftop_enterprises, joined on team_id) -->
                 <div id="enterprise-meta" class="hidden items-center flex-wrap gap-1.5"></div>
@@ -600,8 +604,8 @@
             </div>
 
             <div class="flex items-center space-x-3">
-                <!-- Review timer — click to pause/resume -->
-                <div id="review-timer-wrap" class="hidden items-center space-x-1.5 bg-slate-100 hover:bg-slate-200 rounded-lg px-3 py-1.5 cursor-pointer select-none transition" onclick="toggleReviewTimer()" title="Click to pause/resume">
+                <!-- Review timer — runs continuously (pause removed) -->
+                <div id="review-timer-wrap" class="hidden items-center space-x-1.5 bg-slate-100 rounded-lg px-3 py-1.5 select-none" title="Time spent reviewing this team">
                     <svg id="timer-icon" class="w-3.5 h-3.5 text-slate-500 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"/>
                     </svg>
@@ -656,11 +660,6 @@
                             <span class="flex items-center space-x-1"><span class="status-dot dot-approved"></span><span id="legend-approved">0</span></span>
                             <span class="flex items-center space-x-1"><span class="status-dot dot-rejected"></span><span id="legend-rejected">0</span></span>
                         </div>
-                    </div>
-                    <div class="flex items-center space-x-1.5 mt-2">
-                        <button onclick="sidebarSelectAll()" class="text-[10px] px-2 py-1 rounded border border-slate-200 hover:bg-slate-50 text-slate-600 font-medium transition">Select All</button>
-                        <button onclick="sidebarClear()" class="text-[10px] px-2 py-1 rounded border border-slate-200 hover:bg-slate-50 text-slate-600 font-medium transition">Clear</button>
-                        <span id="sel-count-badge" class="hidden text-[10px] px-2 py-1 rounded bg-blue-100 text-blue-700 font-semibold"></span>
                     </div>
                 </div>
                 <div id="vin-list" class="flex-1 min-h-0 overflow-y-auto p-2 space-y-0.5"></div>
@@ -735,6 +734,19 @@
                             </div>
                         </div>
                     </div>
+                </div>
+
+                <!-- Selection toolbar (1st-image multi-select) — lives in the top bar so it stays visible when the left panel is hidden -->
+                <div id="grid-select-bar" class="hidden items-center flex-wrap gap-1 bg-white px-6 py-2 border-b border-slate-100 flex-shrink-0">
+                    <span class="text-[9px] font-bold uppercase tracking-wide text-slate-400 mr-0.5">Select</span>
+                    <button onclick="selectVINsByMode('all')" title="Select every VIN — Alt+A" class="text-[10px] px-2 py-1 rounded border border-slate-200 hover:bg-slate-50 text-slate-600 font-medium transition">All <small style="opacity:.5;font-size:9px">⌥A</small></button>
+                    <button onclick="selectVINsByMode('unmarked')" title="Select VINs with no issue tag (pending or OK) — Alt+U" class="text-[10px] px-2 py-1 rounded border border-slate-200 hover:bg-slate-50 text-slate-600 font-medium transition">Unmarked <small style="opacity:.5;font-size:9px">⌥U</small></button>
+                    <button onclick="selectVINsByMode('marked')" title="Select VINs tagged with an issue — Alt+M" class="text-[10px] px-2 py-1 rounded border border-slate-200 hover:bg-slate-50 text-slate-600 font-medium transition">Marked <small style="opacity:.5;font-size:9px">⌥M</small></button>
+                    <button onclick="sidebarClear()" title="Clear the selection — Alt+C" class="text-[10px] px-2 py-1 rounded border border-slate-200 hover:bg-slate-50 text-slate-600 font-medium transition">Clear <small style="opacity:.5;font-size:9px">⌥C</small></button>
+                    <span class="w-px h-4 bg-slate-200 mx-0.5"></span>
+                    <button onclick="unmarkSelectedVINs()" title="Clear tags on the selected VINs (back to pending) — Alt+Backspace" class="text-[10px] px-2 py-1 rounded border border-rose-200 text-rose-600 hover:bg-rose-50 font-medium transition">Unmark sel <small style="opacity:.5;font-size:9px">⌥⌫</small></button>
+                    <button onclick="unmarkAllIssues()" title="Clear every issue tag in this rooftop (OK stays) — Alt+Shift+Backspace" class="text-[10px] px-2 py-1 rounded border border-rose-200 text-rose-600 hover:bg-rose-50 font-medium transition">Unmark issues <small style="opacity:.5;font-size:9px">⌥⇧⌫</small></button>
+                    <span id="sel-count-badge" class="hidden text-[10px] px-2 py-1 rounded bg-blue-100 text-blue-700 font-semibold"></span>
                 </div>
 
                 <!-- Image area: ONLY this section scrolls -->
@@ -2254,6 +2266,30 @@
         } catch (e) { return []; }
     }
 
+    // ── Auto-release of abandoned picks ────────────────────────────────────────
+    // Scenario to fix: a reviewer picks rooftop X, backs out WITHOUT reviewing, then
+    // picks rooftop Y instead. X used to stay "picked" for everyone else until the
+    // server's 4-hour TTL. We remember the rooftops this reviewer currently holds
+    // (persisted, so it survives coming back out to the picker) and, when they claim a
+    // DIFFERENT set, fire a `release` for the ones they dropped.
+    // NOTE: this only takes effect once the server (Code.gs) honours action:'release'.
+    function _heldClaimsKey() { return 'spyne_drive_held_' + (getCurrentUser() || 'anon'); }
+    function loadHeldClaims() {
+        try { return JSON.parse(localStorage.getItem(_heldClaimsKey()) || '[]'); } catch (e) { return []; }
+    }
+    function saveHeldClaims(items) {
+        try { localStorage.setItem(_heldClaimsKey(), JSON.stringify(items || [])); } catch (e) {}
+    }
+    async function releaseDriveRooftops(items) {
+        if (!items || !items.length) return;
+        try {
+            await fetch(BQ_WEBAPP_URL, {
+                method: 'POST', redirect: 'follow', keepalive: true,
+                body: JSON.stringify({ action: 'release', reviewer: getCurrentUser() || '', items })
+            });
+        } catch (e) { /* non-fatal */ }
+    }
+
     // Render the chained folder dropdowns + the CSV checklist for the deepest folder.
     function renderDriveNavigator() {
         const el = document.getElementById('drive-browser');
@@ -2279,40 +2315,49 @@
                  + 'onchange="driveSelectAtLevel(' + i + ', this.value)">' + opts + '</select></div>';
         });
 
-        // CSV checklist for the current (deepest) folder — only pickable ones.
-        const csvs      = driveVisibleCsvs();
+        // CSV checklist for the current (deepest) folder.
+        const csvs      = driveVisibleCsvs();        // pickable = not reviewed AND not claimed by others
         const allCsvs   = driveCurrentCsvs();
         const totalCsvs = allCsvs.length;
         const cur       = driveCurrentFolder();
         const curName   = cur ? (cur.name || '') : '';
-        // Break the hidden ones down by reason (reviewed vs in-use) so it's clear WHY.
-        const meLower = (getCurrentUser() || '').toLowerCase();
-        let reviewedCount = 0, inUseCount = 0;
+        const meLower   = (getCurrentUser() || '').toLowerCase();
+        // Rows we RENDER = everything not already reviewed. Reviewed ones stay hidden
+        // (counted in the note). Claimed-by-another are SHOWN greyed + labelled with WHO
+        // holds them (so reviewers can see who picked a rooftop instead of it just vanishing).
+        const shown = allCsvs.filter(f => {
+            const rooftop = (f.name || '').replace(/\.csv$/i, '').trim().toLowerCase();
+            return !drivePickState.reviewed.has(rooftop);
+        });
+        let reviewedCount = 0;
         allCsvs.forEach(f => {
             const rooftop = (f.name || '').replace(/\.csv$/i, '').trim().toLowerCase();
-            if (drivePickState.reviewed.has(rooftop)) { reviewedCount++; return; }
-            const c = drivePickState.claims[f.id];
-            if (c && (c.reviewer || '').toLowerCase() !== meLower) inUseCount++;
+            if (drivePickState.reviewed.has(rooftop)) reviewedCount++;
         });
-        const parts = [];
-        if (reviewedCount) parts.push(reviewedCount + ' already reviewed');
-        if (inUseCount)    parts.push(inUseCount + ' in use by another reviewer');
-        const hiddenNote = parts.length
-            ? '<div class="text-[11px] text-amber-600 px-2 pt-1">Hidden: ' + parts.join(' · ') + '</div>'
+        const hiddenNote = reviewedCount
+            ? '<div class="text-[11px] text-slate-400 px-2 pt-1">Hidden: ' + reviewedCount + ' already reviewed</div>'
             : '';
         html += '<div class="border-t border-slate-100 mt-1 pt-2">';
-        if (csvs.length) {
+        if (shown.length) {
             html += '<div class="flex items-center justify-between px-1 pb-1">'
                  + '<div class="text-[10px] uppercase tracking-wider text-slate-400 font-bold">Available CSVs in ' + escapeHtml(curName) + ' (' + csvs.length + ')</div>'
                  + '<label class="text-[11px] text-slate-500 flex items-center gap-1 cursor-pointer">'
                  + '<input type="checkbox" id="drive-select-all" onchange="driveToggleAll(this.checked)"> Select all</label></div>';
-            csvs.forEach(f => {
-                const checked = driveSelectedCsvIds.has(f.id) ? 'checked' : '';
-                const rc = driveRowCountLabel(f.id);
-                html += '<label class="w-full flex items-center gap-2 px-2 py-1.5 rounded hover:bg-slate-50 cursor-pointer text-[13px]">'
-                     + '<input type="checkbox" ' + checked + ' onchange="driveToggleCsv(\'' + f.id + '\', this.checked)">'
-                     + '<span>📄</span><span class="truncate flex-1">' + escapeHtml(f.name || '') + '</span>'
-                     + '<span class="text-[11px] text-slate-400 whitespace-nowrap" data-rowcount="' + f.id + '">' + rc + '</span></label>';
+            shown.forEach(f => {
+                const c = drivePickState.claims[f.id];
+                const takenByOther = c && (c.reviewer || '').toLowerCase() !== meLower;
+                if (takenByOther) {
+                    const who = escapeHtml(c.reviewer || 'someone');
+                    html += '<div class="w-full flex items-center gap-2 px-2 py-1.5 rounded text-[13px] cursor-not-allowed bg-slate-50" title="Picked by ' + who + '">'
+                         + '<span class="w-3 flex-shrink-0"></span>'
+                         + '<span>🔒</span><span class="truncate flex-1 text-slate-400 line-through">' + escapeHtml(f.name || '') + '</span>'
+                         + '<span class="text-[10px] text-amber-600 whitespace-nowrap font-semibold flex-shrink-0">picked by ' + who + '</span></div>';
+                } else {
+                    const checked = driveSelectedCsvIds.has(f.id) ? 'checked' : '';
+                    html += '<label class="w-full flex items-center gap-2 px-2 py-1.5 rounded hover:bg-slate-50 cursor-pointer text-[13px]">'
+                         + '<input type="checkbox" ' + checked + ' onchange="driveToggleCsv(\'' + f.id + '\', this.checked)">'
+                         + '<span>📄</span><span class="truncate flex-1">' + escapeHtml(f.name || '') + '</span></label>';
+                }
             });
             html += '<div id="drive-csv-totals" class="text-[11px] text-slate-500 px-2 pt-2"></div>';
             html += hiddenNote;
@@ -2320,7 +2365,7 @@
             const hasSub = cur && cur.folders && cur.folders.length;
             let msg;
             if (totalCsvs > 0) {
-                msg = 'No CSVs available to pick here' + (parts.length ? ' — ' + parts.join(' · ') : '') + '.';
+                msg = 'All CSVs here are already reviewed.';
             } else {
                 msg = hasSub ? 'No CSVs here — pick a sub-folder above.' : 'No CSV files in this folder.';
             }
@@ -2331,7 +2376,6 @@
         el.innerHTML = html;
         syncDriveSelectAll();
         updateDriveTotals();
-        if (csvs.length) driveCountRows(csvs);
     }
 
     function driveRowCountLabel(id) {
@@ -2364,13 +2408,12 @@
         if (!el) return;
         const csvs     = driveVisibleCsvs();
         const selected = csvs.filter(f => driveSelectedCsvIds.has(f.id));
-        let selRows = 0, selKnown = true, allRows = 0, allKnown = true;
-        csvs.forEach(f => { const v = driveRowCounts.get(f.id); if (typeof v === 'number') allRows += v; else allKnown = false; });
-        selected.forEach(f => { const v = driveRowCounts.get(f.id); if (typeof v === 'number') selRows += v; else selKnown = false; });
+        // Row counts intentionally NOT shown here — counting every CSV up front (through
+        // the Apps Script proxy) was the main source of loading slowness. Rows load only
+        // once the reviewer actually opens the selected rooftops.
         el.innerHTML = 'Selected: <b>' + selected.length + '</b> CSV' + (selected.length !== 1 ? 's' : '')
-            + ' · <b>' + selRows.toLocaleString() + (selKnown ? '' : '+') + '</b> rows'
             + '<span class="text-slate-300"> &nbsp;|&nbsp; </span>'
-            + 'Folder total: ' + csvs.length + ' CSVs · ' + allRows.toLocaleString() + (allKnown ? '' : '+') + ' rows';
+            + 'Available: ' + csvs.length + ' CSV' + (csvs.length !== 1 ? 's' : '');
     }
 
     function driveToggleCsv(id, checked) {
@@ -2395,10 +2438,8 @@
         if (!btn) return;
         const selected = driveVisibleCsvs().filter(f => driveSelectedCsvIds.has(f.id));
         const n = selected.length;
-        // A selected file is still "counting" until its row count is settled (number or 'err').
-        const pending = selected.filter(f => !driveRowCounts.has(f.id)).length;
-        // Keep the button greyed until every SELECTED CSV has finished fetching its rows.
-        const dis = n === 0 || pending > 0;
+        // No row-count gate any more — button is ready as soon as ≥1 CSV is selected.
+        const dis = n === 0;
         btn.disabled = dis;
         btn.classList.toggle('opacity-50', dis);
         btn.classList.toggle('cursor-not-allowed', dis);
@@ -2406,16 +2447,8 @@
             document.getElementById('drive-btn-text').textContent = 'Select CSV file(s) to continue →';
             return;
         }
-        if (pending > 0) {
-            document.getElementById('drive-btn-text').textContent =
-                'Counting rows… (' + pending + ' of ' + n + ' left)';
-            return;
-        }
-        // All selected counts are final → show the exact total.
-        let rows = 0;
-        selected.forEach(f => { const v = driveRowCounts.get(f.id); if (typeof v === 'number') rows += v; });
         document.getElementById('drive-btn-text').textContent =
-            'Load ' + n + ' selected CSV' + (n > 1 ? 's' : '') + ' · ' + rows.toLocaleString() + ' rows →';
+            'Load ' + n + ' selected CSV' + (n > 1 ? 's' : '') + ' →';
     }
 
     // Load a folder as the root of the navigator (fresh listing).
@@ -2782,6 +2815,14 @@
                     }
                     showError(conflicts.length + ' rooftop(s) were just taken by someone else and were skipped.');
                 }
+
+                // Release any rooftop this reviewer had claimed earlier but is NOT taking
+                // now (picked something, backed out, picked different) so it frees up for
+                // others instead of sitting "picked" until the server TTL.
+                const newIds   = new Set(selected.map(f => f.id));
+                const toRelease = loadHeldClaims().filter(h => !newIds.has(h.fileId));
+                if (toRelease.length) releaseDriveRooftops(toRelease);   // fire-and-forget
+                saveHeldClaims(selected.map(f => ({ fileId: f.id, rooftop: (f.name || '').replace(/\.csv$/i, '') })));
 
                 loadingMsg.textContent = 'Downloading ' + selected.length + ' CSV file' + (selected.length > 1 ? 's' : '') + '…';
                 const d = await buildDriveDataFromFiles(selected);
@@ -3353,6 +3394,12 @@
         }
     }
 
+    // Total seconds spent reviewing this team so far (used for the BQ review_time_seconds column).
+    function getReviewElapsedSeconds() {
+        const elapsed = timerAccum + (timerStart ? Date.now() - timerStart : 0);
+        return Math.max(0, Math.floor(elapsed / 1000));
+    }
+
     function tickTimer() {
         const elapsed = timerAccum + (timerStart ? Date.now() - timerStart : 0);
         const totalSec = Math.floor(elapsed / 1000);
@@ -3403,22 +3450,97 @@
         }
         lastCheckedIdx = idx;
         updateBulkBar();
-        render1ImgVinList();
-        // Update gallery tile borders to reflect new selection state
-        if (event.shiftKey && lastCheckedIdx !== null) {
-            // Range was changed — update all tiles in range
-            currentImg1VINs.forEach((_, i) => updateTileSelectionStyle(i));
+        // Update sidebar rows + gallery tiles incrementally (was a full sidebar rebuild)
+        if (event.shiftKey) {
+            // Range select changed — refresh each row/tile, no full DOM wipe
+            currentImg1VINs.forEach((_, i) => { updateSidebarRowSelection(i); updateTileSelectionStyle(i); });
         } else {
+            updateSidebarRowSelection(idx);
             updateTileSelectionStyle(idx);
         }
     }
 
     function selectAllVINs() {
-        if (!currentImg1VINs) return;
-        currentImg1VINs.forEach((_, i) => selectedVINIndices.add(i));
+        if (!currentImg1VINs || !currentImg1Team) return;
+        // Select only UNMARKED VINs — skip any that already have a tag (OK or an issue).
+        let added = 0, skipped = 0;
+        currentImg1VINs.forEach((v, i) => {
+            const st = getImg1Review(currentImg1Team.teamId, v.vin, v.rooftop || '');
+            if (st) { skipped++; return; }           // already marked → skip
+            if (!selectedVINIndices.has(i)) { selectedVINIndices.add(i); added++; }
+        });
         updateBulkBar();
         render1ImgVinList();
         currentImg1VINs.forEach((_, i) => updateTileSelectionStyle(i));
+        if (typeof bgToast === 'function') {
+            bgToast('Selected ' + selectedVINIndices.size + ' unmarked VIN' + (selectedVINIndices.size === 1 ? '' : 's')
+                    + (skipped ? ' · skipped ' + skipped + ' already marked' : ''), 'info');
+        }
+    }
+
+    // "issue-marked" = has a state that is NOT 'ok' and not pending. OK counts as un-marked.
+    function _isIssueMarked(v) {
+        const st = getImg1Review(currentImg1Team.teamId, v.vin, v.rooftop || '');
+        return !!st && st !== 'ok';
+    }
+
+    // Select VINs by mode (replaces the current selection): 'all' | 'unmarked' | 'marked'.
+    //   unmarked = no ISSUE tag (pending OR ok)   ·   marked = tagged with an issue
+    // (unmarked + marked = all)
+    function selectVINsByMode(mode) {
+        if (reviewMode !== '1img') {
+            // VIN-review mode: only a visual all/clear is supported
+            if (mode === 'all') document.querySelectorAll('#vin-list .vin-item').forEach(el => el.classList.add('vin-selected'));
+            return;
+        }
+        if (!currentImg1VINs || !currentImg1Team) return;
+        selectedVINIndices.clear();
+        let n = 0;
+        currentImg1VINs.forEach((v, i) => {
+            const issue = _isIssueMarked(v);
+            const pick = mode === 'all' ? true
+                       : mode === 'marked' ? issue
+                       : /* unmarked */ !issue;
+            if (pick) { selectedVINIndices.add(i); n++; }
+        });
+        lastCheckedIdx = null;
+        updateBulkBar();
+        render1ImgVinList();
+        currentImg1VINs.forEach((_, i) => updateTileSelectionStyle(i));
+        const label = mode === 'all' ? 'VIN' : mode === 'marked' ? 'issue-marked VIN' : 'unmarked VIN';
+        if (typeof bgToast === 'function') bgToast('Selected ' + n + ' ' + label + (n === 1 ? '' : 's') + '.', 'info');
+    }
+
+    // Clear tags (→ pending) on a set of tile indices, then refresh everything.
+    function _unmarkIndices(targets) {
+        targets.forEach(i => { setImg1ReviewForIdx(i, null); updateTileIssueState(i, null); });
+        selectedVINIndices.clear();
+        lastCheckedIdx = null;
+        updateImg1ProgressBadge();
+        render1ImgSidebar();
+        currentImg1VINs.forEach((_, i) => updateTileSelectionStyle(i));
+        updateBulkBar();
+    }
+
+    // Unmark the currently SELECTED VINs (clears OK or issue → pending). Confirms first.
+    function unmarkSelectedVINs() {
+        if (reviewMode !== '1img' || !currentImg1Team) return;
+        const targets = [...selectedVINIndices].filter(i => i >= 0 && i < currentImg1VINs.length);
+        if (!targets.length) { if (typeof bgToast === 'function') bgToast('No VINs selected to unmark.', 'info'); return; }
+        if (!confirm('Clear the tag on ' + targets.length + ' selected VIN' + (targets.length === 1 ? '' : 's') + ' (back to pending)?')) return;
+        _unmarkIndices(targets);
+        if (typeof bgToast === 'function') bgToast('Unmarked ' + targets.length + ' VIN' + (targets.length === 1 ? '' : 's') + '.', 'success');
+    }
+
+    // Unmark ALL issue-marked VINs in the rooftop (leaves OK approvals). Confirms first.
+    function unmarkAllIssues() {
+        if (reviewMode !== '1img' || !currentImg1Team) return;
+        const targets = [];
+        currentImg1VINs.forEach((v, i) => { if (_isIssueMarked(v)) targets.push(i); });
+        if (!targets.length) { if (typeof bgToast === 'function') bgToast('No issue-marked VINs to unmark.', 'info'); return; }
+        if (!confirm('Clear the issue tag on all ' + targets.length + ' issue-marked VIN' + (targets.length === 1 ? '' : 's') + ' (back to pending)?\n\nOK-approved VINs are left as-is.')) return;
+        _unmarkIndices(targets);
+        if (typeof bgToast === 'function') bgToast('Unmarked ' + targets.length + ' issue-marked VIN' + (targets.length === 1 ? '' : 's') + '.', 'success');
     }
 
     function clearVINSelection() {
@@ -4057,6 +4179,28 @@
                 `;
                 window['__teamRef_' + t.teamId.replace(/[^a-z0-9]/gi,'_')] = t;
                 grid.appendChild(card);
+                // Mark rooftops that came back with no team_id from Spyne — a slanted
+                // double line (bottom-left → top-right) with "NOT IN SPYNE" set at the
+                // SAME angle as the lines, sitting in the gap between them.
+                if (teamIdNotFound[t.teamId]) {
+                    card.style.overflow = 'hidden';
+                    // Two parallel "/" lines, straddling the centre diagonal, gap ≈ 24 (doubled).
+                    card.insertAdjacentHTML('beforeend',
+                        '<div style="position:absolute;inset:0;border-radius:12px;pointer-events:none;overflow:hidden;">' +
+                          '<svg viewBox="0 0 100 100" preserveAspectRatio="none" style="position:absolute;inset:0;width:100%;height:100%;">' +
+                            '<line x1="0" y1="112" x2="100" y2="12" stroke="#dc2626" stroke-width="1.5" vector-effect="non-scaling-stroke"/>' +
+                            '<line x1="0" y1="88"  x2="100" y2="-12" stroke="#dc2626" stroke-width="1.5" vector-effect="non-scaling-stroke"/>' +
+                          '</svg>' +
+                          '<span class="notinspyne-tag" style="position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);background:#fee2e2;color:#b91c1c;font-size:10px;font-weight:800;letter-spacing:.04em;padding:2px 8px;border-radius:5px;box-shadow:0 1px 4px rgba(0,0,0,.18);white-space:nowrap;">NOT IN SPYNE</span>' +
+                        '</div>');
+                    // Rotate the tag to match the drawn diagonal (angle depends on the card's
+                    // actual width:height, since the SVG line is corner-to-corner).
+                    const tagEl = card.querySelector('.notinspyne-tag');
+                    if (tagEl && card.clientWidth) {
+                        const ang = Math.atan2(-card.clientHeight, card.clientWidth) * 180 / Math.PI;
+                        tagEl.style.transform = 'translate(-50%,-50%) rotate(' + ang.toFixed(1) + 'deg)';
+                    }
+                }
             });
         updateDashClearBar();
     }
@@ -4109,11 +4253,14 @@
         warmUpBQ();   // pre-warm the web app so the eventual BigQuery save is fast
 
         document.getElementById('review-team-name').innerText = team.name;
-        renderReviewTeamId(team.teamId, team.entId);
+        renderReviewTeamId(bqTeamId(team), team.entId);
         renderEnterpriseMeta(team.teamId);
+        applyTeamIdentityUI(team);   // show cached identity (strip / mismatch warning), if any
 
         const teamVins = vinsByTeam.get(team.teamId);
         currentTeamVINs = teamVins ? [...teamVins.entries()].map(([key, entry]) => { const vin = key.includes('|~|') ? key.split('|~|')[0] : key; return { vin, urls: Array.isArray(entry) ? entry : (entry.urls||[]), rooftop: Array.isArray(entry) ? '' : (entry.rooftop||''), condition: Array.isArray(entry) ? '' : (entry.condition||'') }; }) : [];
+        // Resolve the real team_id (Metabase) if this rooftop's CSV lacked one.
+        resolveTeamIdForTeam(team);
 
         showPage('page-review');
         updateProgressBadge();
@@ -4607,6 +4754,253 @@
     let currentImg1Team = null;
     let currentImg1VINs = [];
     let currentImg1Idx  = -1;
+
+    // ── team_id lookup (Drive CSVs that ship WITHOUT a team_id) ────────────────
+    // When a rooftop's CSV has no team_id, driveCsvToRows fabricates a synthetic
+    // 'drive-<slug>' id (used only as an internal storage key). On opening such a
+    // rooftop for review we resolve the REAL team_id from Metabase card 12897
+    // ("team_id identifier", Prod ClickHouse): sample a few VINs + the enterprise_id
+    // from the CSV → server runs the query → team_id. That real id is then used in
+    // the CSV export and the BigQuery rows. Enterprise_id must be present in the CSV;
+    // if it's missing (synthetic 'drive-ent-001') we skip the lookup entirely.
+    const resolvedTeamIds = {};   // teamId -> real team_id (session cache)
+    const resolvedTeamInfo = {};  // teamId -> {enterprise_name, enterprise_id, team_name, team_id}
+    const teamIdLookupInFlight = {};
+    const teamIdNotFound = {};     // synthetic teamId -> true when Metabase returned no team_id
+    const teamLookupDone = {};     // teamId -> true once the lookup ran (any outcome) — avoids re-query on re-open
+    const teamIdMismatch = {};     // teamId -> {csvId, fetchedId} when CSV team_id ≠ resolved team_id
+
+    // Copy any value to the clipboard (reuses copyTeamId's clipboard + ✓ flash).
+    function copyValue(btn) {
+        if (!btn) return;
+        copyTeamId(btn.getAttribute('data-copy') || '', btn);
+    }
+    // Render the copyable Enterprise / Ent ID / Team / Team ID strip in the review top bar.
+    function renderTeamMetaStrip(info) {
+        const el = document.getElementById('review-team-meta');
+        if (!el) return;
+        const nameEl = document.getElementById('review-team-name');
+        const idEl   = document.getElementById('review-team-id');
+        const has = info && (info.team_id || info.team_name || info.enterprise_id || info.enterprise_name);
+        if (!has) {
+            // No resolved identity → keep the normal rooftop name + team_id chip.
+            el.classList.add('hidden'); el.innerHTML = '';
+            if (nameEl) nameEl.style.display = '';
+            if (idEl)   idEl.style.display   = '';
+            return;
+        }
+        // Have resolved identity → drop the old rooftop name + the duplicate team_id chip,
+        // show the four copyable fields in that same row instead.
+        if (nameEl) nameEl.style.display = 'none';
+        if (idEl)   idEl.style.display   = 'none';
+        const field = (label, value, href) => {
+            if (value === undefined || value === null || value === '') return '';
+            const v = escapeHtml(String(value));
+            const valHtml = href
+                ? '<a href="' + escapeHtml(href) + '" target="_blank" rel="noopener" class="text-[11px] font-semibold text-blue-600 hover:underline font-mono" title="Open in Spyne Console">' + v + '</a>'
+                : '<span class="text-[11px] font-semibold text-slate-700 font-mono">' + v + '</span>';
+            return '<span class="inline-flex items-center gap-1 bg-slate-50 border border-slate-200 rounded-md px-2 py-0.5">' +
+                     '<span class="text-[9px] font-bold uppercase tracking-wide text-slate-400">' + escapeHtml(label) + '</span>' +
+                     valHtml +
+                     '<button type="button" data-copy="' + v + '" onclick="copyValue(this)" class="text-slate-400 hover:text-blue-600 transition p-0.5 rounded" title="Copy ' + escapeHtml(label) + '">' +
+                       '<svg class="copy-ic w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"/></svg>' +
+                       '<svg class="copy-ok w-3 h-3 hidden text-emerald-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/></svg>' +
+                     '</button>' +
+                   '</span>';
+        };
+        // Team ID keeps the Spyne Console deep-link (as the old chip had) AND a copy icon.
+        el.innerHTML = field('Enterprise', info.enterprise_name) + field('Ent ID', info.enterprise_id)
+                     + field('Team', info.team_name)
+                     + field('Team ID', info.team_id, info.team_id ? reviewConsoleUrl(info.team_id, info.enterprise_id) : '');
+        el.classList.remove('hidden');
+    }
+
+    // team_id to WRITE (CSV + BQ): the resolved real id if we have one, else as-is.
+    function bqTeamId(team) {
+        if (!team) return '';
+        return resolvedTeamIds[team.teamId] || team.resolvedTeamId || team.teamId || '';
+    }
+    // A synthetic id = one the app FABRICATED because the CSV had no team_id:
+    // 'csv-<rooftop>' (Upload-CSV path) or 'drive-<rooftop>' (Drive path). A real
+    // team_id from the CSV has neither prefix.
+    function teamIsSyntheticId(team) {
+        const tid = String((team && team.teamId) || '');
+        return tid.startsWith('drive-') || tid.startsWith('csv-');
+    }
+    // Run the Metabase lookup for EVERY team that has a real enterprise_id (v25):
+    //  • synthetic id (no CSV team_id) → adopt the resolved team_id
+    //  • real CSV team_id → VERIFY it (match → show identity; mismatch → warn, keep CSV id)
+    // Skip only the "All Rooftops" aggregate, teams with no enterprise_id, and teams
+    // already processed this session.
+    function teamNeedsTeamIdLookup(team) {
+        if (!team || !team.teamId) return false;
+        const tid = String(team.teamId);
+        if (tid === 'csv-all-rooftops') return false;                  // virtual aggregate — skip
+        if (teamLookupDone[tid]) return false;                         // already processed this session
+        const eid = String(team.entId || '').trim();
+        if (!eid || eid === 'drive-ent-001' || eid === 'csv-ent-001') return false;  // no real enterprise_id → skip
+        return true;
+    }
+    // Sample up to 10 distinct VINs at random (v25 raised from 5).
+    const TEAMID_SAMPLE_SIZE = 10;
+    function sampleVinsForLookup(vins) {
+        const uniq = [...new Set((vins || []).map(v => v && v.vin).filter(Boolean))];
+        if (!uniq.length) return [];
+        const n = Math.min(uniq.length, TEAMID_SAMPLE_SIZE);
+        // Fisher–Yates partial shuffle for a random sample.
+        for (let i = 0; i < n; i++) {
+            const j = i + Math.floor(Math.random() * (uniq.length - i));
+            const t = uniq[i]; uniq[i] = uniq[j]; uniq[j] = t;
+        }
+        return uniq.slice(0, n);
+    }
+    // Re-apply the cached header UI for a team (strip / warning / nothing) on re-open.
+    function applyTeamIdentityUI(team) {
+        if (!team) return;
+        const tid = team.teamId;
+        const openId = (reviewMode === '1img') ? (currentImg1Team && currentImg1Team.teamId)
+                                               : (currentTeam && currentTeam.teamId);
+        if (openId !== tid) return;   // not the team currently on screen
+        if (resolvedTeamInfo[tid]) {
+            renderReviewTeamId(resolvedTeamInfo[tid].team_id || bqTeamId(team), team.entId);
+            renderTeamMetaStrip(resolvedTeamInfo[tid]);
+            renderTeamIdWarning(null);
+        } else if (teamIdMismatch[tid]) {
+            renderTeamMetaStrip(null);                    // keep the CSV name + team_id chip
+            renderTeamIdWarning(teamIdMismatch[tid]);
+        } else {
+            renderTeamMetaStrip(null);
+            renderTeamIdWarning(null);
+        }
+    }
+    // Header warning pill when the CSV team_id ≠ the resolved team_id.
+    function renderTeamIdWarning(m) {
+        const el = document.getElementById('review-team-warn');
+        if (!el) return;
+        if (!m) { el.classList.add('hidden'); el.innerHTML = ''; return; }
+        el.innerHTML = '⚠ Team ID mismatch — CSV: <b>' + escapeHtml(String(m.csvId))
+                     + '</b> · VINs resolve to: <b>' + escapeHtml(String(m.fetchedId || 'none'))
+                     + '</b> (keeping CSV id)';
+        el.classList.remove('hidden');
+    }
+    // Resolve + verify the team identity from Metabase (non-blocking, cached).
+    async function resolveTeamIdForTeam(team) {
+        const tid = team && team.teamId;
+        // Already processed this session → just re-apply the cached UI (no slow re-query).
+        if (tid && teamLookupDone[tid]) {
+            applyTeamIdentityUI(team);
+            if (teamIdNotFound[tid]) promptTeamNotInSpyne(team);
+            return;
+        }
+        if (!teamNeedsTeamIdLookup(team)) return;
+        if (teamIdLookupInFlight[tid]) return;
+        teamIdLookupInFlight[tid] = true;
+        const synthetic = teamIsSyntheticId(team);
+        try {
+            const src  = (currentImg1VINs && currentImg1VINs.length) ? currentImg1VINs
+                       : (typeof currentTeamVINs !== 'undefined' && currentTeamVINs && currentTeamVINs.length) ? currentTeamVINs
+                       : [];
+            const vins = sampleVinsForLookup(src);
+            if (!vins.length) { teamIdLookupInFlight[tid] = false; return; }
+            const reqBody = { action: 'resolveTeamId', enterprise_id: String(team.entId || '').trim(), vins: vins };
+            console.log('[team_id] request →', reqBody);
+            const res  = await fetch(BQ_WEBAPP_URL, { method: 'POST', redirect: 'follow', body: JSON.stringify(reqBody) });
+            const raw  = await res.text();
+            let data = {}; try { data = JSON.parse(raw); } catch (e) { /* non-JSON */ }
+            console.log('[team_id] response ←', res.status, raw);
+            const fetchedId = data && data.ok ? String(data.team_id || '').trim() : '';
+            const info = {
+                enterprise_name: String((data && data.enterprise_name) || '').trim(),
+                enterprise_id:   String((data && data.enterprise_id)   || team.entId || '').trim(),
+                team_name:       String((data && data.team_name)       || '').trim(),
+                team_id:         fetchedId
+            };
+            teamLookupDone[tid] = true;
+
+            if (synthetic) {
+                // No CSV team_id → adopt the resolved one, or prompt "not in Spyne".
+                if (fetchedId) {
+                    resolvedTeamIds[tid] = fetchedId;
+                    team.resolvedTeamId = fetchedId;
+                    resolvedTeamInfo[tid] = info;
+                    team.resolvedInfo = info;
+                    applyTeamIdentityUI(team);
+                    if (typeof bgToast === 'function') bgToast('team_id resolved: ' + fetchedId, 'success');
+                } else {
+                    teamIdNotFound[tid] = true;
+                    promptTeamNotInSpyne(team);
+                }
+            } else {
+                // Real CSV team_id → VERIFY.
+                if (fetchedId && fetchedId === String(tid)) {
+                    resolvedTeamIds[tid] = fetchedId;
+                    resolvedTeamInfo[tid] = info;
+                    team.resolvedInfo = info;
+                    applyTeamIdentityUI(team);
+                    if (typeof bgToast === 'function') bgToast('Team verified · ' + fetchedId, 'success');
+                } else {
+                    // Mismatch (or nothing resolved) → warn, keep the CSV team_id.
+                    teamIdMismatch[tid] = { csvId: String(tid), fetchedId: fetchedId };
+                    applyTeamIdentityUI(team);
+                    if (typeof bgToast === 'function')
+                        bgToast('⚠ team_id mismatch — CSV ' + tid + ' vs resolved ' + (fetchedId || '(none)') + '. Keeping CSV id.', 'error');
+                }
+            }
+        } catch (e) {
+            console.warn('[team_id] lookup failed', e);
+            teamLookupDone[tid] = true;
+            // Only the synthetic (no CSV id) case blocks the reviewer; a real id just stays as-is.
+            if (synthetic) { teamIdNotFound[tid] = true; promptTeamNotInSpyne(team); }
+        } finally {
+            teamIdLookupInFlight[tid] = false;
+        }
+    }
+    // Go back to the teams list (same as the header "Teams" button).
+    function goBackToTeamsPage() {
+        if (reviewMode === '1img') restore1ImgMode();
+        stopReviewTimer();
+        showPage('page-dashboard');
+    }
+    // Centered custom confirm modal (replaces the browser's top-of-window confirm()).
+    function showCenteredConfirm(opts) {
+        opts = opts || {};
+        const prev = document.getElementById('center-confirm-modal');
+        if (prev) prev.remove();
+        const ov = document.createElement('div');
+        ov.id = 'center-confirm-modal';
+        ov.style.cssText = 'position:fixed;inset:0;z-index:10000;display:flex;align-items:center;justify-content:center;background:rgba(15,23,42,0.55);';
+        ov.innerHTML =
+            '<div style="background:#fff;border-radius:16px;max-width:440px;width:90%;padding:22px 24px;box-shadow:0 24px 60px rgba(0,0,0,.35);">' +
+              '<div style="display:flex;align-items:center;gap:9px;margin-bottom:8px;">' +
+                '<span style="display:inline-flex;align-items:center;justify-content:center;width:26px;height:26px;border-radius:50%;background:#fee2e2;color:#b91c1c;font-weight:800;flex-shrink:0;">!</span>' +
+                '<h3 style="font-size:16px;font-weight:700;color:#0f172a;margin:0;">' + escapeHtml(opts.title || 'Please confirm') + '</h3>' +
+              '</div>' +
+              '<p style="font-size:13px;color:#475569;line-height:1.55;margin:0 0 18px;white-space:pre-line;">' + escapeHtml(opts.message || '') + '</p>' +
+              '<div style="display:flex;justify-content:flex-end;gap:10px;">' +
+                '<button id="cc-cancel" style="padding:8px 16px;border-radius:9px;border:1px solid #e2e8f0;background:#f8fafc;color:#334155;font-size:13px;font-weight:600;cursor:pointer;">' + escapeHtml(opts.cancelText || 'Cancel') + '</button>' +
+                '<button id="cc-ok" style="padding:8px 18px;border-radius:9px;border:none;background:#2563eb;color:#fff;font-size:13px;font-weight:700;cursor:pointer;">' + escapeHtml(opts.okText || 'OK') + '</button>' +
+              '</div>' +
+            '</div>';
+        document.body.appendChild(ov);
+        const close = () => ov.remove();
+        ov.querySelector('#cc-ok').onclick     = () => { close(); if (opts.onOk) opts.onOk(); };
+        ov.querySelector('#cc-cancel').onclick = () => { close(); if (opts.onCancel) opts.onCancel(); };
+    }
+
+    // Shown when a rooftop has no team_id in Spyne: OK = review anyway, Cancel = go back.
+    function promptTeamNotInSpyne(team) {
+        // Only prompt if this rooftop is STILL the one open (the lookup resolves ~30s later).
+        const openTeam = (reviewMode === '1img') ? currentImg1Team : currentTeam;
+        if (!openTeam || openTeam.teamId !== team.teamId) return;
+        const label = team.rooftop || team.name || 'this rooftop';
+        showCenteredConfirm({
+            title:      'Team not found in Spyne',
+            message:    '“' + label + '” doesn’t appear to be set up in Spyne yet, so we couldn’t attach a Team ID to it.\n\nYou can review it anyway, or go back to the teams page.',
+            okText:     'Review anyway',
+            cancelText: 'Back to teams',
+            onCancel:   goBackToTeamsPage
+        });
+    }
     let reviewMode = 'vin'; // 'vin' | '1img'
 
     // Build the review storage key — uses teamId+rooftop when available
@@ -4763,6 +5157,9 @@
         // Show view toggle + progress bar; hide normal pill
         const vt = document.getElementById('img1-view-toggle');
         if (vt) { vt.style.display = 'flex'; }
+        // Show the top selection toolbar (1st-image review only)
+        const gsb = document.getElementById('grid-select-bar');
+        if (gsb) { gsb.style.display = 'flex'; }
         // Hide the redundant top-bar zoom + Grid/Single controls (VIN-review only)
         const _vrcHide = document.getElementById('vin-view-controls');
         if (_vrcHide) { _vrcHide.classList.add('hidden'); _vrcHide.style.display = 'none'; }
@@ -4792,8 +5189,12 @@
 
         // Reuse the same review page — update header labels
         document.getElementById('review-team-name').innerText = team.rooftop || team.name || '1st Image Review';
-        renderReviewTeamId(team.teamId, team.entId);
+        renderReviewTeamId(bqTeamId(team), team.entId);
         renderEnterpriseMeta(team.teamId);
+        applyTeamIdentityUI(team);   // show cached identity (strip / mismatch warning), if any
+        // If this rooftop's CSV had no team_id, resolve the real one from Metabase
+        // (sample VINs + enterprise_id) in the background so CSV/BQ get the right id.
+        resolveTeamIdForTeam(team);
 
         // Mode badge removed — title already says "1st Image Review"
         const modeBadge = document.getElementById('review-mode-badge');
@@ -4881,6 +5282,9 @@
         // Hide view toggle + progress bar; restore normal pill
         const vt2 = document.getElementById('img1-view-toggle');
         if (vt2) vt2.style.display = 'none';
+        // Hide the 1st-image selection toolbar in VIN-review mode
+        const gsb2 = document.getElementById('grid-select-bar');
+        if (gsb2) gsb2.style.display = 'none';
         const pgBar2 = document.getElementById('img1-progress-bar');
         if (pgBar2) pgBar2.style.display = 'none';
         const pgPill2 = document.getElementById('review-progress');
@@ -5017,6 +5421,30 @@
         document.getElementById('legend-rejected').innerText = issue;
     }
 
+    // ---- Incremental sidebar updates (PERF) ----
+    // Navigating with arrows and paint-selecting used to call render1ImgSidebar() on
+    // EVERY keystroke, which wiped (innerHTML='') and rebuilt the whole VIN list DOM
+    // (+ a getImg1Review lookup per VIN). These two helpers touch only the affected
+    // row(s) instead, so arrow movement and selection stay snappy with 1000s of VINs.
+    function setSidebarCurrent(idx) {
+        const list = document.getElementById('vin-list');
+        if (!list) return;
+        const prev = list.querySelector('.vin-item.current');
+        if (prev && prev.dataset.idx != idx) prev.classList.remove('current');
+        const cur = list.querySelector('.vin-item[data-idx="' + idx + '"]');
+        if (cur) cur.classList.add('current');
+    }
+    function updateSidebarRowSelection(idx) {
+        const list = document.getElementById('vin-list');
+        if (!list) return;
+        const row = list.querySelector('.vin-item[data-idx="' + idx + '"]');
+        if (!row) return;
+        const sel = selectedVINIndices.has(idx);
+        row.classList.toggle('vin-selected', sel);
+        const cb = row.querySelector('.vin-checkbox');
+        if (cb) cb.checked = sel;
+    }
+
     function select1ImgVIN(idx) {
         if (idx < 0 || idx >= currentImg1VINs.length) return;
         currentImg1Idx = idx;
@@ -5056,13 +5484,15 @@
             tile.style.boxShadow = '0 0 0 3px #3b82f6, 0 0 0 5px rgba(59,130,246,0.3)';
             tile.style.zIndex = '10';
             tile.style.transform = 'scale(1.03)';
-            tile.scrollIntoView({ behavior: 'smooth', block: 'center' });
+            // 'auto'+'nearest' = no queued smooth-scroll animations stacking up during
+            // rapid arrow navigation, and only scrolls when the tile is actually off-screen.
+            tile.scrollIntoView({ behavior: 'auto', block: 'nearest' });
         }
 
         // Reflect this tile's current tag in the top issue bar (grid view)
         if (img1ViewMode === 'grid') svUpdateControls(st);
 
-        render1ImgSidebar();
+        setSidebarCurrent(idx);    // move the highlight incrementally (was a full sidebar rebuild)
         scrollSidebarToIdx(idx);   // keep the focused VIN visible in the left list
     }
 
@@ -5488,6 +5918,10 @@
                 'Issue Type', '1st Image URL', 'Comment', 'User'
             ];
             const lines = [header.join(',')];
+            const outTeamId = bqTeamId(currentImg1Team) || currentImg1Team.teamId;
+            // Mirror BQ: when resolved, the "Rooftop" column carries the real team_name.
+            const rinfoCsv  = resolvedTeamInfo[currentImg1Team.teamId] || currentImg1Team.resolvedInfo || null;
+            const outRooftop = (rinfoCsv && rinfoCsv.team_name) || '';
             currentImg1VINs.forEach((v, idx) => {
                 const teamId  = currentImg1Team.teamId;
                 const rooftop = v.rooftop || '';
@@ -5499,9 +5933,9 @@
                 const issueType = stLabel && st !== 'ok' ? stLabel : st === 'ok' ? 'OK' : 'Pending';
                 const row = [
                     idx + 1,
-                    csvCell(rooftop || currentImg1Team.rooftop || currentImg1Team.name),
+                    csvCell(outRooftop || rooftop || currentImg1Team.rooftop || currentImg1Team.name),
                     csvCell(v.condition || ''),
-                    csvCell(teamId),
+                    csvCell(outTeamId),
                     csvCell(v.vin),
                     v.urls.length,
                     csvCell(issueType),
@@ -5583,24 +6017,33 @@
             const teamId    = currentImg1Team?.teamId || '';
             const teamLabel = currentImg1Team?.rooftop || currentImg1Team?.name || teamId;
             const now       = new Date();
+            const reviewTimeSecTotal = getReviewElapsedSeconds();   // total time spent on this team
             const bqRows    = [];
+            // Resolved identity (Metabase) — write the REAL enterprise_name into `enterprise`
+            // and the REAL team_name into `rooftop`; fall back to CSV labels when unresolved.
+            const rinfo        = resolvedTeamInfo[teamId] || currentImg1Team?.resolvedInfo || null;
+            const bqEnterprise = (rinfo && rinfo.enterprise_name) || selectedEnterprise || currentImg1Team?.name || '';
+            const bqEntId      = (rinfo && rinfo.enterprise_id)   || currentImg1Team?.entId || selectedEnterpriseId || '';
             (currentImg1VINs || []).forEach(v => {
                 const rooftop = v.rooftop || currentImg1Team?.rooftop || '';
                 const st      = getImg1Review(teamId, v.vin, rooftop);
                 if (!st) return;                       // skip pending / unmarked VINs
                 const issType = st === 'ok' ? 'OK' : (stateLabel(st) || st);
+                const bqRooftop = (rinfo && rinfo.team_name) || rooftop;   // team_name → rooftop in BQ
                 bqRows.push({
                     review_date:     now.toISOString().slice(0, 10),
                     reviewed_at:     now.toISOString(),
                     reviewer:        reviewerNow,
-                    enterprise:      selectedEnterprise || currentImg1Team?.name || '',
-                    enterprise_id:   currentImg1Team?.entId || selectedEnterpriseId || '',
-                    rooftop:         rooftop,
+                    enterprise:      bqEnterprise,
+                    enterprise_id:   bqEntId,
+                    rooftop:         bqRooftop,
                     condition:       v.condition || '',
-                    team_id:         teamId,
+                    team_id:         bqTeamId(currentImg1Team) || teamId,
                     vin:             v.vin,
                     total_images:    v.urls?.length || 0,
                     issue_type:      issType,
+                    review_time_seconds:     reviewTimeSecTotal,   // total time for this team review (int seconds)
+                    avg_review_time_seconds: 0,                    // set below = total ÷ rows reviewed (3 dp)
                     first_image_url: v.urls?.[0] || '',
                     comment:         (() => {
                         const rk = img1ReviewKey(teamId, v.vin, rooftop);
@@ -5610,6 +6053,13 @@
                     review_mode:     '1st_image'
                 });
             });
+
+            // review_time_seconds = total time spent ÷ number of rows reviewed, to 3 decimals
+            // (same average stamped on every row of this submission).
+            if (bqRows.length) {
+                const perRow = Math.round((reviewTimeSecTotal / bqRows.length) * 1000) / 1000;
+                bqRows.forEach(function (r) { r.avg_review_time_seconds = perRow; });
+            }
 
             // Instant UX: download the CSV and return to the dashboard right away.
             // The BigQuery save runs in the BACKGROUND (retries up to 3×, then a
@@ -5721,7 +6171,7 @@
         else return;                                // no change
         lastCheckedIdx = idx;
         updateBulkBar();
-        render1ImgVinList();
+        updateSidebarRowSelection(idx);             // incremental (was full sidebar rebuild)
         updateTileSelectionStyle(idx);
     }
     // Toggle every tile in the focused tile's grid row (Shift+Space tap):
@@ -5738,8 +6188,8 @@
         for (let i = rowStart; i <= rowEnd; i++) { if (anySel) selectedVINIndices.delete(i); else selectedVINIndices.add(i); }
         lastCheckedIdx = rowEnd;
         updateBulkBar();
-        render1ImgVinList();
-        for (let i = rowStart; i <= rowEnd; i++) updateTileSelectionStyle(i);
+        // Incremental per-row updates (was a full sidebar rebuild)
+        for (let i = rowStart; i <= rowEnd; i++) { updateSidebarRowSelection(i); updateTileSelectionStyle(i); }
     }
     // Releasing Space resolves a Shift+Space TAP (no arrow movement) → toggle the row,
     // and ends any paint drag. Losing window focus also ends drag state.
@@ -5774,6 +6224,16 @@
             if (e.ctrlKey && !e.metaKey && !e.altKey) {
                 if (e.key === '=' || e.key === '+' || e.code === 'Equal' || e.code === 'NumpadAdd')      { e.preventDefault(); nudgeGridZoom(true);  return; }
                 if (e.key === '-' || e.key === '_' || e.code === 'Minus' || e.code === 'NumpadSubtract') { e.preventDefault(); nudgeGridZoom(false); return; }
+            }
+            // Alt+key → selection toolbar actions (Alt chosen so it never collides
+            // with tag keys r/s/i/o/b/q/h/p/u/e or view keys g/f/a). Use e.code because
+            // Option/Alt mangles e.key on Mac. Skipped while typing in an input.
+            if (e.altKey && !e.ctrlKey && !e.metaKey && !inInput) {
+                if (e.code === 'KeyA')      { e.preventDefault(); selectVINsByMode('all');      return; }
+                if (e.code === 'KeyU')      { e.preventDefault(); selectVINsByMode('unmarked'); return; }
+                if (e.code === 'KeyM')      { e.preventDefault(); selectVINsByMode('marked');   return; }
+                if (e.code === 'KeyC')      { e.preventDefault(); sidebarClear();               return; }
+                if (e.code === 'Backspace') { e.preventDefault(); if (e.shiftKey) unmarkAllIssues(); else unmarkSelectedVINs(); return; }
             }
             if (inSearch) return;
             // Esc closes the enlarge lightbox first (before falling through to view switch)
