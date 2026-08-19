@@ -5966,7 +5966,7 @@
             const teamId    = currentImg1Team?.teamId || '';
             const teamLabel = currentImg1Team?.rooftop || currentImg1Team?.name || teamId;
             const now       = new Date();
-            const reviewTimeSec = getReviewElapsedSeconds();   // total time spent on this team
+            const reviewTimeSecTotal = getReviewElapsedSeconds();   // total time spent on this team
             const bqRows    = [];
             // Resolved identity (Metabase) — write the REAL enterprise_name into `enterprise`
             // and the REAL team_name into `rooftop`; fall back to CSV labels when unresolved.
@@ -5991,7 +5991,8 @@
                     vin:             v.vin,
                     total_images:    v.urls?.length || 0,
                     issue_type:      issType,
-                    review_time_seconds: reviewTimeSec,
+                    review_time_seconds:     reviewTimeSecTotal,   // total time for this team review (int seconds)
+                    avg_review_time_seconds: 0,                    // set below = total ÷ rows reviewed (3 dp)
                     first_image_url: v.urls?.[0] || '',
                     comment:         (() => {
                         const rk = img1ReviewKey(teamId, v.vin, rooftop);
@@ -6001,6 +6002,13 @@
                     review_mode:     '1st_image'
                 });
             });
+
+            // review_time_seconds = total time spent ÷ number of rows reviewed, to 3 decimals
+            // (same average stamped on every row of this submission).
+            if (bqRows.length) {
+                const perRow = Math.round((reviewTimeSecTotal / bqRows.length) * 1000) / 1000;
+                bqRows.forEach(function (r) { r.avg_review_time_seconds = perRow; });
+            }
 
             // Instant UX: download the CSV and return to the dashboard right away.
             // The BigQuery save runs in the BACKGROUND (retries up to 3×, then a
