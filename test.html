@@ -603,8 +603,8 @@
             </div>
 
             <div class="flex items-center space-x-3">
-                <!-- Review timer — click to pause/resume -->
-                <div id="review-timer-wrap" class="hidden items-center space-x-1.5 bg-slate-100 hover:bg-slate-200 rounded-lg px-3 py-1.5 cursor-pointer select-none transition" onclick="toggleReviewTimer()" title="Click to pause/resume">
+                <!-- Review timer — runs continuously (pause removed) -->
+                <div id="review-timer-wrap" class="hidden items-center space-x-1.5 bg-slate-100 rounded-lg px-3 py-1.5 select-none" title="Time spent reviewing this team">
                     <svg id="timer-icon" class="w-3.5 h-3.5 text-slate-500 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"/>
                     </svg>
@@ -3393,6 +3393,12 @@
         }
     }
 
+    // Total seconds spent reviewing this team so far (used for the BQ review_time_seconds column).
+    function getReviewElapsedSeconds() {
+        const elapsed = timerAccum + (timerStart ? Date.now() - timerStart : 0);
+        return Math.max(0, Math.floor(elapsed / 1000));
+    }
+
     function tickTimer() {
         const elapsed = timerAccum + (timerStart ? Date.now() - timerStart : 0);
         const totalSec = Math.floor(elapsed / 1000);
@@ -5960,6 +5966,7 @@
             const teamId    = currentImg1Team?.teamId || '';
             const teamLabel = currentImg1Team?.rooftop || currentImg1Team?.name || teamId;
             const now       = new Date();
+            const reviewTimeSec = getReviewElapsedSeconds();   // total time spent on this team
             const bqRows    = [];
             // Resolved identity (Metabase) — write the REAL enterprise_name into `enterprise`
             // and the REAL team_name into `rooftop`; fall back to CSV labels when unresolved.
@@ -5984,6 +5991,7 @@
                     vin:             v.vin,
                     total_images:    v.urls?.length || 0,
                     issue_type:      issType,
+                    review_time_seconds: reviewTimeSec,
                     first_image_url: v.urls?.[0] || '',
                     comment:         (() => {
                         const rk = img1ReviewKey(teamId, v.vin, rooftop);
