@@ -139,6 +139,13 @@ main{padding:22px 28px;max-width:1440px;margin:0 auto}
 .trend-bar{width:90%;margin:0 auto;border-radius:4px 4px 0 0;min-height:3px;transition:height .5s ease}
 .trend-bar:hover{filter:brightness(1.18)}
 .trend-bar-val{font-size:9px;color:var(--muted);margin-bottom:3px;font-weight:600}
+.trend-grouped{gap:6px}
+.tg-group{display:flex;align-items:flex-end;justify-content:center;gap:2px;flex:1;width:100%}
+.tg-bar{flex:1;min-width:2px;border-radius:3px 3px 0 0;min-height:0;transition:height .4s ease}
+.tg-bar:hover{filter:brightness(1.18)}
+.trend-legend{display:flex;gap:14px;justify-content:center;margin-bottom:10px;flex-wrap:wrap}
+.tl-item{display:flex;align-items:center;gap:5px;font-size:10px;color:var(--muted);font-weight:600}
+.tl-dot{width:9px;height:9px;border-radius:2px;display:inline-block}
 .trend-date{font-size:8px;color:var(--muted);margin-top:3px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:100%;text-align:center}
 .trend-controls{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:16px}
 .trend-spacer{flex:1;min-width:8px}
@@ -376,15 +383,23 @@ const ENT = '`inspired-frame-453018-r2.spyne_reviews.spyne_rooftop_enterprises`'
 // 2) The SAME Client ID + the allowed-email list must be set in Code.gs (server-side is
 //    what actually enforces access; this page only gates the UI for a clean experience).
 const OAUTH_CLIENT_ID = '108193022090-ps76d9cbosaoqnelf9qmurlldsuj95og.apps.googleusercontent.com';
-// Client-side allowlist (same mechanism as the review app). Only these Google emails may
-// use the dashboard; non-allowed accounts are rejected right at sign-in. Edit this list to
-// add/remove people. (Keep the server-side ALLOWLIST in Code.gs in sync for real security.)
+// Access rule: ANY @spyne.ai email is allowed automatically; PLUS the explicit emails below
+// (for non-@spyne.ai people, e.g. @spyne.co.in reviewers or a gmail). Non-matching accounts
+// are rejected right at sign-in. (Keep the server-side ALLOWLIST in Code.gs in sync.)
 const AUTH_ALLOWED = new Set([
   'praveen@spyne.ai',
-  'prathamesh.prashant@spyne.ai',
-  'rupesh.rawat@spyne.ai',
-  'sumit.rana@spyne.ai',
-  'anshuman.kukreti@spyne.ai'
+  'kishor@spyne.ai',
+  'ajay.devrani@spyne.co.in',
+  'raj.tripathi@spyne.ai',
+  'ranbir.manoranjan@spyne.ai',
+  'khushi.gautam@spyne.co.in',
+  'shweta.gupta@spyne.co.in',
+  'tannu.singh@spyne.co.in',
+  'vijay.gautam@spyne.co.in',
+  'karmendra.singh@spyne.co.in',
+  'anup.gupta@spyne.co.in',
+  'praveenagarwal24@gmail.com',
+  'dhruv.kumar@spyne.co.in'
 ]);
 let AUTH_TOKEN=null, AUTH_EMAIL=null, _booted=false;
 function _decodeJwt(t){ try{ return JSON.parse(decodeURIComponent(atob(t.split('.')[1].replace(/-/g,'+').replace(/_/g,'/')).split('').map(c=>'%'+('00'+c.charCodeAt(0).toString(16)).slice(-2)).join(''))); }catch(e){ return {}; } }
@@ -394,7 +409,7 @@ function hideAuthGate(){ const g=document.getElementById('auth-gate'); if(g) g.s
 function onGoogleSignIn(resp){
   AUTH_TOKEN = resp && resp.credential;
   const p=_decodeJwt(AUTH_TOKEN||''); AUTH_EMAIL=(p.email||'').toLowerCase();
-  if(!AUTH_ALLOWED.has(AUTH_EMAIL)){
+  if(!(AUTH_EMAIL.endsWith('@spyne.ai') || AUTH_ALLOWED.has(AUTH_EMAIL))){
     AUTH_TOKEN=null; try{ google.accounts.id.disableAutoSelect(); }catch(e){}
     const c0=document.getElementById('user-chip'); if(c0) c0.style.display='none';
     showAuthGate('Not authorised: '+(AUTH_EMAIL||'this account')+'. Ask the admin to add you to the access list.');
@@ -896,11 +911,29 @@ function trendFiltered(){
   const {from,to}=trendRangeCutoff(trendRange);
   return rows.filter(r=>{const d=r.review_date; if(!d) return false; if(from&&d<from) return false; if(to&&d>to) return false; return true;});
 }
-function trendBarsMC(rows,metric){
-  if(!rows.length) return '<div style="color:var(--muted);font-size:12px;padding:70px 20px;text-align:center">No data for this range</div>';
-  const vals=rows.map(r=>N(r[metric])), max=Math.max(...vals,1), H=240, mlbl=TREND_MLBL[metric];
-  const n=rows.length, showVal=n<=16, dateStep=n<=16?1:Math.ceil(n/12);
-  return `<div class="trend-bars" style="height:${H}px">${rows.map((r,i)=>{const h=Math.max(Math.round((vals[i]/max)*(H-26)),3);const c=TREND_COLORS[i%TREND_COLORS.length];const dt=(r.review_date||'').slice(5);const vEl=showVal?`<div class="trend-bar-val">${vals[i].toLocaleString()}</div>`:'';const dEl=(i%dateStep===0)?`<div class="trend-date">${dt}</div>`:`<div class="trend-date">&nbsp;</div>`;return `<div class="trend-bar-wrap" style="cursor:pointer" title="${r.review_date}: ${vals[i]} ${mlbl} · ${N(r.iss)} issues — click for rooftops" onclick="drillDayBreakdown('${r.review_date}')">${vEl}<div class="trend-bar" style="height:${h}px;background:${c}"></div>${dEl}</div>`;}).join('')}</div>`;
+// Segments shown side-by-side per day
+const SEG_ORDER=['Ent','Mid','SMB','Others'];
+const SEG_COLORS={Ent:'#3b82f6',Mid:'#8b5cf6',SMB:'#10b981',Others:'#f59e0b'};
+// Group the per-day-per-segment rows into {dates:[...], byDate:{date:{Ent:{...},Mid:{...},...}}}
+function trendGroup(rows){
+  const byDate={}, dates=[];
+  rows.forEach(r=>{const d=r.review_date; if(!d) return; if(!byDate[d]){byDate[d]={};dates.push(d);} const sg=SEG_ORDER.indexOf(r.seg)>=0?r.seg:'Others'; byDate[d][sg]=r;});
+  dates.sort();
+  return {dates, byDate};
+}
+function trendLegend(){
+  return `<div class="trend-legend">${SEG_ORDER.map(sg=>`<span class="tl-item"><span class="tl-dot" style="background:${SEG_COLORS[sg]}"></span>${sg}</span>`).join('')}</div>`;
+}
+function trendBarsMC(g,metric){
+  if(!g.dates.length) return '<div style="color:var(--muted);font-size:12px;padding:70px 20px;text-align:center">No data for this range</div>';
+  const mlbl=TREND_MLBL[metric], H=240;
+  let max=1; g.dates.forEach(d=>SEG_ORDER.forEach(sg=>{const v=N((g.byDate[d][sg]||{})[metric]||0); if(v>max)max=v;}));
+  const n=g.dates.length, dateStep=n<=16?1:Math.ceil(n/12);
+  return `<div class="trend-bars trend-grouped" style="height:${H}px">${g.dates.map((d,i)=>{
+    const bars=SEG_ORDER.map(sg=>{const v=N((g.byDate[d][sg]||{})[metric]||0);const h=v>0?Math.max(Math.round((v/max)*(H-26)),3):0;return `<div class="tg-bar" title="${d} · ${sg}: ${v.toLocaleString()} ${mlbl}" style="height:${h}px;background:${SEG_COLORS[sg]}"></div>`;}).join('');
+    const dEl=(i%dateStep===0)?`<div class="trend-date">${d.slice(5)}</div>`:`<div class="trend-date">&nbsp;</div>`;
+    return `<div class="trend-bar-wrap" style="cursor:pointer" title="${d} — click for rooftops" onclick="drillDayBreakdown('${d}')"><div class="tg-group">${bars}</div>${dEl}</div>`;
+  }).join('')}</div>`;
 }
 function smoothPath(pts){
   if(pts.length<2) return pts.length?`M ${pts[0][0]} ${pts[0][1]}`:'';
@@ -908,31 +941,32 @@ function smoothPath(pts){
   for(let i=0;i<pts.length-1;i++){const p0=pts[i-1]||pts[i],p1=pts[i],p2=pts[i+1],p3=pts[i+2]||p2;const c1x=p1[0]+(p2[0]-p0[0])/6,c1y=p1[1]+(p2[1]-p0[1])/6,c2x=p2[0]-(p3[0]-p1[0])/6,c2y=p2[1]-(p3[1]-p1[1])/6;d+=` C ${c1x.toFixed(1)} ${c1y.toFixed(1)} ${c2x.toFixed(1)} ${c2y.toFixed(1)} ${p2[0].toFixed(1)} ${p2[1].toFixed(1)}`;}
   return d;
 }
-function trendCurve(rows,metric,W){
-  if(!rows.length) return '<div style="color:var(--muted);font-size:12px;padding:70px 20px;text-align:center">No data for this range</div>';
-  W=Math.max(W||900,320); const H=240, padL=8, padR=8, topY=14, bottom=H-26;
-  const vals=rows.map(r=>N(r[metric])), max=Math.max(...vals,1), n=rows.length, mlbl=TREND_MLBL[metric], col='#3b82f6';
+function trendCurve(g,metric,W){
+  if(!g.dates.length) return '<div style="color:var(--muted);font-size:12px;padding:70px 20px;text-align:center">No data for this range</div>';
+  W=Math.max(W||900,320); const H=240, padL=8, padR=8, topY=14, bottom=H-26, mlbl=TREND_MLBL[metric];
+  const dates=g.dates, n=dates.length;
+  let max=1; dates.forEach(d=>SEG_ORDER.forEach(sg=>{const v=N((g.byDate[d][sg]||{})[metric]||0); if(v>max)max=v;}));
   const x=i=> n===1? W/2 : padL + (i*(W-padL-padR)/(n-1));
   const y=v=> bottom - (v/max)*(bottom-topY);
-  const pts=vals.map((v,i)=>[x(i),y(v)]);
-  const line=smoothPath(pts);
-  const area=`${line} L ${x(n-1).toFixed(1)} ${bottom} L ${x(0).toFixed(1)} ${bottom} Z`;
   let grid='';
-  for(let g=0;g<=4;g++){const gy=topY+(bottom-topY)*g/4;const gv=Math.round(max*(1-g/4));grid+=`<line x1="${padL}" y1="${gy.toFixed(1)}" x2="${W-padR}" y2="${gy.toFixed(1)}" stroke="var(--border)" stroke-width="1" opacity="0.45"/><text x="${padL}" y="${(gy-3).toFixed(1)}" fill="var(--muted)" font-size="8">${gv.toLocaleString()}</text>`;}
-  const dots=pts.map((p,i)=>`<circle cx="${p[0].toFixed(1)}" cy="${p[1].toFixed(1)}" r="4" fill="${col}" stroke-width="2" style="cursor:pointer;stroke:var(--dot-stroke)" onclick="drillDayBreakdown('${rows[i].review_date}')"><title>${rows[i].review_date}: ${vals[i]} ${mlbl} · ${N(rows[i].iss)} issues — click for rooftops</title></circle>`).join('');
-  const idxs=n<=8?rows.map((_,i)=>i):[0,Math.floor(n/2),n-1];
-  const xlabels=[...new Set(idxs)].map(i=>`<text x="${x(i).toFixed(1)}" y="${H-8}" fill="var(--muted)" font-size="8" text-anchor="middle">${(rows[i].review_date||'').slice(5)}</text>`).join('');
-  return `<svg width="100%" height="${H}" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" style="display:block">
-    <defs><linearGradient id="trdGrad" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="${col}" stop-opacity="0.35"/><stop offset="100%" stop-color="${col}" stop-opacity="0.02"/></linearGradient></defs>
-    ${grid}<path d="${area}" fill="url(#trdGrad)"/><path d="${line}" fill="none" stroke="${col}" stroke-width="2" vector-effect="non-scaling-stroke"/>${dots}${xlabels}
-  </svg>`;
+  for(let k=0;k<=4;k++){const gy=topY+(bottom-topY)*k/4;const gv=Math.round(max*(1-k/4));grid+=`<line x1="${padL}" y1="${gy.toFixed(1)}" x2="${W-padR}" y2="${gy.toFixed(1)}" stroke="var(--border)" stroke-width="1" opacity="0.45"/><text x="${padL}" y="${(gy-3).toFixed(1)}" fill="var(--muted)" font-size="8">${gv.toLocaleString()}</text>`;}
+  let series='';
+  SEG_ORDER.forEach(sg=>{
+    const col=SEG_COLORS[sg];
+    const pts=dates.map((d,i)=>[x(i), y(N((g.byDate[d][sg]||{})[metric]||0))]);
+    series+=`<path d="${smoothPath(pts)}" fill="none" stroke="${col}" stroke-width="2" vector-effect="non-scaling-stroke"/>`;
+    series+=pts.map((p,i)=>`<circle cx="${p[0].toFixed(1)}" cy="${p[1].toFixed(1)}" r="3" fill="${col}" style="cursor:pointer;stroke:var(--dot-stroke);stroke-width:1.5" onclick="drillDayBreakdown('${dates[i]}')"><title>${dates[i]} · ${sg}: ${N((g.byDate[dates[i]][sg]||{})[metric]||0).toLocaleString()} ${mlbl}</title></circle>`).join('');
+  });
+  const idxs=n<=8?dates.map((_,i)=>i):[0,Math.floor(n/2),n-1];
+  const xlabels=[...new Set(idxs)].map(i=>`<text x="${x(i).toFixed(1)}" y="${H-8}" fill="var(--muted)" font-size="8" text-anchor="middle">${(dates[i]||'').slice(5)}</text>`).join('');
+  return `<svg width="100%" height="${H}" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" style="display:block">${grid}${series}${xlabels}</svg>`;
 }
 function renderTrend(){
   const el=document.getElementById('trend-chart'); if(!el) return;
-  const rows=trendFiltered();
-  el.innerHTML = trendType==='line' ? trendCurve(rows,trendMetric,el.clientWidth) : trendBarsMC(rows,trendMetric);
+  const g=trendGroup(trendFiltered());
+  el.innerHTML = trendLegend() + (trendType==='line' ? trendCurve(g,trendMetric,el.clientWidth) : trendBarsMC(g,trendMetric));
   const cap=document.getElementById('trend-caption');
-  if(cap){ if(rows.length){ const ds=rows.map(r=>r.review_date).filter(Boolean); const f=x=>{const D=new Date(x+'T00:00:00');return fmt(D);}; cap.textContent=`${rows.length} day${rows.length>1?'s':''} · ${f(ds[0])} – ${f(ds[ds.length-1])}`; } else { cap.textContent='No reviews in this range'; } }
+  if(cap){ if(g.dates.length){ const f=x=>{const D=new Date(x+'T00:00:00');return fmt(D);}; cap.textContent=`${g.dates.length} day${g.dates.length>1?'s':''} · ${f(g.dates[0])} – ${f(g.dates[g.dates.length-1])}`; } else { cap.textContent='No reviews in this range'; } }
 }
 function setTrendMetric(m,btn){ trendMetric=m; document.querySelectorAll('#trend-metric-tabs .trd-tab').forEach(t=>t.classList.remove('active')); if(btn)btn.classList.add('active'); renderTrend(); }
 function setTrendRange(r,btn){ trendRange=r; document.querySelectorAll('#trend-range-tabs .trd-tab').forEach(t=>t.classList.remove('active')); if(btn)btn.classList.add('active'); renderTrend(); }
@@ -1020,7 +1054,7 @@ UNION ALL SELECT 'rtit', rt_key, issue_type, NULL,NULL,NULL,NULL, COUNT(*), NULL
 UNION ALL SELECT 'cs', cs_poc_email, NULL,NULL,NULL,NULL, CAST(MAX(review_date) AS STRING), COUNT(DISTINCT rt_key), COUNT(DISTINCT vin), COUNT(*), COUNTIF(issue_type='OK' OR issue_type='Pending'), COUNTIF(issue_type NOT IN ('OK','Pending')), NULL,NULL FROM s GROUP BY cs_poc_email
 UNION ALL SELECT 'csit', cs_poc_email, issue_type, NULL,NULL,NULL,NULL, COUNT(*), NULL,NULL,NULL,NULL,NULL,NULL FROM s WHERE issue_type NOT IN ('OK','Pending') GROUP BY cs_poc_email, issue_type
 UNION ALL SELECT * FROM (SELECT 'worst', CAST(team_id AS STRING), MAX(enterprise_name), MAX(apld_team_name), MAX(ae_poc_email), MAX(ob_poc_email), MAX(cs_poc_email), COUNTIF(issue_type NOT IN ('OK','Pending')), NULL,NULL,NULL,NULL,NULL,NULL FROM s WHERE enterprise_name IS NOT NULL GROUP BY team_id ORDER BY 8 DESC LIMIT 1)`;
-    const TREND = `SELECT review_date, COUNT(*) as cnt, COUNTIF(issue_type NOT IN ('OK','Pending')) as iss, COUNT(DISTINCT vin) as vins, COUNT(DISTINCT COALESCE(NULLIF(team_id,''), rooftop)) as rts, COUNT(DISTINCT COALESCE(enterprise_name, enterprise)) as ents FROM ${SRC} ${WND} GROUP BY review_date ORDER BY review_date`;
+    const TREND = `SELECT review_date, CASE WHEN customer_segment IN ('Ent','Mid','SMB') THEN customer_segment ELSE 'Others' END as seg, COUNT(*) as cnt, COUNTIF(issue_type NOT IN ('OK','Pending')) as iss, COUNT(DISTINCT vin) as vins, COUNT(DISTINCT COALESCE(NULLIF(team_id,''), rooftop)) as rts, COUNT(DISTINCT COALESCE(enterprise_name, enterprise)) as ents FROM ${SRC} ${WND} GROUP BY review_date, seg ORDER BY review_date`;
     // TOP Enterprise/Rooftop/CS by ACCURACY on a LATEST-review-per-VIN basis (each VIN counted
     // once, its most recent verdict). Qualify with >=100 latest-review VINs; if none qualify the
     // (n>=100) sort key collapses so the best-accuracy row still wins (auto-relax).
