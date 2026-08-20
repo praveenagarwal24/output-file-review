@@ -4841,8 +4841,8 @@
         if (!eid || eid === 'drive-ent-001' || eid === 'csv-ent-001') return false;  // no real enterprise_id → skip
         return true;
     }
-    // Sample min(100, all VINs) distinct VINs at random (v26 raised from 10).
-    const TEAMID_SAMPLE_SIZE = 100;
+    // Sample min(500, all VINs) distinct VINs at random (v27 raised from 100).
+    const TEAMID_SAMPLE_SIZE = 500;
     function sampleVinsForLookup(vins) {
         const uniq = [...new Set((vins || []).map(v => v && v.vin).filter(Boolean))];
         if (!uniq.length) return [];
