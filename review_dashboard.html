@@ -927,7 +927,7 @@ function renderIssueTrend(){
   const buckets={};
   rows.forEach(r=>{ if(itMetric!=='All' && r.issue_type!==itMetric) return; const k=itBucketKey(r.review_date,itGran); if(!k) return; buckets[k]=(buckets[k]||0)+N(r.cnt); });
   let keys=Object.keys(buckets).sort();
-  const lim=itGran==='day'?30:(itGran==='week'?16:12);
+  const lim=itGran==='day'?15:(itGran==='week'?6:6);
   if(keys.length>lim) keys=keys.slice(keys.length-lim);
   const data=keys.map(k=>({label:itBucketLabel(k,itGran),val:buckets[k]}));
   el.innerHTML=itBars(data);
