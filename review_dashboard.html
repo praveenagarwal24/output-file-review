@@ -382,6 +382,7 @@ const OAUTH_CLIENT_ID = '108193022090-ps76d9cbosaoqnelf9qmurlldsuj95og.apps.goog
 const AUTH_ALLOWED = new Set([
   'praveen@spyne.ai',
   'sumit.rana@spyne.ai',
+  'anshuman.kukreti@spyne.ai'
 ]);
 let AUTH_TOKEN=null, AUTH_EMAIL=null, _booted=false;
 function _decodeJwt(t){ try{ return JSON.parse(decodeURIComponent(atob(t.split('.')[1].replace(/-/g,'+').replace(/_/g,'/')).split('').map(c=>'%'+('00'+c.charCodeAt(0).toString(16)).slice(-2)).join(''))); }catch(e){ return {}; } }
