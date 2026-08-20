@@ -139,10 +139,17 @@ main{padding:22px 28px;max-width:1440px;margin:0 auto}
 .trend-bar{width:90%;margin:0 auto;border-radius:4px 4px 0 0;min-height:3px;transition:height .5s ease}
 .trend-bar:hover{filter:brightness(1.18)}
 .trend-bar-val{font-size:9px;color:var(--muted);margin-bottom:3px;font-weight:600}
-.trend-grouped{gap:6px}
-.tg-group{display:flex;align-items:flex-end;justify-content:center;gap:2px;flex:1;width:100%}
-.tg-bar{flex:1;min-width:2px;border-radius:3px 3px 0 0;min-height:0;transition:height .4s ease}
+.trend-grouped{gap:14px}
+.trend-grouped .trend-bar-wrap{padding:0 4px;border-radius:7px}
+.trend-grouped .trend-bar-wrap:nth-child(odd){background:var(--hover)}
+.tg-group{display:flex;align-items:flex-end;justify-content:center;gap:3px;flex:1;width:100%}
+.tg-seg{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:flex-end;min-width:2px}
+.tg-val{font-size:7px;line-height:1;color:var(--muted);font-weight:700;margin-bottom:2px;white-space:nowrap}
+.tg-bar{width:100%;min-width:2px;border-radius:3px 3px 0 0;min-height:0;transition:height .4s ease}
 .tg-bar:hover{filter:brightness(1.18)}
+/* team views */
+#main-content.view-cs .sec-review{display:none}
+#main-content.view-review .sec-cs{display:none}
 .trend-legend{display:flex;gap:14px;justify-content:center;margin-bottom:10px;flex-wrap:wrap}
 .tl-item{display:flex;align-items:center;gap:5px;font-size:10px;color:var(--muted);font-weight:600}
 .tl-dot{width:9px;height:9px;border-radius:2px;display:inline-block}
@@ -269,11 +276,8 @@ body.locked{overflow:hidden}
 </header>
 
 <div id="seg-tabs">
-  <button class="seg-tab active" onclick="setSegment('',this)">All</button>
-  <button class="seg-tab" onclick="setSegment('Ent',this)">Ent</button>
-  <button class="seg-tab" onclick="setSegment('Mid',this)">Mid</button>
-  <button class="seg-tab" onclick="setSegment('SMB',this)">SMB</button>
-  <button class="seg-tab" onclick="setSegment('Others',this)">Others</button>
+  <button class="seg-tab active" onclick="setView('cs',this)">Customer Success</button>
+  <button class="seg-tab" onclick="setView('review',this)">Review Team</button>
 </div>
 
 <div id="filter-bar">
@@ -350,6 +354,12 @@ body.locked{overflow:hidden}
     <div class="ms-box" onclick="msToggle('poc')"><span class="ms-label ph" id="ms-lbl-poc">All POCs</span><span class="ms-clear" id="ms-clr-poc" title="Clear" onclick="msClear(event,'poc')">✕</span><span class="ms-caret">▾</span></div>
     <div class="ms-panel" id="ms-panel-poc"><input class="ms-search" id="ms-search-poc" placeholder="Search POCs…" oninput="msFilter('poc')" onclick="event.stopPropagation()"><div class="ms-list" id="ms-list-poc"></div></div>
   </div>
+
+  <span class="filter-label">Segment</span>
+  <div class="ms" id="ms-segment">
+    <div class="ms-box" onclick="msToggle('segment')"><span class="ms-label ph" id="ms-lbl-segment">All segments</span><span class="ms-clear" id="ms-clr-segment" title="Clear" onclick="msClear(event,'segment')">✕</span><span class="ms-caret">▾</span></div>
+    <div class="ms-panel" id="ms-panel-segment"><input class="ms-search" id="ms-search-segment" placeholder="Search segments…" oninput="msFilter('segment')" onclick="event.stopPropagation()"><div class="ms-list" id="ms-list-segment"></div></div>
+  </div>
 </div>
 
 <div class="modal-ov" id="modal-ov" onclick="if(event.target===this)closeModal()">
@@ -359,7 +369,7 @@ body.locked{overflow:hidden}
   </div>
 </div>
 
-<main id="main-content">
+<main id="main-content" class="view-cs">
   <div class="loading-overlay"><div class="spinner"></div><div style="color:var(--muted);font-size:12px">Loading from BigQuery…</div></div>
 </main>
 
@@ -837,7 +847,8 @@ const MS={
   enterprise:{opts:[],sel:new Set(),ph:'All enterprises'},
   rooftop:{opts:[],sel:new Set(),ph:'All rooftops'},
   reviewer:{opts:[],sel:new Set(),ph:'All reviewers'},
-  poc:{opts:[],sel:new Set(),ph:'All POCs'}
+  poc:{opts:[],sel:new Set(),ph:'All POCs'},
+  segment:{opts:[{value:'Ent',label:'Ent',title:'Enterprise'},{value:'Mid',label:'Mid',title:'Mid-market'},{value:'SMB',label:'SMB',title:'SMB'},{value:'Others',label:'Others',title:'No segment / other'}],sel:new Set(),ph:'All segments'}
 };
 const _esc=s=>(''+s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
 function msVals(key){ return [...MS[key].sel]; }
@@ -860,8 +871,8 @@ function buildWhere(opts={}) {
   const rt=msVals('rooftop');     if(rt.length)  parts.push(`rooftop IN (${inList(rt)})`);
   const rv=msVals('reviewer');    if(rv.length)  parts.push(`reviewer IN (${inList(rv)})`);
   const ent=msVals('enterprise'); if(ent.length) parts.push(`enterprise_name IN (${inList(ent)})`);
-  if(segTab==='Others') parts.push(`(customer_segment IS NULL OR customer_segment NOT IN ('Ent','Mid','SMB'))`);
-  else if(segTab) parts.push(`customer_segment = '${segTab.replace(/'/g,"\\'")}'`);
+  const segs=msVals('segment');
+  if(segs.length){ const spec=segs.filter(s=>s!=='Others'), alt=[]; if(spec.length) alt.push(`customer_segment IN (${inList(spec)})`); if(segs.indexOf('Others')>=0) alt.push(`(customer_segment IS NULL OR customer_segment NOT IN ('Ent','Mid','SMB'))`); if(alt.length) parts.push('('+alt.join(' OR ')+')'); }
   const poc=msVals('poc'); if(poc.length){ const L=inList(poc); parts.push(`(ae_poc_email IN (${L}) OR ob_poc_email IN (${L}) OR cs_poc_email IN (${L}))`); }
   return parts.length ? 'WHERE '+parts.join(' AND ') : '';
 }
@@ -871,9 +882,13 @@ const ic=t=>COLORS[t]||'#64748b';
 const pct=(a,b)=>b>0?Math.round(a/b*100):0;
 const N=v=>parseInt(v)||0;
 const money=v=>{const n=Number(v)||0;if(n>=1e6)return '$'+(n/1e6).toFixed(1)+'M';if(n>=1e3)return '$'+(n/1e3).toFixed(1)+'K';return '$'+Math.round(n);};
+const abbr=v=>{const n=N(v);if(n>=1e6)return (n/1e6).toFixed(1).replace(/\.0$/,'')+'M';if(n>=1e3)return (n/1e3).toFixed(1).replace(/\.0$/,'')+'k';return ''+n;};
 let DRILL=null;  // in-memory data for instant drill-downs
-let segTab='';   // active segment tab ('', Ent, Mid, SMB, Others)
-function setSegment(seg,btn){ segTab=seg; document.querySelectorAll('.seg-tab').forEach(t=>t.classList.remove('active')); if(btn) btn.classList.add('active'); loadAll(); }
+// Top view tabs: 'cs' (Customer Success) shows the By CS POC section; 'review' (Review Team)
+// shows the Reviewer Stats section. Shared sections (Overview, Trend, Issues, Rooftop Summary)
+// appear in both. Pure show/hide via a class on #main-content — no re-query.
+let viewMode='cs';
+function setView(v,btn){ viewMode=v; const mc=document.getElementById('main-content'); if(mc){ mc.classList.remove('view-cs','view-review'); mc.classList.add('view-'+v); } document.querySelectorAll('#seg-tabs .seg-tab').forEach(t=>t.classList.remove('active')); if(btn) btn.classList.add('active'); }
 
 function donut(data,size=120){
   const total=data.reduce((s,d)=>s+d.v,0);
@@ -930,7 +945,7 @@ function trendBarsMC(g,metric){
   let max=1; g.dates.forEach(d=>SEG_ORDER.forEach(sg=>{const v=N((g.byDate[d][sg]||{})[metric]||0); if(v>max)max=v;}));
   const n=g.dates.length, dateStep=n<=16?1:Math.ceil(n/12);
   return `<div class="trend-bars trend-grouped" style="height:${H}px">${g.dates.map((d,i)=>{
-    const bars=SEG_ORDER.map(sg=>{const v=N((g.byDate[d][sg]||{})[metric]||0);const h=v>0?Math.max(Math.round((v/max)*(H-26)),3):0;return `<div class="tg-bar" title="${d} · ${sg}: ${v.toLocaleString()} ${mlbl}" style="height:${h}px;background:${SEG_COLORS[sg]}"></div>`;}).join('');
+    const bars=SEG_ORDER.map(sg=>{const v=N((g.byDate[d][sg]||{})[metric]||0);const h=v>0?Math.max(Math.round((v/max)*(H-30)),3):0;const lbl=v>0?`<div class="tg-val">${abbr(v)}</div>`:'';return `<div class="tg-seg" title="${d} · ${sg}: ${v.toLocaleString()} ${mlbl}">${lbl}<div class="tg-bar" style="height:${h}px;background:${SEG_COLORS[sg]}"></div></div>`;}).join('');
     const dEl=(i%dateStep===0)?`<div class="trend-date">${d.slice(5)}</div>`:`<div class="trend-date">&nbsp;</div>`;
     return `<div class="trend-bar-wrap" style="cursor:pointer" title="${d} — click for rooftops" onclick="drillDayBreakdown('${d}')"><div class="tg-group">${bars}</div>${dEl}</div>`;
   }).join('')}</div>`;
@@ -1028,7 +1043,7 @@ async function loadFilterOptions(){
     MS.rooftop.opts=rts.filter(r=>r.rooftop).map(r=>({value:r.rooftop,label:r.rooftop,title:r.rooftop}));
     MS.reviewer.opts=rvs.filter(r=>r.reviewer).map(r=>({value:r.reviewer,label:r.reviewer.split('@')[0],title:r.reviewer}));
     MS.poc.opts=pocs.filter(r=>r.poc).map(r=>({value:r.poc,label:r.poc.split('@')[0],title:r.poc}));
-    ['enterprise','rooftop','reviewer','poc'].forEach(k=>msUpdateLabel(k));
+    ['enterprise','rooftop','reviewer','poc','segment'].forEach(k=>msUpdateLabel(k));
   }catch(e){console.warn('filter options:',e);}
 }
 
@@ -1172,6 +1187,7 @@ UNION ALL SELECT * FROM (SELECT 'worst', CAST(team_id AS STRING), MAX(enterprise
       </div>
     </div>
 
+    <div class="view-sec sec-cs">
     <div class="sec-label">By CS POC</div>
     <div class="tbl-card"><div class="tbl-head-bar" style="display:flex;justify-content:space-between;align-items:center"><div class="chart-title">CS POC · review volume &amp; quality</div><button class="btn" onclick="downloadCsPocCSV()">⬇ CSV</button></div>
       <div class="rt-scroll">
@@ -1181,6 +1197,9 @@ UNION ALL SELECT * FROM (SELECT 'worst', CAST(team_id AS STRING), MAX(enterprise
       </div>
     </div>
 
+    </div>
+
+    <div class="view-sec sec-review">
     <div class="sec-label">Reviewer Stats</div>
     <div class="tbl-card"><div class="tbl-head-bar" style="display:flex;justify-content:space-between;align-items:center"><div class="chart-title">Reviewer Stats</div><button class="btn" onclick="downloadReviewerCSV()">⬇ CSV</button></div>
         <div class="rt-scroll">
@@ -1188,7 +1207,8 @@ UNION ALL SELECT * FROM (SELECT 'worst', CAST(team_id AS STRING), MAX(enterprise
         <tbody>${rvR.map(r=>{const t=N(r.total),o=N(r.ok_cnt),iss=N(r.issue_cnt);const acc=100-pct(iss,t);const cnts=issByRv[r.reviewer]||{};return`<tr style="cursor:pointer" onclick="drillReviewerBreakdown('${(r.reviewer||'').replace(/'/g,"\\'")}')"><td>${r.reviewer?.split('@')[0]||'—'}<br><span style="font-size:8px;color:var(--muted)">${r.reviewer}</span></td><td style="text-align:center">${N(r.rooftops).toLocaleString()}</td><td style="text-align:center"><b>${t}</b></td><td style="text-align:center"><span class="badge b-ok">${o}</span></td>${issTypes.map(it=>{const c=cnts[it]||0;return `<td style="text-align:center;color:var(--issue)">${c||''}</td>`;}).join('')}<td style="text-align:center"><span class="badge b-issue">${iss}</span></td><td style="text-align:center"><span style="font-weight:700;color:${acc>=90?'#10b981':acc>=70?'#eab308':'#f97316'}">${acc}%</span></td><td style="color:var(--muted);font-size:9px">${r.last_date||'—'}</td></tr>`;}).join('')}</tbody>
         <tfoot><tr><td style="font-weight:700">Total</td><td style="text-align:center;font-weight:700" title="Distinct rooftops reviewed — matches Overview">${N(ov.rt_cnt).toLocaleString()}</td><td style="text-align:center;font-weight:700">${rvTot.total.toLocaleString()}</td><td style="text-align:center;font-weight:700">${rvTot.ok.toLocaleString()}</td>${issTypes.map(it=>`<td style="text-align:center;font-weight:700;color:var(--issue)">${rvTot.by[it]||''}</td>`).join('')}<td style="text-align:center;font-weight:700">${rvTot.iss.toLocaleString()}</td><td style="text-align:center;font-weight:700;color:${rvTacc>=90?'#10b981':rvTacc>=70?'#eab308':'#f97316'}">${rvTacc}%</td><td></td></tr></tfoot></table>
         </div>
-      </div>`;
+      </div>
+    </div>`;
 
     document.getElementById('last-updated').textContent='Updated '+new Date().toLocaleTimeString();
     enableSort(mc);  // make all rendered tables sortable
