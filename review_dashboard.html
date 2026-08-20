@@ -911,6 +911,31 @@ const TREND_RANGES=[['today','Today'],['yesterday','Yesterday'],['7d','7d'],['15
 const TREND_METRICS=[['cnt','Reviews'],['vins','Unique VINs'],['rts','Rooftops'],['ents','Enterprises']];
 const TREND_MLBL={cnt:'reviews',vins:'VINs',rts:'rooftops',ents:'enterprises'};
 let trendMetric='cnt', trendRange='15d', trendType='bar';
+// ── Issue Trend (CS view): left tabs = All + each issue type; right tabs = day/week/month bucket ──
+let itMetric='All', itGran='day';
+function itBucketKey(d,gran){ if(!d) return null; if(gran==='day') return d; if(gran==='month') return d.slice(0,7); const dt=new Date(d+'T00:00:00'); const day=dt.getDay(); const diff=(day===0?-6:1-day); const mon=new Date(dt); mon.setDate(dt.getDate()+diff); return iso(mon); }
+function itBucketLabel(k,gran){ if(gran==='day') return k.slice(5); if(gran==='week') return k.slice(5); const mi=parseInt(k.slice(5,7),10)-1; return (MONTHS[mi]||'').slice(0,3)+" '"+k.slice(2,4); }
+function itBars(data){
+  if(!data.length) return '<div style="color:var(--muted);font-size:12px;padding:70px 20px;text-align:center">No issues in this range</div>';
+  const H=240, max=Math.max(...data.map(d=>d.val),1), col=(itMetric==='All')?'var(--issue)':ic(itMetric);
+  const n=data.length, dateStep=n<=16?1:Math.ceil(n/12);
+  return `<div class="trend-bars" style="height:${H}px">${data.map((d,i)=>{const h=d.val>0?Math.max(Math.round((d.val/max)*(H-26)),3):0;const dEl=(i%dateStep===0)?`<div class="trend-date">${d.label}</div>`:`<div class="trend-date">&nbsp;</div>`;return `<div class="trend-bar-wrap" title="${d.label}: ${d.val.toLocaleString()} ${itMetric==='All'?'issues':itMetric}"><div class="trend-bar-val">${d.val>0?abbr(d.val):''}</div><div class="trend-bar" style="height:${h}px;background:${col}"></div>${dEl}</div>`;}).join('')}</div>`;
+}
+function renderIssueTrend(){
+  const el=document.getElementById('itrend-chart'); if(!el) return;
+  const rows=window._itrendAll||[];
+  const buckets={};
+  rows.forEach(r=>{ if(itMetric!=='All' && r.issue_type!==itMetric) return; const k=itBucketKey(r.review_date,itGran); if(!k) return; buckets[k]=(buckets[k]||0)+N(r.cnt); });
+  let keys=Object.keys(buckets).sort();
+  const lim=itGran==='day'?30:(itGran==='week'?16:12);
+  if(keys.length>lim) keys=keys.slice(keys.length-lim);
+  const data=keys.map(k=>({label:itBucketLabel(k,itGran),val:buckets[k]}));
+  el.innerHTML=itBars(data);
+  const cap=document.getElementById('itrend-caption');
+  if(cap){ const unit=itGran==='day'?'day':(itGran==='week'?'week':'month'); const tot=data.reduce((s,d)=>s+d.val,0); cap.textContent = data.length? `${data.length} ${unit}${data.length>1?'s':''} · ${tot.toLocaleString()} ${itMetric==='All'?'issues':itMetric} total` : 'No issues in this range'; }
+}
+function setItMetric(m,btn){ itMetric=m; document.querySelectorAll('#it-metric-tabs .trd-tab').forEach(t=>t.classList.remove('active')); if(btn)btn.classList.add('active'); renderIssueTrend(); }
+function setItGran(g,btn){ itGran=g; document.querySelectorAll('#it-gran-tabs .trd-tab').forEach(t=>t.classList.remove('active')); if(btn)btn.classList.add('active'); renderIssueTrend(); }
 
 function trendRangeCutoff(range){
   if(range==='today')     return {from:iso(today()), to:iso(today())};
@@ -1088,7 +1113,10 @@ UNION ALL SELECT * FROM (SELECT 'worst', CAST(team_id AS STRING), MAX(enterprise
     SELECT * FROM (SELECT * FROM e  ORDER BY (n>=100) DESC, acc DESC, n DESC LIMIT 1)
     UNION ALL SELECT * FROM (SELECT * FROM r2 ORDER BY (n>=100) DESC, acc DESC, n DESC LIMIT 1)
     UNION ALL SELECT * FROM (SELECT * FROM c  ORDER BY (n>=100) DESC, acc DESC, n DESC LIMIT 1)`;
-    const [combRows, trendR, topsR] = await runQueries([COMB, TREND, TOPS]);
+    // Issue Trend: per-day per-issue-type issue counts (issues only), bucketed client-side by day/week/month.
+    const ITREND = `SELECT review_date, issue_type, COUNT(*) as cnt FROM ${SRC} ${WND} ${WND?'AND':'WHERE'} issue_type NOT IN ('OK','Pending') GROUP BY review_date, issue_type ORDER BY review_date`;
+    const [combRows, trendR, topsR, itrendR] = await runQueries([COMB, TREND, TOPS, ITREND]);
+    window._itrendAll = itrendR||[];
     const tops={}; (topsR||[]).forEach(r=>{ tops[r.k]={nm:r.nm, tid:r.tid, n:N(r.n), acc:(+r.acc||0)}; });
     const _pick=k=>combRows.filter(r=>r._k===k);
     const _ovRow=_pick('ov')[0]||{};
@@ -1147,6 +1175,19 @@ UNION ALL SELECT * FROM (SELECT 'worst', CAST(team_id AS STRING), MAX(enterprise
       ${topCard('Top Issue · Rooftop', worst?worst.team_name:null, worst?N(worst.issue_cnt):0, '#f97316')}
       ${pocCard('POCs · Top Issue Team', worst?worst.ae:null, worst?worst.ob:null, worst?worst.cs:null, '#eab308')}
       ${topIssuesCard('Top 3 Issues · Type', top3Issues, '#a78bfa')}
+    </div>
+
+    <div class="view-sec sec-cs">
+    <div class="sec-label">Issue Trend</div>
+    <div class="chart-card">
+      <div class="trend-controls">
+        <div class="trend-tabs" id="it-metric-tabs">${['All',...issTypes].map(m=>`<button class="trd-tab ${itMetric===m?'active':''}" onclick="setItMetric('${(''+m).replace(/'/g,"\\'")}',this)">${m}</button>`).join('')}</div>
+        <div class="trend-spacer"></div>
+        <div class="trend-tabs" id="it-gran-tabs">${[['day','Day on Day'],['week','Week on Week'],['month','Month on Month']].map(t=>`<button class="trd-tab ${itGran===t[0]?'active':''}" onclick="setItGran('${t[0]}',this)">${t[1]}</button>`).join('')}</div>
+      </div>
+      <div id="itrend-chart"></div>
+      <div id="itrend-caption" style="font-size:10px;color:var(--muted);margin-top:8px;text-align:right"></div>
+    </div>
     </div>
 
     <div class="sec-label">Daily Trend</div>
@@ -1213,6 +1254,7 @@ UNION ALL SELECT * FROM (SELECT 'worst', CAST(team_id AS STRING), MAX(enterprise
     document.getElementById('last-updated').textContent='Updated '+new Date().toLocaleTimeString();
     enableSort(mc);  // make all rendered tables sortable
     renderTrend();   // draw the interactive daily trend
+    renderIssueTrend(); // draw the Issue Trend (CS view)
   }catch(e){ mc.innerHTML=`<div class="err">⚠ ${e.message}</div>`; }
   btn.classList.remove('loading');
 }
