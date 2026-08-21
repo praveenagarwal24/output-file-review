@@ -1859,9 +1859,14 @@
     // Split a pipe-or-comma separated URL string into an array of clean URLs
     function splitUrls(raw) {
         if (!raw) return [];
-        // Try pipe first (most common), then comma
-        const sep = raw.includes('|') ? '|' : ',';
-        return raw.split(sep).map(u => u.trim()).filter(Boolean);
+        raw = String(raw).trim();
+        // Pipe-separated (most common) → split on pipe.
+        if (raw.includes('|')) return raw.split('|').map(u => u.trim()).filter(Boolean);
+        // Otherwise split ONLY on a comma that starts a NEW url (comma followed by http(s)://),
+        // so a single URL containing literal commas in its path stays intact — e.g. Dealer
+        // eProcess: .../Used-2025-Kia-K4-EXwSmartCruiseControl,RearviewCamera,SmartKey&...
+        // (Splitting on every comma shredded one URL into broken fragments → blank previews.)
+        return raw.split(/\s*,\s*(?=https?:\/\/)/i).map(u => u.trim()).filter(Boolean);
     }
 
     // =========================================================================
