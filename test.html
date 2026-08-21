@@ -577,6 +577,7 @@
                     <!-- Resolved identity (Metabase). When present this REPLACES the rooftop
                          name + team_id chip on the SAME row (no duplicate values). -->
                     <div id="review-team-meta" class="hidden inline-flex items-center flex-wrap gap-1.5"></div>
+                    <span id="review-team-warn" class="hidden text-[11px] font-semibold text-rose-700 bg-rose-50 border border-rose-200 rounded-md px-2 py-0.5"></span>
                 </div>
                 <!-- Enterprise metadata (from spyne_rooftop_enterprises, joined on team_id) -->
                 <div id="enterprise-meta" class="hidden items-center flex-wrap gap-1.5"></div>
@@ -4254,7 +4255,7 @@
         document.getElementById('review-team-name').innerText = team.name;
         renderReviewTeamId(bqTeamId(team), team.entId);
         renderEnterpriseMeta(team.teamId);
-        renderTeamMetaStrip(resolvedTeamInfo[team.teamId] || null);   // show cached identity, if any
+        applyTeamIdentityUI(team);   // show cached identity (strip / mismatch warning), if any
 
         const teamVins = vinsByTeam.get(team.teamId);
         currentTeamVINs = teamVins ? [...teamVins.entries()].map(([key, entry]) => { const vin = key.includes('|~|') ? key.split('|~|')[0] : key; return { vin, urls: Array.isArray(entry) ? entry : (entry.urls||[]), rooftop: Array.isArray(entry) ? '' : (entry.rooftop||''), condition: Array.isArray(entry) ? '' : (entry.condition||'') }; }) : [];
@@ -4762,10 +4763,12 @@
     // from the CSV → server runs the query → team_id. That real id is then used in
     // the CSV export and the BigQuery rows. Enterprise_id must be present in the CSV;
     // if it's missing (synthetic 'drive-ent-001') we skip the lookup entirely.
-    const resolvedTeamIds = {};   // synthetic teamId -> real team_id (session cache)
-    const resolvedTeamInfo = {};  // synthetic teamId -> {enterprise_name, enterprise_id, team_name, team_id}
+    const resolvedTeamIds = {};   // teamId -> real team_id (session cache)
+    const resolvedTeamInfo = {};  // teamId -> {enterprise_name, enterprise_id, team_name, team_id}
     const teamIdLookupInFlight = {};
     const teamIdNotFound = {};     // synthetic teamId -> true when Metabase returned no team_id
+    const teamLookupDone = {};     // teamId -> true once the lookup ran (any outcome) — avoids re-query on re-open
+    const teamIdMismatch = {};     // teamId -> {csvId, fetchedId} when CSV team_id ≠ resolved team_id
 
     // Copy any value to the clipboard (reuses copyTeamId's clipboard + ✓ flash).
     function copyValue(btn) {
@@ -4817,24 +4820,29 @@
         if (!team) return '';
         return resolvedTeamIds[team.teamId] || team.resolvedTeamId || team.teamId || '';
     }
-    // A rooftop needs a lookup only when its id is one the app FABRICATED (because the
-    // CSV had no team_id) AND we have a real enterprise_id AND we haven't resolved it yet.
-    // Synthetic ids are 'csv-<rooftop>' (Upload-CSV path) or 'drive-<rooftop>' (Drive path);
-    // a real team_id from the CSV has neither prefix. Skip the "All Rooftops" aggregate.
+    // A synthetic id = one the app FABRICATED because the CSV had no team_id:
+    // 'csv-<rooftop>' (Upload-CSV path) or 'drive-<rooftop>' (Drive path). A real
+    // team_id from the CSV has neither prefix.
+    function teamIsSyntheticId(team) {
+        const tid = String((team && team.teamId) || '');
+        return tid.startsWith('drive-') || tid.startsWith('csv-');
+    }
+    // Run the Metabase lookup for EVERY team that has a real enterprise_id (v25):
+    //  • synthetic id (no CSV team_id) → adopt the resolved team_id
+    //  • real CSV team_id → VERIFY it (match → show identity; mismatch → warn, keep CSV id)
+    // Skip only the "All Rooftops" aggregate, teams with no enterprise_id, and teams
+    // already processed this session.
     function teamNeedsTeamIdLookup(team) {
         if (!team || !team.teamId) return false;
         const tid = String(team.teamId);
         if (tid === 'csv-all-rooftops') return false;                  // virtual aggregate — skip
-        if (resolvedTeamIds[tid]) return false;
-        const isSynthetic = tid.startsWith('drive-') || tid.startsWith('csv-');
-        if (!isSynthetic) return false;                                // real team_id from CSV → done
+        if (teamLookupDone[tid]) return false;                         // already processed this session
         const eid = String(team.entId || '').trim();
         if (!eid || eid === 'drive-ent-001' || eid === 'csv-ent-001') return false;  // no real enterprise_id → skip
         return true;
     }
-    // Sample up to 5 distinct VINs at random (the Metabase query is slow, and 5 is
-    // plenty for the majority-team_id lookup).
-    const TEAMID_SAMPLE_SIZE = 5;
+    // Sample min(500, all VINs) distinct VINs at random (v27 raised from 100).
+    const TEAMID_SAMPLE_SIZE = 500;
     function sampleVinsForLookup(vins) {
         const uniq = [...new Set((vins || []).map(v => v && v.vin).filter(Boolean))];
         if (!uniq.length) return [];
@@ -4846,62 +4854,116 @@
         }
         return uniq.slice(0, n);
     }
-    // Resolve + apply the real team_id for a rooftop (non-blocking, cached).
+    // Re-apply the cached header UI for a team (strip / warning / nothing) on re-open.
+    function applyTeamIdentityUI(team) {
+        if (!team) return;
+        const tid = team.teamId;
+        const openId = (reviewMode === '1img') ? (currentImg1Team && currentImg1Team.teamId)
+                                               : (currentTeam && currentTeam.teamId);
+        if (openId !== tid) return;   // not the team currently on screen
+        if (resolvedTeamInfo[tid]) {
+            renderReviewTeamId(resolvedTeamInfo[tid].team_id || bqTeamId(team), team.entId);
+            renderTeamMetaStrip(resolvedTeamInfo[tid]);
+            renderTeamIdWarning(null);
+        } else if (teamIdMismatch[tid]) {
+            renderTeamMetaStrip(null);                    // keep the CSV name + team_id chip
+            renderTeamIdWarning(teamIdMismatch[tid]);
+        } else {
+            renderTeamMetaStrip(null);
+            renderTeamIdWarning(null);
+        }
+    }
+    // Header warning pill when the CSV team_id ≠ the resolved team_id.
+    function renderTeamIdWarning(m) {
+        const el = document.getElementById('review-team-warn');
+        if (!el) return;
+        if (!m) { el.classList.add('hidden'); el.innerHTML = ''; return; }
+        el.innerHTML = '⚠ Team ID mismatch — CSV: <b>' + escapeHtml(String(m.csvId))
+                     + '</b> · VINs resolve to: <b>' + escapeHtml(String(m.fetchedId || 'none'))
+                     + '</b> (keeping CSV id)';
+        el.classList.remove('hidden');
+    }
+    // Resolve + verify the team identity from Metabase (non-blocking, cached).
     async function resolveTeamIdForTeam(team) {
+        const tid = team && team.teamId;
+        // Already processed this session → just re-apply the cached UI (no slow re-query).
+        if (tid && teamLookupDone[tid]) {
+            applyTeamIdentityUI(team);
+            if (teamIdNotFound[tid]) promptTeamNotInSpyne(team);
+            return;
+        }
         if (!teamNeedsTeamIdLookup(team)) return;
-        // Already known-missing this session → prompt right away (skip the slow re-query).
-        if (teamIdNotFound[team.teamId]) { promptTeamNotInSpyne(team); return; }
-        if (teamIdLookupInFlight[team.teamId]) return;
-        teamIdLookupInFlight[team.teamId] = true;
+        if (teamIdLookupInFlight[tid]) return;
+        teamIdLookupInFlight[tid] = true;
+        const synthetic = teamIsSyntheticId(team);
         try {
-            const src  = (currentImg1VINs && currentImg1VINs.length) ? currentImg1VINs
-                       : (typeof currentTeamVINs !== 'undefined' && currentTeamVINs && currentTeamVINs.length) ? currentTeamVINs
-                       : [];
-            const vins = sampleVinsForLookup(src);
-            if (!vins.length) return;
-            const reqBody = { action: 'resolveTeamId', enterprise_id: String(team.entId || '').trim(), vins: vins };
+            let reqBody;
+            if (synthetic) {
+                // No CSV team_id → find the team FROM the VINs (VIN-based card 12897).
+                const src  = (currentImg1VINs && currentImg1VINs.length) ? currentImg1VINs
+                           : (typeof currentTeamVINs !== 'undefined' && currentTeamVINs && currentTeamVINs.length) ? currentTeamVINs
+                           : [];
+                const vins = sampleVinsForLookup(src);
+                if (!vins.length) { teamIdLookupInFlight[tid] = false; return; }
+                reqBody = { action: 'resolveTeamId', enterprise_id: String(team.entId || '').trim(), vins: vins };
+            } else {
+                // CSV already has a team_id → look up the names DIRECTLY by that team_id
+                // (fast, exact — no VINs). Server runs an /api/dataset query keyed on team_id.
+                reqBody = { action: 'resolveByTeamId', team_id: String(tid) };
+            }
             console.log('[team_id] request →', reqBody);
-            const res  = await fetch(BQ_WEBAPP_URL, {
-                method: 'POST', redirect: 'follow',
-                body: JSON.stringify(reqBody)
-            });
+            const res  = await fetch(BQ_WEBAPP_URL, { method: 'POST', redirect: 'follow', body: JSON.stringify(reqBody) });
             const raw  = await res.text();
             let data = {}; try { data = JSON.parse(raw); } catch (e) { /* non-JSON */ }
-            console.log('[team_id] response ←', res.status, raw);   // diagnostics: shows exactly what the server said
-            const real = data && data.ok ? String(data.team_id || '').trim() : '';
-            if (real) {
-                resolvedTeamIds[team.teamId] = real;
-                team.resolvedTeamId = real;
-                // Capture the full identity (enterprise + team, id + name) for the copyable strip.
-                const info = {
-                    enterprise_name: String(data.enterprise_name || '').trim(),
-                    enterprise_id:   String(data.enterprise_id   || team.entId || '').trim(),
-                    team_name:       String(data.team_name       || '').trim(),
-                    team_id:         real
-                };
-                resolvedTeamInfo[team.teamId] = info;
-                team.resolvedInfo = info;
-                // Reflect it in the header if this rooftop is still open.
-                if (currentImg1Team && currentImg1Team.teamId === team.teamId) {
-                    renderReviewTeamId(real, team.entId);
-                    renderTeamMetaStrip(info);
-                } else if (currentTeam && currentTeam.teamId === team.teamId) {
-                    renderReviewTeamId(real, team.entId);
-                    renderTeamMetaStrip(info);
+            console.log('[team_id] response ←', res.status, raw);
+            const fetchedId = data && data.ok ? String(data.team_id || '').trim() : '';
+            const info = {
+                enterprise_name: String((data && data.enterprise_name) || '').trim(),
+                enterprise_id:   String((data && data.enterprise_id)   || team.entId || '').trim(),
+                team_name:       String((data && data.team_name)       || '').trim(),
+                team_id:         fetchedId
+            };
+            teamLookupDone[tid] = true;
+
+            if (synthetic) {
+                // No CSV team_id → adopt the resolved one, or prompt "not in Spyne".
+                if (fetchedId) {
+                    resolvedTeamIds[tid] = fetchedId;
+                    team.resolvedTeamId = fetchedId;
+                    resolvedTeamInfo[tid] = info;
+                    team.resolvedInfo = info;
+                    applyTeamIdentityUI(team);
+                    if (typeof bgToast === 'function') bgToast('team_id resolved: ' + fetchedId, 'success');
+                } else {
+                    teamIdNotFound[tid] = true;
+                    promptTeamNotInSpyne(team);
                 }
-                if (typeof bgToast === 'function') bgToast('team_id resolved: ' + real, 'success');
             } else {
-                // No team_id — this rooftop isn't set up in Spyne. Ask the reviewer.
-                teamIdNotFound[team.teamId] = true;
-                promptTeamNotInSpyne(team);
+                // Real CSV team_id → KEEP it; just fetch the OTHER details (enterprise + team
+                // names) to enrich the display. No matching, no warning (Praveen's call).
+                const gotDetails = info.team_name || info.enterprise_name;
+                if (gotDetails) {
+                    const info2 = {
+                        enterprise_name: info.enterprise_name,
+                        enterprise_id:   info.enterprise_id || String(team.entId || ''),
+                        team_name:       info.team_name,
+                        team_id:         String(tid)          // keep the CSV team_id (do NOT adopt fetched)
+                    };
+                    resolvedTeamIds[tid]  = String(tid);       // bqTeamId stays the CSV team_id
+                    resolvedTeamInfo[tid] = info2;
+                    team.resolvedInfo     = info2;
+                    applyTeamIdentityUI(team);
+                    if (typeof bgToast === 'function') bgToast('Team details loaded', 'success');
+                }
+                // else: no other details returned → leave the normal header (rooftop name + team_id chip) as-is.
             }
         } catch (e) {
             console.warn('[team_id] lookup failed', e);
-            // Couldn't reach the lookup — treat as not-found and ask the reviewer.
-            teamIdNotFound[team.teamId] = true;
-            promptTeamNotInSpyne(team);
+            teamLookupDone[tid] = true;
+            // Only the synthetic (no CSV id) case blocks the reviewer; a real id just stays as-is.
+            if (synthetic) { teamIdNotFound[tid] = true; promptTeamNotInSpyne(team); }
         } finally {
-            teamIdLookupInFlight[team.teamId] = false;
+            teamIdLookupInFlight[tid] = false;
         }
     }
     // Go back to the teams list (same as the header "Teams" button).
@@ -5140,7 +5202,7 @@
         document.getElementById('review-team-name').innerText = team.rooftop || team.name || '1st Image Review';
         renderReviewTeamId(bqTeamId(team), team.entId);
         renderEnterpriseMeta(team.teamId);
-        renderTeamMetaStrip(resolvedTeamInfo[team.teamId] || null);   // show cached identity, if any
+        applyTeamIdentityUI(team);   // show cached identity (strip / mismatch warning), if any
         // If this rooftop's CSV had no team_id, resolve the real one from Metabase
         // (sample VINs + enterprise_id) in the background so CSV/BQ get the right id.
         resolveTeamIdForTeam(team);
