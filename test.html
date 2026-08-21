@@ -4396,6 +4396,30 @@
         return 'https://wsrv.nl/?url=' + encodeURIComponent(stripped) + '&w=' + widthPx + '&q=' + quality + '&output=webp';
     }
 
+    // Dealer eProcess (cloudflareimages.dealereprocess.com) hard-blocks BOTH direct
+    // hotlinks AND the wsrv proxy on the CDN URL itself. But each such URL embeds the
+    // TRUE origin as a base64 tail (…-ID<digits>-<base64> → http://images.unitsinventory.com/…).
+    // Decoding that origin and loading it (https-upgraded) is the ONLY path that works on
+    // fresh browsers. Returns the https origin, or null if this isn't a decodable eProcess URL.
+    function decodeDealerEprocessOriginal(url) {
+        if (!url) return null;
+        try {
+            const host = new URL(url).hostname.toLowerCase();
+            if (host.indexOf('dealereprocess') === -1) return null;
+            const seg = url.split('?')[0].split('/').pop() || '';
+            let b64 = null;
+            const m = seg.match(/-ID\d+-(.+)$/);              // cloudflareimages: …-ID<digits>-<base64>
+            if (m) b64 = m[1];
+            else if (/^[A-Za-z0-9+/_=-]{16,}$/.test(seg)) b64 = seg;   // bare base64 segment
+            if (!b64) return null;
+            let s = b64.replace(/-/g, '+').replace(/_/g, '/');
+            while (s.length % 4) s += '=';
+            const dec = atob(s);
+            if (!/^https?:\/\/[^\s]+\.[^\s]+/.test(dec)) return null;  // must be a real URL
+            return dec.replace(/^http:/i, 'https:');          // upgrade to https (mixed-content safe)
+        } catch (e) { return null; }
+    }
+
     function extractSourceUrl(url) {
         if (!url) return url;
         const m = url.match(/media\.spyneai\.com\/unsafe\/[^/]+\/(?:filters:[^/]+\/)?(https?:\/\/.+)/);
@@ -4454,8 +4478,13 @@
 
         let result;
         const srcUrl = extractSourceUrl(originalUrl);
+        const epOrig = decodeDealerEprocessOriginal(srcUrl);
 
-        if (isDealerCdnUrl(srcUrl)) {
+        if (epOrig) {
+            // Dealer eProcess: CDN blocks direct + wsrv. Load the decoded origin,
+            // resized via wsrv (fast thumbnails); direct origin is the fallback.
+            result = wsrvThumbUrl(epOrig, widthPx, quality);
+        } else if (isDealerCdnUrl(srcUrl)) {
             // For hotlink-protected dealer CDNs, use wsrv.nl proxy as primary
             // (bypasses hotlink protection by fetching server-side)
             result = needsProxy(srcUrl) ? wsrvThumbUrl(srcUrl, widthPx, quality) : srcUrl;
@@ -4477,6 +4506,17 @@
         const seen = new Set();
         const chain = [];
         const add = (u) => { if (u && !seen.has(u)) { seen.add(u); chain.push(u); } };
+
+        const epOrig = decodeDealerEprocessOriginal(srcUrl);
+        if (epOrig) {
+            // eProcess cloudflareimages: only the decoded origin works.
+            add(wsrvThumbUrl(epOrig, widthPx, quality));   // resized (proven ✓)
+            add(epOrig);                                    // full-res direct (proven ✓)
+            add(spyneThumbUrl(epOrig, widthPx, quality));   // extra safety via Thumbor
+            // last-ditch: the CDN URL itself (may work off a cached/allowed origin)
+            add(needsProxy(srcUrl) ? wsrvThumbUrl(srcUrl, widthPx, quality) : srcUrl);
+            return chain;
+        }
 
         if (isDealerCdnUrl(srcUrl)) {
             if (needsProxy(srcUrl)) {
