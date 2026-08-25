@@ -919,6 +919,8 @@ const TREND_CAP={day:15,week:6,month:6};
 const TREND_METRICS=[['cnt','Reviews'],['vins','Unique VINs'],['rts','Rooftops'],['ents','Enterprises']];
 const TREND_MLBL={cnt:'reviews',vins:'VINs',rts:'rooftops',ents:'enterprises'};
 let trendMetric='cnt', trendGran='day', trendType='bar';
+let TSEG=new Set(['All']);  // multi-select segments; 'All'=combined total (exclusive), else any of Ent/Mid/SMB/Others
+function activeSegs(){ if(TSEG.has('All')) return ['All']; const a=SEG_ORDER.filter(s=>TSEG.has(s)); return a.length?a:['All']; }
 // ── Issue Trend (CS view): left tabs = All + each issue type; right tabs = day/week/month bucket ──
 let itMetric='All', itGran='day';
 function itBucketKey(d,gran){ if(!d) return null; if(gran==='day') return d; if(gran==='month') return d.slice(0,7); const dt=new Date(d+'T00:00:00'); const day=dt.getDay(); const diff=(day===0?-6:1-day); const mon=new Date(dt); mon.setDate(dt.getDate()+diff); return iso(mon); }
@@ -949,28 +951,32 @@ function trendRows(){ return ((window._trendG||{})[trendGran])||[]; }
 function trendBucketLabel(k){ if(!k) return ''; if(trendGran==='month'){ const mi=parseInt(k.slice(5,7),10)-1; return (MONTHS[mi]||'').slice(0,3)+" '"+k.slice(2,4); } return k.slice(5); }
 // Segments shown side-by-side per bucket
 const SEG_ORDER=['Ent','Mid','SMB','Others'];
-const SEG_COLORS={Ent:'#3b82f6',Mid:'#8b5cf6',SMB:'#10b981',Others:'#f59e0b'};
-// Group per-bucket-per-segment rows into {keys:[...], byKey:{bucket:{Ent:{...},...}}}, capped to the granularity window.
+const SEG_TABS=['All','Ent','Mid','SMB','Others'];
+const SEG_KEYS=['All','Ent','Mid','SMB','Others'];
+const SEG_COLORS={All:'#3b82f6',Ent:'#3b82f6',Mid:'#8b5cf6',SMB:'#10b981',Others:'#f59e0b'};
+function segColor(sg){ return SEG_COLORS[sg]||'#3b82f6'; }
+function segLabel(sg){ return sg==='All'?'All segments':sg; }
+// Group per-bucket-per-segment rows into {keys:[...], byKey:{bucket:{All:{...},Ent:{...},...}}}, capped to the granularity window.
 function trendGroup(rows){
   const byKey={}, keys=[];
-  rows.forEach(r=>{const k=r.bucket; if(!k) return; if(!byKey[k]){byKey[k]={};keys.push(k);} const sg=SEG_ORDER.indexOf(r.seg)>=0?r.seg:'Others'; byKey[k][sg]=r;});
+  rows.forEach(r=>{const k=r.bucket; if(!k) return; if(!byKey[k]){byKey[k]={};keys.push(k);} const sg=SEG_KEYS.indexOf(r.seg)>=0?r.seg:'Others'; byKey[k][sg]=r;});
   keys.sort();
   const cap=TREND_CAP[trendGran]||keys.length;
   const shown=keys.length>cap?keys.slice(keys.length-cap):keys;
   return {keys:shown, byKey};
 }
 function trendLegend(){
-  return `<div class="trend-legend">${SEG_ORDER.map(sg=>`<span class="tl-item"><span class="tl-dot" style="background:${SEG_COLORS[sg]}"></span>${sg}</span>`).join('')}</div>`;
+  return `<div class="trend-legend">${activeSegs().map(sg=>`<span class="tl-item"><span class="tl-dot" style="background:${segColor(sg)}"></span>${segLabel(sg)}</span>`).join('')}</div>`;
 }
 function trendBarsMC(g,metric){
   if(!g.keys.length) return '<div style="color:var(--muted);font-size:12px;padding:70px 20px;text-align:center">No data for this range</div>';
-  const mlbl=TREND_MLBL[metric], H=240;
-  let max=1; g.keys.forEach(k=>SEG_ORDER.forEach(sg=>{const v=N((g.byKey[k][sg]||{})[metric]||0); if(v>max)max=v;}));
+  const segs=activeSegs(), mlbl=TREND_MLBL[metric], H=240, grouped=segs.length>1;
+  let max=1; g.keys.forEach(k=>segs.forEach(sg=>{const v=N((g.byKey[k][sg]||{})[metric]||0); if(v>max)max=v;}));
   const n=g.keys.length, dateStep=n<=16?1:Math.ceil(n/12), clickable=(trendGran==='day');
-  return `<div class="trend-bars trend-grouped" style="height:${H}px">${g.keys.map((k,i)=>{
-    const bars=SEG_ORDER.map(sg=>{const v=N((g.byKey[k][sg]||{})[metric]||0);const h=v>0?Math.max(Math.round((v/max)*(H-30)),3):0;const lbl=v>0?`<div class="tg-val">${abbr(v)}</div>`:'';return `<div class="tg-seg" title="${trendBucketLabel(k)} · ${sg}: ${v.toLocaleString()} ${mlbl}">${lbl}<div class="tg-bar" style="height:${h}px;background:${SEG_COLORS[sg]}"></div></div>`;}).join('');
+  return `<div class="trend-bars ${grouped?'trend-grouped':''}" style="height:${H}px">${g.keys.map((k,i)=>{
+    const bars=segs.map(sg=>{const v=N((g.byKey[k][sg]||{})[metric]||0);const h=v>0?Math.max(Math.round((v/max)*(H-30)),3):0;const lbl=v>0?`<div class="tg-val">${abbr(v)}</div>`:'';return `<div class="tg-seg" title="${trendBucketLabel(k)} · ${segLabel(sg)}: ${v.toLocaleString()} ${mlbl}">${lbl}<div class="tg-bar" style="height:${h}px;background:${segColor(sg)}"></div></div>`;}).join('');
     const dEl=(i%dateStep===0)?`<div class="trend-date">${trendBucketLabel(k)}</div>`:`<div class="trend-date">&nbsp;</div>`;
-    const clk=clickable?` style="cursor:pointer" title="${k} — click for rooftops" onclick="drillDayBreakdown('${k}')"`:'';
+    const clk=clickable?` style="cursor:pointer" onclick="drillDayBreakdown('${k}')"`:'';
     return `<div class="trend-bar-wrap"${clk}><div class="tg-group">${bars}</div>${dEl}</div>`;
   }).join('')}</div>`;
 }
@@ -982,19 +988,19 @@ function smoothPath(pts){
 }
 function trendCurve(g,metric,W){
   if(!g.keys.length) return '<div style="color:var(--muted);font-size:12px;padding:70px 20px;text-align:center">No data for this range</div>';
-  W=Math.max(W||900,320); const H=240, padL=8, padR=8, topY=14, bottom=H-26, mlbl=TREND_MLBL[metric];
+  W=Math.max(W||900,320); const H=240, padL=8, padR=8, topY=14, bottom=H-26, mlbl=TREND_MLBL[metric], segs=activeSegs();
   const keys=g.keys, n=keys.length, clickable=(trendGran==='day');
-  let max=1; keys.forEach(k=>SEG_ORDER.forEach(sg=>{const v=N((g.byKey[k][sg]||{})[metric]||0); if(v>max)max=v;}));
+  let max=1; keys.forEach(k=>segs.forEach(sg=>{const v=N((g.byKey[k][sg]||{})[metric]||0); if(v>max)max=v;}));
   const x=i=> n===1? W/2 : padL + (i*(W-padL-padR)/(n-1));
   const y=v=> bottom - (v/max)*(bottom-topY);
   let grid='';
   for(let j=0;j<=4;j++){const gy=topY+(bottom-topY)*j/4;const gv=Math.round(max*(1-j/4));grid+=`<line x1="${padL}" y1="${gy.toFixed(1)}" x2="${W-padR}" y2="${gy.toFixed(1)}" stroke="var(--border)" stroke-width="1" opacity="0.45"/><text x="${padL}" y="${(gy-3).toFixed(1)}" fill="var(--muted)" font-size="8">${gv.toLocaleString()}</text>`;}
   let series='';
-  SEG_ORDER.forEach(sg=>{
-    const col=SEG_COLORS[sg];
+  segs.forEach(sg=>{
+    const col=segColor(sg);
     const pts=keys.map((k,i)=>[x(i), y(N((g.byKey[k][sg]||{})[metric]||0))]);
     series+=`<path d="${smoothPath(pts)}" fill="none" stroke="${col}" stroke-width="2" vector-effect="non-scaling-stroke"/>`;
-    series+=pts.map((p,i)=>`<circle cx="${p[0].toFixed(1)}" cy="${p[1].toFixed(1)}" r="3" fill="${col}" style="${clickable?'cursor:pointer;':''}stroke:var(--dot-stroke);stroke-width:1.5"${clickable?` onclick="drillDayBreakdown('${keys[i]}')"`:''}><title>${trendBucketLabel(keys[i])} · ${sg}: ${N((g.byKey[keys[i]][sg]||{})[metric]||0).toLocaleString()} ${mlbl}</title></circle>`).join('');
+    series+=pts.map((p,i)=>`<circle cx="${p[0].toFixed(1)}" cy="${p[1].toFixed(1)}" r="3" fill="${col}" style="${clickable?'cursor:pointer;':''}stroke:var(--dot-stroke);stroke-width:1.5"${clickable?` onclick="drillDayBreakdown('${keys[i]}')"`:''}><title>${trendBucketLabel(keys[i])} · ${segLabel(sg)}: ${N((g.byKey[keys[i]][sg]||{})[metric]||0).toLocaleString()} ${mlbl}</title></circle>`).join('');
   });
   const idxs=n<=8?keys.map((_,i)=>i):[0,Math.floor(n/2),n-1];
   const xlabels=[...new Set(idxs)].map(i=>`<text x="${x(i).toFixed(1)}" y="${H-8}" fill="var(--muted)" font-size="8" text-anchor="middle">${trendBucketLabel(keys[i])}</text>`).join('');
@@ -1011,6 +1017,12 @@ function renderTrend(){
 function setTrendMetric(m,btn){ trendMetric=m; document.querySelectorAll('#trend-metric-tabs .trd-tab').forEach(t=>t.classList.remove('active')); if(btn)btn.classList.add('active'); renderTrend(); }
 function setTrendGran(g,btn){ trendGran=g; document.querySelectorAll('#trend-gran-tabs .trd-tab').forEach(t=>t.classList.remove('active')); if(btn)btn.classList.add('active'); renderTrend(); }
 function setTrendType(tp,btn){ trendType=tp; document.querySelectorAll('#trend-type-toggle .trd-type').forEach(t=>t.classList.remove('active')); if(btn)btn.classList.add('active'); renderTrend(); }
+function setTrendSeg(sg,btn){
+  if(sg==='All'){ TSEG=new Set(['All']); }
+  else { TSEG.delete('All'); if(TSEG.has(sg)) TSEG.delete(sg); else TSEG.add(sg); if(!TSEG.size) TSEG=new Set(['All']); }
+  document.querySelectorAll('#trend-seg-tabs .trd-tab').forEach(t=>{ const v=t.getAttribute('data-seg'); t.classList.toggle('active', TSEG.has(v)); });
+  renderTrend();
+}
 window.addEventListener('resize',()=>{ if(window._trendG && document.getElementById('trend-chart')) renderTrend(); });
 
 function hbars(data,colorFn,valFmt){
@@ -1098,8 +1110,11 @@ UNION ALL SELECT 'csit', cs_poc_email, issue_type, NULL,NULL,NULL,NULL, COUNT(*)
 UNION ALL SELECT * FROM (SELECT 'worst', CAST(team_id AS STRING), MAX(enterprise_name), MAX(apld_team_name), MAX(ae_poc_email), MAX(ob_poc_email), MAX(cs_poc_email), COUNTIF(issue_type NOT IN ('OK','Pending')), NULL,NULL,NULL,NULL,NULL,NULL FROM s WHERE enterprise_name IS NOT NULL GROUP BY team_id ORDER BY 8 DESC LIMIT 1)`;
     const TREND = `WITH t AS (SELECT CASE WHEN customer_segment IN ('Ent','Mid','SMB') THEN customer_segment ELSE 'Others' END seg, review_date, vin, COALESCE(NULLIF(team_id,''), rooftop) rt_key, COALESCE(enterprise_name, enterprise) ent_key, issue_type FROM ${SRC} ${WND})
 SELECT 'day' g, CAST(review_date AS STRING) bucket, seg, COUNT(*) cnt, COUNTIF(issue_type NOT IN ('OK','Pending')) iss, COUNT(DISTINCT vin) vins, COUNT(DISTINCT rt_key) rts, COUNT(DISTINCT ent_key) ents FROM t GROUP BY bucket, seg
+UNION ALL SELECT 'day' g, CAST(review_date AS STRING) bucket, 'All' seg, COUNT(*), COUNTIF(issue_type NOT IN ('OK','Pending')), COUNT(DISTINCT vin), COUNT(DISTINCT rt_key), COUNT(DISTINCT ent_key) FROM t GROUP BY bucket
 UNION ALL SELECT 'week' g, FORMAT_DATE('%Y-%m-%d', DATE_TRUNC(review_date, WEEK(MONDAY))) bucket, seg, COUNT(*), COUNTIF(issue_type NOT IN ('OK','Pending')), COUNT(DISTINCT vin), COUNT(DISTINCT rt_key), COUNT(DISTINCT ent_key) FROM t GROUP BY bucket, seg
+UNION ALL SELECT 'week' g, FORMAT_DATE('%Y-%m-%d', DATE_TRUNC(review_date, WEEK(MONDAY))) bucket, 'All' seg, COUNT(*), COUNTIF(issue_type NOT IN ('OK','Pending')), COUNT(DISTINCT vin), COUNT(DISTINCT rt_key), COUNT(DISTINCT ent_key) FROM t GROUP BY bucket
 UNION ALL SELECT 'month' g, FORMAT_DATE('%Y-%m', DATE_TRUNC(review_date, MONTH)) bucket, seg, COUNT(*), COUNTIF(issue_type NOT IN ('OK','Pending')), COUNT(DISTINCT vin), COUNT(DISTINCT rt_key), COUNT(DISTINCT ent_key) FROM t GROUP BY bucket, seg
+UNION ALL SELECT 'month' g, FORMAT_DATE('%Y-%m', DATE_TRUNC(review_date, MONTH)) bucket, 'All' seg, COUNT(*), COUNTIF(issue_type NOT IN ('OK','Pending')), COUNT(DISTINCT vin), COUNT(DISTINCT rt_key), COUNT(DISTINCT ent_key) FROM t GROUP BY bucket
 ORDER BY g, bucket`;
     // TOP Enterprise/Rooftop/CS by ACCURACY on a LATEST-review-per-VIN basis (each VIN counted
     // once, its most recent verdict). Qualify with >=100 latest-review VINs; if none qualify the
@@ -1218,6 +1233,10 @@ ORDER BY g, bucket`;
         <div class="trend-spacer"></div>
         <div class="trend-tabs" id="trend-gran-tabs">${TREND_GRANS.map(r=>`<button class="trd-tab ${trendGran===r[0]?'active':''}" onclick="setTrendGran('${r[0]}',this)">${r[1]}</button>`).join('')}</div>
         <div class="trend-tabs" id="trend-type-toggle">${[['bar','▮ Bars'],['line','〜 Curve']].map(t=>`<button class="trd-type ${trendType===t[0]?'active':''}" onclick="setTrendType('${t[0]}',this)">${t[1]}</button>`).join('')}</div>
+      </div>
+      <div class="trend-controls" style="margin-top:6px">
+        <span style="font-size:10px;color:var(--muted);align-self:center;margin-right:2px;letter-spacing:.04em" title="Pick one or more; All shows the combined total">SEGMENTS</span>
+        <div class="trend-tabs" id="trend-seg-tabs">${SEG_TABS.map(sg=>`<button class="trd-tab ${TSEG.has(sg)?'active':''}" data-seg="${sg}" onclick="setTrendSeg('${sg}',this)">${sg}</button>`).join('')}</div>
       </div>
       <div id="trend-chart"></div>
       <div id="trend-caption" style="font-size:10px;color:var(--muted);margin-top:8px;text-align:right"></div>
