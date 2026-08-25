@@ -925,24 +925,36 @@ function activeSegs(){ if(TSEG.has('All')) return ['All']; const a=SEG_ORDER.fil
 let itMetric='All', itGran='day';
 function itBucketKey(d,gran){ if(!d) return null; if(gran==='day') return d; if(gran==='month') return d.slice(0,7); const dt=new Date(d+'T00:00:00'); const day=dt.getDay(); const diff=(day===0?-6:1-day); const mon=new Date(dt); mon.setDate(dt.getDate()+diff); return iso(mon); }
 function itBucketLabel(k,gran){ if(gran==='day') return k.slice(5); if(gran==='week') return k.slice(5); const mi=parseInt(k.slice(5,7),10)-1; return (MONTHS[mi]||'').slice(0,3)+" '"+k.slice(2,4); }
-function itBars(data){
-  if(!data.length) return '<div style="color:var(--muted);font-size:12px;padding:70px 20px;text-align:center">No issues in this range</div>';
-  const H=240, max=Math.max(...data.map(d=>d.val),1), col=(itMetric==='All')?'var(--issue)':ic(itMetric);
+function itBars(data,pctMode){
+  if(!data.length) return `<div style="color:var(--muted);font-size:12px;padding:70px 20px;text-align:center">${pctMode?'No data in this range':'No issues in this range'}</div>`;
+  const H=240, max=pctMode?100:Math.max(...data.map(d=>d.val),1), col=pctMode?'#10b981':((itMetric==='All')?'var(--issue)':ic(itMetric));
   const n=data.length, dateStep=n<=16?1:Math.ceil(n/12);
-  return `<div class="trend-bars" style="height:${H}px">${data.map((d,i)=>{const h=d.val>0?Math.max(Math.round((d.val/max)*(H-26)),3):0;const dEl=(i%dateStep===0)?`<div class="trend-date">${d.label}</div>`:`<div class="trend-date">&nbsp;</div>`;return `<div class="trend-bar-wrap" title="${d.label}: ${d.val.toLocaleString()} ${itMetric==='All'?'issues':itMetric}"><div class="trend-bar-val">${d.val>0?abbr(d.val):''}</div><div class="trend-bar" style="height:${h}px;background:${col}"></div>${dEl}</div>`;}).join('')}</div>`;
+  return `<div class="trend-bars" style="height:${H}px">${data.map((d,i)=>{const h=d.val>0?Math.max(Math.round((d.val/max)*(H-26)),3):0;const dEl=(i%dateStep===0)?`<div class="trend-date">${d.label}</div>`:`<div class="trend-date">&nbsp;</div>`;const vlbl=pctMode?`${d.val}%`:(d.val>0?abbr(d.val):'');const tip=pctMode?`${d.label}: ${d.val}% accuracy (${N(d.iss).toLocaleString()} issues of ${N(d.tot).toLocaleString()})`:`${d.label}: ${d.val.toLocaleString()} ${itMetric==='All'?'issues':itMetric}`;return `<div class="trend-bar-wrap" title="${tip}"><div class="trend-bar-val">${vlbl}</div><div class="trend-bar" style="height:${h}px;background:${col}"></div>${dEl}</div>`;}).join('')}</div>`;
 }
 function renderIssueTrend(){
   const el=document.getElementById('itrend-chart'); if(!el) return;
+  const lim=itGran==='day'?15:(itGran==='week'?6:6);
+  const cap=document.getElementById('itrend-caption');
+  const unit=itGran==='day'?'day':(itGran==='week'?'week':'month');
+  if(itMetric==='Accuracy'){
+    // Accuracy % per period = 100 − issues/total, using the trend 'All' series (per-bucket totals + issues)
+    const rows=((window._trendG||{})[itGran]||[]).filter(r=>r.seg==='All');
+    const byK={}; rows.forEach(r=>{ byK[r.bucket]=r; });
+    let keys=Object.keys(byK).sort();
+    if(keys.length>lim) keys=keys.slice(keys.length-lim);
+    const data=keys.map(k=>{const r=byK[k]||{};const tot=N(r.cnt),iss=N(r.iss);const acc=tot?Math.round((1-iss/tot)*100):0;return {label:itBucketLabel(k,itGran),val:acc,tot,iss};});
+    el.innerHTML=itBars(data,true);
+    if(cap){ const ti=data.reduce((s,d)=>s+N(d.iss),0), tt=data.reduce((s,d)=>s+N(d.tot),0); const oa=tt?Math.round((1-ti/tt)*100):0; cap.textContent = data.length? `${data.length} ${unit}${data.length>1?'s':''} · ${oa}% accuracy overall` : 'No data in this range'; }
+    return;
+  }
   const rows=window._itrendAll||[];
   const buckets={};
   rows.forEach(r=>{ if(itMetric!=='All' && r.issue_type!==itMetric) return; const k=itBucketKey(r.review_date,itGran); if(!k) return; buckets[k]=(buckets[k]||0)+N(r.cnt); });
   let keys=Object.keys(buckets).sort();
-  const lim=itGran==='day'?15:(itGran==='week'?6:6);
   if(keys.length>lim) keys=keys.slice(keys.length-lim);
   const data=keys.map(k=>({label:itBucketLabel(k,itGran),val:buckets[k]}));
   el.innerHTML=itBars(data);
-  const cap=document.getElementById('itrend-caption');
-  if(cap){ const unit=itGran==='day'?'day':(itGran==='week'?'week':'month'); const tot=data.reduce((s,d)=>s+d.val,0); cap.textContent = data.length? `${data.length} ${unit}${data.length>1?'s':''} · ${tot.toLocaleString()} ${itMetric==='All'?'issues':itMetric} total` : 'No issues in this range'; }
+  if(cap){ const tot=data.reduce((s,d)=>s+d.val,0); cap.textContent = data.length? `${data.length} ${unit}${data.length>1?'s':''} · ${tot.toLocaleString()} ${itMetric==='All'?'issues':itMetric} total` : 'No issues in this range'; }
 }
 function setItMetric(m,btn){ itMetric=m; document.querySelectorAll('#it-metric-tabs .trd-tab').forEach(t=>t.classList.remove('active')); if(btn)btn.classList.add('active'); renderIssueTrend(); }
 function setItGran(g,btn){ itGran=g; document.querySelectorAll('#it-gran-tabs .trd-tab').forEach(t=>t.classList.remove('active')); if(btn)btn.classList.add('active'); renderIssueTrend(); }
@@ -1216,7 +1228,7 @@ ORDER BY g, bucket`;
       </div>
       <div class="chart-card">
         <div class="trend-controls">
-          <div class="trend-tabs" id="it-metric-tabs">${['All',...issTypes].map(m=>`<button class="trd-tab ${itMetric===m?'active':''}" onclick="setItMetric('${(''+m).replace(/'/g,"\\'")}',this)">${m}</button>`).join('')}</div>
+          <div class="trend-tabs" id="it-metric-tabs">${['All',...issTypes,'Accuracy'].map(m=>`<button class="trd-tab ${itMetric===m?'active':''}" onclick="setItMetric('${(''+m).replace(/'/g,"\\'")}',this)">${m}</button>`).join('')}</div>
           <div class="trend-spacer"></div>
           <div class="trend-tabs" id="it-gran-tabs">${[['day','Day on Day'],['week','Week on Week'],['month','Month on Month']].map(t=>`<button class="trd-tab ${itGran===t[0]?'active':''}" onclick="setItGran('${t[0]}',this)">${t[1]}</button>`).join('')}</div>
         </div>
