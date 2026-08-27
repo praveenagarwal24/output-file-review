@@ -1295,16 +1295,10 @@ ORDER BY g, bucket`;
       <div class="kpi view-sec sec-cs" style="--acc:${rovAcc>=90?'#10b981':rovAcc>=70?'#eab308':'#ef4444'}"><div class="kpi-lbl">Rooftop Accuracy</div><div class="kpi-val">${rovAcc}%</div><div class="kpi-sub">${rovClean.toLocaleString()} clean of ${rovTot.toLocaleString()} rooftops</div><div class="kpi-bar"><div class="kpi-bar-fill" style="width:${rovAcc}%"></div></div></div>
       <div class="kpi view-sec sec-cs" style="--acc:#3b82f6"><div class="kpi-lbl">Avg Unique VINs / Rooftop</div><div class="kpi-val">${rovAvgVins.toLocaleString()}</div><div class="kpi-sub">${rovUv.toLocaleString()} unique VINs total</div><div class="kpi-bar"><div class="kpi-bar-fill" style="width:100%"></div></div></div>
     </div>
-    <div class="kpi-grid" style="grid-template-columns:repeat(4,1fr);margin-top:10px">
-      ${topCard('Top Issue · Enterprise', worst?worst.enterprise_name:null, worst?N(worst.issue_cnt):0, '#ef4444')}
-      ${topCard('Top Issue · Rooftop', worst?worst.team_name:null, worst?N(worst.issue_cnt):0, '#f97316')}
-      ${pocCard('POCs · Top Issue Team', worst?worst.ae:null, worst?worst.ob:null, worst?worst.cs:null, '#eab308')}
-      ${topIssuesCard('Top 3 Issues · Type', top3Issues, '#a78bfa')}
-    </div>
 
     <div class="view-sec sec-cs" style="margin-top:22px">
     <div class="sec-label">Issue Trend</div>
-    <div class="it-row" style="display:grid;grid-template-columns:1fr 2fr;gap:10px;align-items:stretch">
+    <div class="it-row" style="display:grid;grid-template-columns:1.1fr 1.9fr;gap:10px;align-items:stretch">
       <div class="chart-card">
         <div class="chart-title">Issue Types · click a row to drill</div>
         <table><thead><tr><th>Issue Type</th><th title="Rooftop-level: rooftops with ≥1 VIN having this issue">Rooftops</th><th title="VIN-level: VIN reviews with this issue">Count</th><th>% Iss</th><th>% VINs</th><th title="Rooftops with this issue ÷ all rooftops reviewed">% Rooftops</th></tr></thead>
