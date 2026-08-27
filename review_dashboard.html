@@ -150,6 +150,9 @@ main{padding:22px 28px;max-width:1440px;margin:0 auto}
 /* team views */
 #main-content.view-cs .sec-review{display:none}
 #main-content.view-review .sec-cs{display:none}
+.rooftop-scope{display:none}
+#main-content.view-rooftop .vin-scope{display:none}
+#main-content.view-rooftop .rooftop-scope{display:block}
 .trend-legend{display:flex;gap:14px;justify-content:center;margin-bottom:10px;flex-wrap:wrap}
 .tl-item{display:flex;align-items:center;gap:5px;font-size:10px;color:var(--muted);font-weight:600}
 .tl-dot{width:9px;height:9px;border-radius:2px;display:inline-block}
@@ -267,6 +270,10 @@ body.locked{overflow:hidden}
   <div class="hdr-right">
     <span id="user-chip"><img id="uc-img" alt=""><span id="uc-email"></span><span class="uc-out" onclick="signOut()">Sign out</span></span>
     <span id="last-updated"></span>
+    <button class="btn" id="access-log-btn" onclick="openAccessLogs()" title="Who logged in and when">
+      <svg width="12" height="12" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.2" d="M12 8v4l3 2M12 3a9 9 0 100 18 9 9 0 000-18z"/></svg>
+      Access Logs
+    </button>
     <button class="btn icon-btn" id="theme-btn" onclick="toggleTheme()" title="Toggle light / dark"></button>
     <button class="btn" id="refresh-btn" onclick="loadAll()">
       <svg width="12" height="12" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M4 4v5h5M20 20v-5h-5M4 9a9 9 0 0115.17-3.36M20 15a9 9 0 01-15.17 3.36"/></svg>
@@ -278,6 +285,7 @@ body.locked{overflow:hidden}
 <div id="seg-tabs">
   <button class="seg-tab active" onclick="setView('cs',this)">Customer Success</button>
   <button class="seg-tab" onclick="setView('review',this)">Review Team</button>
+  <button class="seg-tab" onclick="setView('rooftop',this)">Rooftop</button>
 </div>
 
 <div id="filter-bar">
@@ -428,7 +436,17 @@ function onGoogleSignIn(resp){
   const chip=document.getElementById('user-chip');
   if(chip){ chip.style.display='flex'; document.getElementById('uc-email').textContent=AUTH_EMAIL; const im=document.getElementById('uc-img'); if(p.picture){ im.src=p.picture; im.style.display=''; } else { im.style.display='none'; } }
   hideAuthGate();
+  logAccess('login');
   if(!_booted){ _booted=true; loadFilterOptions(); loadAll(); } else { loadAll(); }
+}
+// Fire-and-forget access logging → Apps Script → BigQuery access_log table.
+let _lastActLog=0;
+function logAccess(event){
+  if(!AUTH_TOKEN) return;
+  if(event==='open'){ const now=Date.now(); if(now-_lastActLog<300000) return; _lastActLog=now; }  // throttle 'open' to 1/5min
+  try{
+    fetch(BQ,{method:'POST',headers:{'Content-Type':'text/plain;charset=utf-8'},body:JSON.stringify({action:'logAccess',idToken:AUTH_TOKEN,event:event,ua:navigator.userAgent}),redirect:'follow',keepalive:true}).catch(()=>{});
+  }catch(e){}
 }
 function onAuthFail(err){
   AUTH_TOKEN=null;
@@ -648,6 +666,36 @@ async function runQueries(sqls){
 
 // ── Drill-down modal ──
 function closeModal(){ document.getElementById('modal-ov').classList.remove('open'); }
+
+// ── Access Logs (who logged in / last active) ──
+function uaShort(ua){ ua=ua||''; let br='Browser'; if(/Edg\//.test(ua))br='Edge'; else if(/OPR\//.test(ua))br='Opera'; else if(/Chrome\//.test(ua))br='Chrome'; else if(/Firefox\//.test(ua))br='Firefox'; else if(/Safari\//.test(ua))br='Safari'; let os='Device'; if(/Windows/.test(ua))os='Windows'; else if(/Macintosh|Mac OS/.test(ua))os='Mac'; else if(/Android/.test(ua))os='Android'; else if(/iPhone|iPad|iOS/.test(ua))os='iOS'; else if(/Linux/.test(ua))os='Linux'; return br+' · '+os; }
+async function openAccessLogs(){
+  document.getElementById('modal-title').textContent='Access Logs';
+  document.getElementById('modal-body').innerHTML='<div class="loading-overlay" style="min-height:180px"><div class="spinner"></div><div style="color:var(--muted);font-size:12px">Loading access logs…</div></div>';
+  document.getElementById('modal-ov').classList.add('open');
+  try{
+    const res=await fetch(BQ,{method:'POST',headers:{'Content-Type':'text/plain;charset=utf-8'},body:JSON.stringify({action:'accessLog',idToken:AUTH_TOKEN}),redirect:'follow'});
+    const j=await res.json();
+    if(!j||!j.ok) throw new Error((j&&j.error)||'Failed to load');
+    renderAccessLogs(j.summary||[], j.events||[]);
+  }catch(e){ document.getElementById('modal-body').innerHTML='<div class="err">⚠ '+((e&&e.message)||'Failed to load')+'</div>'; }
+}
+function renderAccessLogs(summary, events){
+  window._alSummaryCsv=summary.map(r=>({User:r.email||'',['First seen (IST)']:r.first_seen||'',['Last active (IST)']:r.last_active||'',['Last login (IST)']:r.last_login||'',Logins:N(r.logins),Events:N(r.events)}));
+  window._alEventsCsv=events.map(r=>({['Time (IST)']:r.ts||'',User:r.email||'',Event:r.event||'',Device:uaShort(r.user_agent),['User agent']:r.user_agent||''}));
+  const empty=!summary.length&&!events.length;
+  if(empty){ document.getElementById('modal-body').innerHTML='<div style="padding:34px;text-align:center;color:var(--muted);font-size:12px">No access recorded yet. Logins will appear here once users sign in after this update is deployed.</div>'; return; }
+  const sRows=summary.map(r=>{const isLogin=(r.event||'')==='login';return `<tr><td>${(r.email||'').split('@')[0]}<br><span style="font-size:8px;color:var(--muted)">${r.email||''}</span></td><td style="font-size:9px;color:var(--muted)">${r.first_seen||'—'}</td><td style="font-weight:600">${r.last_active||'—'}</td><td style="font-size:9px;color:var(--muted)">${r.last_login||'—'}</td><td style="text-align:center">${N(r.logins).toLocaleString()}</td><td style="text-align:center">${N(r.events).toLocaleString()}</td></tr>`;}).join('');
+  const eRows=events.map(r=>`<tr><td style="font-size:9px;white-space:nowrap">${r.ts||''}</td><td style="font-size:10px">${(r.email||'').split('@')[0]}</td><td style="text-align:center"><span class="badge ${r.event==='login'?'b-ok':''}" style="font-size:8px">${r.event||''}</span></td><td style="font-size:9px;color:var(--muted)">${uaShort(r.user_agent)}</td></tr>`).join('');
+  document.getElementById('modal-body').innerHTML=`
+    <div style="padding:14px 16px">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px"><div class="chart-title">By user · ${summary.length} user${summary.length===1?'':'s'}</div><button class="btn" onclick="dlCSV(window._alSummaryCsv,'access_by_user.csv')">⬇ CSV</button></div>
+      <div style="max-height:34vh;overflow:auto"><table><thead><tr><th>User</th><th>First seen</th><th>Last active</th><th>Last login</th><th style="text-align:center">Logins</th><th style="text-align:center">Events</th></tr></thead><tbody>${sRows}</tbody></table></div>
+      <div style="display:flex;justify-content:space-between;align-items:center;margin:16px 0 6px"><div class="chart-title">Event log · latest ${events.length}</div><button class="btn" onclick="dlCSV(window._alEventsCsv,'access_events.csv')">⬇ CSV</button></div>
+      <div style="max-height:34vh;overflow:auto"><table><thead><tr><th>Time (IST)</th><th>User</th><th style="text-align:center">Event</th><th>Device</th></tr></thead><tbody>${eRows}</tbody></table></div>
+      <div style="font-size:9px;color:var(--muted);margin-top:10px">Times shown in IST. “login” = a Google sign-in; “open” = dashboard opened/refreshed (throttled to once per 5 min per session).</div>
+    </div>`;
+}
 document.addEventListener('keydown',e=>{ if(e.key==='Escape') closeModal(); });
 
 function renderDrillTable(cols,rows){
@@ -957,6 +1005,30 @@ function renderIssueTrend(){
   if(cap){ const tot=data.reduce((s,d)=>s+d.val,0); cap.textContent = data.length? `${data.length} ${unit}${data.length>1?'s':''} · ${tot.toLocaleString()} ${itMetric==='All'?'issues':itMetric} total` : 'No issues in this range'; }
 }
 function setItMetric(m,btn){ itMetric=m; document.querySelectorAll('#it-metric-tabs .trd-tab').forEach(t=>t.classList.remove('active')); if(btn)btn.classList.add('active'); renderIssueTrend(); }
+
+// ── Rooftop Accuracy Trend (rooftop view): clean-rooftop % per day/week/month ──
+let rttGran='day';
+function rttLabel(k){ if(!k) return ''; if(rttGran==='month'){ const mi=parseInt(k.slice(5,7),10)-1; return (MONTHS[mi]||'').slice(0,3)+" '"+k.slice(2,4);} return k.slice(5); }
+function renderRooftopTrend(){
+  const el=document.getElementById('rtrend-chart'); if(!el) return;
+  const rows=((window._trendG||{})[rttGran]||[]).filter(r=>r.seg==='All');
+  const byK={}; rows.forEach(r=>{ byK[r.bucket]=r; });
+  let keys=Object.keys(byK).sort();
+  const lim=rttGran==='day'?15:6;
+  if(keys.length>lim) keys=keys.slice(keys.length-lim);
+  const data=keys.map(k=>{const r=byK[k]||{};const tot=N(r.rts),fl=N(r.frts);const clean=Math.max(tot-fl,0);const acc=tot?Math.round(clean/tot*100):0;return {label:rttLabel(k),val:acc,tot,fl,clean};});
+  const H=220,max=100,col='#10b981',n=data.length,dateStep=n<=16?1:Math.ceil(n/12);
+  el.innerHTML=data.length?`<div class="trend-bars" style="height:${H}px">${data.map((d,i)=>{const h=Math.max(Math.round((d.val/max)*(H-26)),3);const dEl=(i%dateStep===0)?`<div class="trend-date">${d.label}</div>`:`<div class="trend-date">&nbsp;</div>`;return `<div class="trend-bar-wrap" title="${d.label}: ${d.val}% clean — ${d.clean} of ${d.tot} rooftops clean, ${d.fl} flagged"><div class="trend-bar-val">${d.val}%</div><div class="trend-bar" style="height:${h}px;background:${col}"></div>${dEl}</div>`;}).join('')}</div>`:'<div style="color:var(--muted);font-size:12px;padding:70px 20px;text-align:center">No data in this range</div>';
+  const cap=document.getElementById('rtrend-caption');
+  if(cap){ const unit=rttGran==='day'?'day':(rttGran==='week'?'week':'month'); const avg=data.length?Math.round(data.reduce((s,d)=>s+d.val,0)/data.length):0; cap.textContent=data.length?`${data.length} ${unit}${data.length>1?'s':''} · avg ${avg}% clean per ${unit}`:'No data in this range'; }
+}
+function setRttGran(g,btn){ rttGran=g; document.querySelectorAll('#rtrend-gran-tabs .trd-tab').forEach(t=>t.classList.remove('active')); if(btn)btn.classList.add('active'); renderRooftopTrend(); }
+async function drillIssueRooftops(issue){
+  openDrillLoading('Issue · '+issue+' — loading affected rooftops…');
+  try{ const rows=await _breakdownFetch('issue_type', issue);
+    renderBreakdown('Issue · '+issue+' · rooftops affected ('+rows.length.toLocaleString()+')', rows, window._issTypes||[]);
+  }catch(e){ drillError(e); }
+}
 function setItGran(g,btn){ itGran=g; document.querySelectorAll('#it-gran-tabs .trd-tab').forEach(t=>t.classList.remove('active')); if(btn)btn.classList.add('active'); renderIssueTrend(); }
 
 function trendRows(){ return ((window._trendG||{})[trendGran])||[]; }
@@ -1098,6 +1170,7 @@ async function loadFilterOptions(){
 
 async function loadAll(){
   if(!AUTH_TOKEN){ showAuthGate(''); return; }
+  logAccess('open');
   const btn=document.getElementById('refresh-btn'); btn.classList.add('loading');
   const mc=document.getElementById('main-content');
   mc.innerHTML='<div class="loading-overlay"><div class="spinner"></div><div style="color:var(--muted);font-size:12px">Querying BigQuery…</div></div>';
@@ -1117,16 +1190,18 @@ UNION ALL SELECT 'rt', s.rt_key, ANY_VALUE(s.enterprise), ANY_VALUE(s.enterprise
 UNION ALL SELECT 'rtit', rt_key, issue_type, NULL,NULL,NULL,NULL, COUNT(*), NULL,NULL,NULL,NULL,NULL,NULL FROM s WHERE issue_type NOT IN ('OK','Pending') GROUP BY rt_key, issue_type
 UNION ALL SELECT 'es', s.enterprise_name, ANY_VALUE(s.cs_poc_email), CAST(MAX(s.review_date) AS STRING), NULL,NULL,NULL, COUNT(DISTINCT s.rt_key), COUNT(DISTINCT s.vin), COUNT(*), COUNTIF(s.issue_type='OK' OR s.issue_type='Pending'), COUNTIF(s.issue_type NOT IN ('OK','Pending')), NULL,NULL FROM s WHERE s.enterprise_name IS NOT NULL GROUP BY s.enterprise_name
 UNION ALL SELECT 'esit', enterprise_name, issue_type, NULL,NULL,NULL,NULL, COUNT(*), NULL,NULL,NULL,NULL,NULL,NULL FROM s WHERE enterprise_name IS NOT NULL AND issue_type NOT IN ('OK','Pending') GROUP BY enterprise_name, issue_type
+UNION ALL SELECT 'rov', NULL,NULL,NULL,NULL,NULL,NULL, COUNT(DISTINCT rt_key), COUNT(DISTINCT IF(issue_type NOT IN ('OK','Pending'), rt_key, NULL)), COUNT(DISTINCT COALESCE(enterprise_name, enterprise)), COUNT(*), COUNT(DISTINCT vin), NULL,NULL FROM s
+UNION ALL SELECT 'rfiss', issue_type, NULL,NULL,NULL,NULL,NULL, COUNT(DISTINCT rt_key), NULL,NULL,NULL,NULL,NULL,NULL FROM s WHERE issue_type NOT IN ('OK','Pending') GROUP BY issue_type
 UNION ALL SELECT 'cs', cs_poc_email, NULL,NULL,NULL,NULL, CAST(MAX(review_date) AS STRING), COUNT(DISTINCT rt_key), COUNT(DISTINCT vin), COUNT(*), COUNTIF(issue_type='OK' OR issue_type='Pending'), COUNTIF(issue_type NOT IN ('OK','Pending')), NULL,NULL FROM s GROUP BY cs_poc_email
 UNION ALL SELECT 'csit', cs_poc_email, issue_type, NULL,NULL,NULL,NULL, COUNT(*), NULL,NULL,NULL,NULL,NULL,NULL FROM s WHERE issue_type NOT IN ('OK','Pending') GROUP BY cs_poc_email, issue_type
 UNION ALL SELECT * FROM (SELECT 'worst', CAST(team_id AS STRING), MAX(enterprise_name), MAX(apld_team_name), MAX(ae_poc_email), MAX(ob_poc_email), MAX(cs_poc_email), COUNTIF(issue_type NOT IN ('OK','Pending')), NULL,NULL,NULL,NULL,NULL,NULL FROM s WHERE enterprise_name IS NOT NULL GROUP BY team_id ORDER BY 8 DESC LIMIT 1)`;
     const TREND = `WITH t AS (SELECT CASE WHEN customer_segment IN ('Ent','Mid','SMB') THEN customer_segment ELSE 'Others' END seg, review_date, vin, COALESCE(NULLIF(team_id,''), rooftop) rt_key, COALESCE(enterprise_name, enterprise) ent_key, issue_type FROM ${SRC} ${WND})
-SELECT 'day' g, CAST(review_date AS STRING) bucket, seg, COUNT(*) cnt, COUNTIF(issue_type NOT IN ('OK','Pending')) iss, COUNT(DISTINCT vin) vins, COUNT(DISTINCT rt_key) rts, COUNT(DISTINCT ent_key) ents FROM t GROUP BY bucket, seg
-UNION ALL SELECT 'day' g, CAST(review_date AS STRING) bucket, 'All' seg, COUNT(*), COUNTIF(issue_type NOT IN ('OK','Pending')), COUNT(DISTINCT vin), COUNT(DISTINCT rt_key), COUNT(DISTINCT ent_key) FROM t GROUP BY bucket
-UNION ALL SELECT 'week' g, FORMAT_DATE('%Y-%m-%d', DATE_TRUNC(review_date, WEEK(MONDAY))) bucket, seg, COUNT(*), COUNTIF(issue_type NOT IN ('OK','Pending')), COUNT(DISTINCT vin), COUNT(DISTINCT rt_key), COUNT(DISTINCT ent_key) FROM t GROUP BY bucket, seg
-UNION ALL SELECT 'week' g, FORMAT_DATE('%Y-%m-%d', DATE_TRUNC(review_date, WEEK(MONDAY))) bucket, 'All' seg, COUNT(*), COUNTIF(issue_type NOT IN ('OK','Pending')), COUNT(DISTINCT vin), COUNT(DISTINCT rt_key), COUNT(DISTINCT ent_key) FROM t GROUP BY bucket
-UNION ALL SELECT 'month' g, FORMAT_DATE('%Y-%m', DATE_TRUNC(review_date, MONTH)) bucket, seg, COUNT(*), COUNTIF(issue_type NOT IN ('OK','Pending')), COUNT(DISTINCT vin), COUNT(DISTINCT rt_key), COUNT(DISTINCT ent_key) FROM t GROUP BY bucket, seg
-UNION ALL SELECT 'month' g, FORMAT_DATE('%Y-%m', DATE_TRUNC(review_date, MONTH)) bucket, 'All' seg, COUNT(*), COUNTIF(issue_type NOT IN ('OK','Pending')), COUNT(DISTINCT vin), COUNT(DISTINCT rt_key), COUNT(DISTINCT ent_key) FROM t GROUP BY bucket
+SELECT 'day' g, CAST(review_date AS STRING) bucket, seg, COUNT(*) cnt, COUNTIF(issue_type NOT IN ('OK','Pending')) iss, COUNT(DISTINCT vin) vins, COUNT(DISTINCT rt_key) rts, COUNT(DISTINCT ent_key) ents, COUNT(DISTINCT IF(issue_type NOT IN ('OK','Pending'), rt_key, NULL)) frts FROM t GROUP BY bucket, seg
+UNION ALL SELECT 'day' g, CAST(review_date AS STRING) bucket, 'All' seg, COUNT(*), COUNTIF(issue_type NOT IN ('OK','Pending')), COUNT(DISTINCT vin), COUNT(DISTINCT rt_key), COUNT(DISTINCT ent_key), COUNT(DISTINCT IF(issue_type NOT IN ('OK','Pending'), rt_key, NULL)) FROM t GROUP BY bucket
+UNION ALL SELECT 'week' g, FORMAT_DATE('%Y-%m-%d', DATE_TRUNC(review_date, WEEK(MONDAY))) bucket, seg, COUNT(*), COUNTIF(issue_type NOT IN ('OK','Pending')), COUNT(DISTINCT vin), COUNT(DISTINCT rt_key), COUNT(DISTINCT ent_key), COUNT(DISTINCT IF(issue_type NOT IN ('OK','Pending'), rt_key, NULL)) FROM t GROUP BY bucket, seg
+UNION ALL SELECT 'week' g, FORMAT_DATE('%Y-%m-%d', DATE_TRUNC(review_date, WEEK(MONDAY))) bucket, 'All' seg, COUNT(*), COUNTIF(issue_type NOT IN ('OK','Pending')), COUNT(DISTINCT vin), COUNT(DISTINCT rt_key), COUNT(DISTINCT ent_key), COUNT(DISTINCT IF(issue_type NOT IN ('OK','Pending'), rt_key, NULL)) FROM t GROUP BY bucket
+UNION ALL SELECT 'month' g, FORMAT_DATE('%Y-%m', DATE_TRUNC(review_date, MONTH)) bucket, seg, COUNT(*), COUNTIF(issue_type NOT IN ('OK','Pending')), COUNT(DISTINCT vin), COUNT(DISTINCT rt_key), COUNT(DISTINCT ent_key), COUNT(DISTINCT IF(issue_type NOT IN ('OK','Pending'), rt_key, NULL)) FROM t GROUP BY bucket, seg
+UNION ALL SELECT 'month' g, FORMAT_DATE('%Y-%m', DATE_TRUNC(review_date, MONTH)) bucket, 'All' seg, COUNT(*), COUNTIF(issue_type NOT IN ('OK','Pending')), COUNT(DISTINCT vin), COUNT(DISTINCT rt_key), COUNT(DISTINCT ent_key), COUNT(DISTINCT IF(issue_type NOT IN ('OK','Pending'), rt_key, NULL)) FROM t GROUP BY bucket
 ORDER BY g, bucket`;
     // TOP Enterprise/Rooftop/CS by ACCURACY on a LATEST-review-per-VIN basis (each VIN counted
     // once, its most recent verdict). Qualify with >=100 latest-review VINs; if none qualify the
@@ -1201,7 +1276,17 @@ ORDER BY g, bucket`;
     window._issTypes=issTypes;  // issue-type column set, reused by reviewer/CS-POC breakdown drills
     DRILL={rtR,issR};  // aggregate cache for instant tile drills (VIN drills query on demand)
 
+    // ── Rooftop-level rollup (a rooftop is 'flagged' if ≥1 of its VINs has an issue) ──
+    const _rov=_pick('rov')[0]||{};
+    const rovTot=N(_rov.n1), rovFlag=N(_rov.n2), rovClean=Math.max(rovTot-rovFlag,0), rovEnt=N(_rov.n3), rovRev=N(_rov.n4), rovUv=N(_rov.n5);
+    const rovAcc=rovTot?Math.round(rovClean/rovTot*100):0;
+    const rovFlagPct=rovTot?Math.round(rovFlag/rovTot*100):0;
+    const rovAvgVins=rovTot?Math.round(rovUv/rovTot):0;
+    const rfissR=_pick('rfiss').map(r=>({issue_type:r.s1,rooftops:r.n1})).sort((a,b)=>N(b.rooftops)-N(a.rooftops));
+    window._rfissCsv=rfissR.map((r,i)=>({'#':i+1,'Issue Type':r.issue_type||'','Rooftops Affected':N(r.rooftops),'% of Rooftops':(rovTot?Math.round(N(r.rooftops)/rovTot*100):0)+'%'}));
+
     mc.innerHTML=`
+    <div class="vin-scope">
     <div class="sec-label">Overview</div>
     <div class="kpi-grid">
       <div class="kpi clickable" onclick="drill('vins')" style="--acc:#3b82f6"><div class="kpi-lbl">Total VINs</div><div class="kpi-val">${total.toLocaleString()}</div><div class="kpi-sub">${ov.rev_cnt||0} reviewers</div><div class="kpi-bar"><div class="kpi-bar-fill" style="width:100%"></div></div></div>
@@ -1297,12 +1382,46 @@ ORDER BY g, bucket`;
         <tfoot><tr><td style="font-weight:700">Total</td><td style="text-align:center;font-weight:700" title="Distinct rooftops reviewed — matches Overview">${N(ov.rt_cnt).toLocaleString()}</td><td style="text-align:center;font-weight:700" title="Distinct VINs reviewed — matches Overview (a VIN reviewed by 2 reviewers counts once)">${N(ov.vin_cnt).toLocaleString()}</td><td style="text-align:center;font-weight:700">${rvTot.total.toLocaleString()}</td><td style="text-align:center;font-weight:700">${rvTot.ok.toLocaleString()}</td>${issTypes.map(it=>`<td style="text-align:center;font-weight:700;color:var(--issue)">${rvTot.by[it]||''}</td>`).join('')}<td style="text-align:center;font-weight:700">${rvTot.iss.toLocaleString()}</td><td style="text-align:center;font-weight:700;color:${rvTacc>=90?'#10b981':rvTacc>=70?'#eab308':'#f97316'}">${rvTacc}%</td><td></td></tr></tfoot></table>
         </div>
       </div>
+    </div>
+    </div>
+
+    <div class="rooftop-scope">
+    <div class="sec-label">Rooftop Overview</div>
+    <div style="font-size:10px;color:var(--muted);margin:-4px 0 8px">Metrics rolled up to the rooftop as the unit. A rooftop is <b>flagged</b> if ≥1 of its VINs has an issue; <b>clean</b> means zero issues. Respects the filters above.</div>
+    <div class="kpi-grid">
+      <div class="kpi" style="--acc:#8b5cf6"><div class="kpi-lbl">Rooftops Reviewed</div><div class="kpi-val">${rovTot.toLocaleString()}</div><div class="kpi-sub">distinct rooftops</div><div class="kpi-bar"><div class="kpi-bar-fill" style="width:100%"></div></div></div>
+      <div class="kpi" style="--acc:#10b981"><div class="kpi-lbl">Clean Rooftops</div><div class="kpi-val">${rovClean.toLocaleString()}</div><div class="kpi-sub">zero issues</div><div class="kpi-bar"><div class="kpi-bar-fill" style="width:${rovAcc}%"></div></div></div>
+      <div class="kpi" style="--acc:#f97316"><div class="kpi-lbl">Flagged Rooftops</div><div class="kpi-val">${rovFlag.toLocaleString()}</div><div class="kpi-sub">≥1 issue · ${rovFlagPct}% of rooftops</div><div class="kpi-bar"><div class="kpi-bar-fill" style="width:${rovFlagPct}%"></div></div></div>
+      <div class="kpi" style="--acc:${rovAcc>=90?'#10b981':rovAcc>=70?'#eab308':'#ef4444'}"><div class="kpi-lbl">Rooftop Accuracy</div><div class="kpi-val">${rovAcc}%</div><div class="kpi-sub">${rovClean.toLocaleString()} clean of ${rovTot.toLocaleString()}</div><div class="kpi-bar"><div class="kpi-bar-fill" style="width:${rovAcc}%"></div></div></div>
+      <div class="kpi" style="--acc:#06b6d4"><div class="kpi-lbl">Enterprises Reviewed</div><div class="kpi-val">${rovEnt.toLocaleString()}</div><div class="kpi-sub">distinct enterprises</div><div class="kpi-bar"><div class="kpi-bar-fill" style="width:100%"></div></div></div>
+      <div class="kpi" style="--acc:#3b82f6"><div class="kpi-lbl">Avg Unique VINs / Rooftop</div><div class="kpi-val">${rovAvgVins.toLocaleString()}</div><div class="kpi-sub">${rovUv.toLocaleString()} unique VINs total</div><div class="kpi-bar"><div class="kpi-bar-fill" style="width:100%"></div></div></div>
+    </div>
+
+    <div class="sec-label">Rooftop Issue Types</div>
+    <div class="tbl-card"><div class="tbl-head-bar" style="display:flex;justify-content:space-between;align-items:center"><div class="chart-title">Issues by rooftops affected · click a row for the rooftop list</div><button class="btn" onclick="dlCSV(window._rfissCsv,'rooftop_issue_types.csv')">⬇ CSV</button></div>
+      <div class="rt-scroll">
+      <table><thead><tr><th>#</th><th>Issue Type</th><th style="text-align:center">Rooftops Affected</th><th style="text-align:center">% of Rooftops</th><th style="width:130px"></th></tr></thead>
+      <tbody>${rfissR.length?rfissR.map((r,i)=>{const p=rovTot?Math.round(N(r.rooftops)/rovTot*100):0;return `<tr style="cursor:pointer" onclick="drillIssueRooftops('${(r.issue_type||'').replace(/'/g,"\\'")}')"><td style="color:var(--muted)">${i+1}</td><td><span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:${ic(r.issue_type)};margin-right:7px"></span>${r.issue_type} <span style="color:var(--muted);font-size:9px">⤢</span></td><td style="text-align:center"><b>${N(r.rooftops).toLocaleString()}</b></td><td style="text-align:center">${p}%</td><td><div class="kpi-bar"><div class="kpi-bar-fill" style="width:${p}%;background:${ic(r.issue_type)}"></div></div></td></tr>`;}).join(''):`<tr><td colspan="5" style="color:var(--muted);text-align:center;padding:16px">No flagged rooftops for the current filters</td></tr>`}</tbody>
+      <tfoot><tr><td></td><td style="font-weight:700">Flagged rooftops (any issue)</td><td style="text-align:center;font-weight:700">${rovFlag.toLocaleString()}</td><td style="text-align:center;font-weight:700">${rovFlagPct}%</td><td></td></tr></tfoot></table>
+      </div>
+    </div>
+
+    <div class="sec-label">Rooftop Accuracy Trend</div>
+    <div class="chart-card">
+      <div class="trend-controls">
+        <div class="chart-title" style="flex:1">Clean-rooftop % per period</div>
+        <div class="trend-tabs" id="rtrend-gran-tabs">${[['day','Day on Day'],['week','Week on Week'],['month','Month on Month']].map(t=>`<button class="trd-tab ${rttGran===t[0]?'active':''}" onclick="setRttGran('${t[0]}',this)">${t[1]}</button>`).join('')}</div>
+      </div>
+      <div id="rtrend-chart"></div>
+      <div id="rtrend-caption" style="font-size:10px;color:var(--muted);margin-top:8px;text-align:right"></div>
+    </div>
     </div>`;
 
     document.getElementById('last-updated').textContent='Updated '+new Date().toLocaleTimeString();
     enableSort(mc);  // make all rendered tables sortable
     renderTrend();   // draw the interactive daily trend
     renderIssueTrend(); // draw the Issue Trend (CS view)
+    renderRooftopTrend(); // draw the rooftop accuracy trend (Rooftop view)
   }catch(e){ mc.innerHTML=`<div class="err">⚠ ${e.message}</div>`; }
   btn.classList.remove('loading');
 }
