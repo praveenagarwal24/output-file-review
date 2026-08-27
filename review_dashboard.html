@@ -150,9 +150,6 @@ main{padding:22px 28px;max-width:1440px;margin:0 auto}
 /* team views */
 #main-content.view-cs .sec-review{display:none}
 #main-content.view-review .sec-cs{display:none}
-.rooftop-scope{display:none}
-#main-content.view-rooftop .vin-scope{display:none}
-#main-content.view-rooftop .rooftop-scope{display:block}
 .trend-legend{display:flex;gap:14px;justify-content:center;margin-bottom:10px;flex-wrap:wrap}
 .tl-item{display:flex;align-items:center;gap:5px;font-size:10px;color:var(--muted);font-weight:600}
 .tl-dot{width:9px;height:9px;border-radius:2px;display:inline-block}
@@ -285,7 +282,6 @@ body.locked{overflow:hidden}
 <div id="seg-tabs">
   <button class="seg-tab active" onclick="setView('cs',this)">Customer Success</button>
   <button class="seg-tab" onclick="setView('review',this)">Review Team</button>
-  <button class="seg-tab" onclick="setView('rooftop',this)">Rooftop</button>
 </div>
 
 <div id="filter-bar">
@@ -1286,7 +1282,6 @@ ORDER BY g, bucket`;
     window._rfissCsv=rfissR.map((r,i)=>({'#':i+1,'Issue Type':r.issue_type||'','Rooftops Affected':N(r.rooftops),'% of Rooftops':(rovTot?Math.round(N(r.rooftops)/rovTot*100):0)+'%'}));
 
     mc.innerHTML=`
-    <div class="vin-scope">
     <div class="sec-label">Overview</div>
     <div class="kpi-grid">
       <div class="kpi clickable" onclick="drill('vins')" style="--acc:#3b82f6"><div class="kpi-lbl">Total VINs</div><div class="kpi-val">${total.toLocaleString()}</div><div class="kpi-sub">${ov.rev_cnt||0} reviewers</div><div class="kpi-bar"><div class="kpi-bar-fill" style="width:100%"></div></div></div>
@@ -1383,9 +1378,8 @@ ORDER BY g, bucket`;
         </div>
       </div>
     </div>
-    </div>
 
-    <div class="rooftop-scope">
+    <div class="view-sec sec-cs">
     <div class="sec-label">Rooftop Overview</div>
     <div style="font-size:10px;color:var(--muted);margin:-4px 0 8px">Metrics rolled up to the rooftop as the unit. A rooftop is <b>flagged</b> if ≥1 of its VINs has an issue; <b>clean</b> means zero issues. Respects the filters above.</div>
     <div class="kpi-grid">
