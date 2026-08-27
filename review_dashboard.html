@@ -943,7 +943,7 @@ let DRILL=null;  // in-memory data for instant drill-downs
 // shows the Reviewer Stats section. Shared sections (Overview, Trend, Issues, Rooftop Summary)
 // appear in both. Pure show/hide via a class on #main-content — no re-query.
 let viewMode='cs';
-function setView(v,btn){ viewMode=v; const mc=document.getElementById('main-content'); if(mc){ mc.classList.remove('view-cs','view-review'); mc.classList.add('view-'+v); } document.querySelectorAll('#seg-tabs .seg-tab').forEach(t=>t.classList.remove('active')); if(btn) btn.classList.add('active'); }
+function setView(v,btn){ viewMode=v; const mc=document.getElementById('main-content'); if(mc){ mc.classList.remove('view-cs','view-review','view-rooftop'); mc.classList.add('view-'+v); } document.querySelectorAll('#seg-tabs .seg-tab').forEach(t=>t.classList.remove('active')); if(btn) btn.classList.add('active'); }
 
 function donut(data,size=120){
   const total=data.reduce((s,d)=>s+d.v,0);
