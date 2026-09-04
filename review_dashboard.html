@@ -271,6 +271,10 @@ body.locked{overflow:hidden}
       <svg width="12" height="12" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.2" d="M12 8v4l3 2M12 3a9 9 0 100 18 9 9 0 000-18z"/></svg>
       Access Logs
     </button>
+    <button class="btn" id="data-csv-btn" onclick="exportFilteredCSV()" title="Download the current filtered data as CSV (row-level; split into 50k-row lots)">
+      <svg width="12" height="12" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.2" d="M12 3v11m0 0l-4-4m4 4l4-4M5 21h14"/></svg>
+      Data CSV
+    </button>
     <button class="btn icon-btn" id="theme-btn" onclick="toggleTheme()" title="Toggle light / dark"></button>
     <button class="btn" id="refresh-btn" onclick="loadAll()">
       <svg width="12" height="12" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M4 4v5h5M20 20v-5h-5M4 9a9 9 0 0115.17-3.36M20 15a9 9 0 01-15.17 3.36"/></svg>
@@ -748,6 +752,40 @@ function copyTbl(btn){ if(!_drillRows||!_drillCols)return; const h=_drillCols.ma
 function downloadCSV(){ if(!_drillRows||!_drillCols)return; const esc=s=>{s=(s==null?'':''+s);return /[",\n]/.test(s)?'"'+s.replace(/"/g,'""')+'"':s;}; const csv=[_drillCols.map(c=>esc(c[1])).join(',')].concat(_drillRows.map(r=>_drillCols.map(c=>esc(r[c[0]])).join(','))).join('\n'); const a=document.createElement('a'); a.href=URL.createObjectURL(new Blob([csv],{type:'text/csv'})); a.download='vin_list.csv'; a.click(); setTimeout(()=>URL.revokeObjectURL(a.href),1000); }
 
 function dlCSV(rows,filename){ if(!rows||!rows.length)return; const cols=Object.keys(rows[0]); const esc=s=>{s=(s==null?'':''+s);return /[",\n]/.test(s)?'"'+s.replace(/"/g,'""')+'"':s;}; const csv=[cols.map(esc).join(',')].concat(rows.map(r=>cols.map(c=>esc(r[c])).join(','))).join('\n'); const a=document.createElement('a'); a.href=URL.createObjectURL(new Blob([csv],{type:'text/csv'})); a.download=filename; a.click(); setTimeout(()=>URL.revokeObjectURL(a.href),1000); }
+
+// ── Row-level export of the current filtered data → CSV, split into 50k-row lots ──
+// Columns: Enterprise ID, Enterprise Name, Rooftop ID (team_id), Rooftop Name, VIN, Issue Marked.
+// Fetched in safe 10k pages (LIMIT/OFFSET, stable ORDER BY) and buffered into 50k lots.
+async function exportFilteredCSV(){
+  if(!AUTH_TOKEN){ showAuthGate(''); return; }
+  const W=buildWhere();
+  const rtName=`CASE WHEN NULLIF(team_id,'') IS NOT NULL THEN COALESCE(NULLIF(apld_team_name,''), NULLIF(rooftop,'')) ELSE COALESCE(NULLIF(rooftop,''), NULLIF(apld_team_name,'')) END`;
+  const cols=`enterprise_id AS enterprise_id, enterprise_name AS enterprise_name, team_id AS rooftop_id, ${rtName} AS rooftop_name, vin AS vin, issue_type AS issue_marked`;
+  const FETCH=10000, LOT=50000;
+  const ov=document.getElementById('modal-ov'), mb=document.getElementById('modal-body');
+  document.getElementById('modal-title').textContent='Export Filtered Data · CSV';
+  ov.classList.add('open');
+  const setMsg=h=>{ mb.innerHTML='<div style="padding:24px 20px;font-size:12px;line-height:1.75;text-align:center">'+h+'</div>'; };
+  let lotNum=0;
+  const writeLot=rows=>{ lotNum++; const mapped=rows.map(r=>({'Enterprise ID':r.enterprise_id||'','Enterprise Name':r.enterprise_name||'','Rooftop ID':r.rooftop_id||'','Rooftop Name':r.rooftop_name||'','VIN':r.vin||'','Issue Marked':r.issue_marked||''})); dlCSV(mapped,`review_data_lot_${lotNum}.csv`); };
+  const spin='<div class="spinner" style="margin:0 auto 12px"></div>';
+  setMsg(spin+'Preparing export — applying current filters…');
+  try{
+    let off=0, buf=[], total=0;
+    while(true){
+      const sql=`SELECT ${cols} FROM ${SRC} ${W} ORDER BY enterprise_id, team_id, vin, issue_type, reviewed_at LIMIT ${FETCH} OFFSET ${off}`;
+      const [rows]=await runQueries([sql]);
+      total+=rows.length; buf=buf.concat(rows);
+      while(buf.length>=LOT){ writeLot(buf.splice(0,LOT)); setMsg(spin+'Downloaded '+lotNum+' lot'+(lotNum>1?'s':'')+' · fetched '+total.toLocaleString()+' rows…'); await new Promise(r=>setTimeout(r,500)); }
+      if(rows.length<FETCH) break;
+      off+=FETCH;
+      setMsg(spin+'Fetched '+total.toLocaleString()+' rows…'+(lotNum?(' '+lotNum+' lot'+(lotNum>1?'s':'')+' downloaded.'):''));
+    }
+    if(buf.length) writeLot(buf);
+    if(total===0){ setMsg('No rows match the current filters.'); return; }
+    setMsg('✅ Export complete — <b>'+total.toLocaleString()+'</b> rows in <b>'+lotNum+'</b> lot'+(lotNum>1?'s':'')+' (up to 50,000 rows each).<br><br>Files: <code>review_data_lot_1.csv</code>'+(lotNum>1?(' … <code>review_data_lot_'+lotNum+'.csv</code>'):'')+'<br><br><span style="color:var(--muted)">If your browser only saved the first file, allow multiple downloads for this site and run it again.</span>');
+  }catch(e){ mb.innerHTML='<div class="err" style="margin:16px">⚠ '+((e&&e.message)||'Export failed')+'</div>'; }
+}
 function downloadRooftopCSV(){ dlCSV(window._rtCsv,'rooftop_summary.csv'); }
 function downloadEnterpriseCSV(){ dlCSV(window._esCsv,'enterprise_summary.csv'); }
 function downloadReviewerCSV(){ dlCSV(window._rvCsv,'reviewer_stats.csv'); }
