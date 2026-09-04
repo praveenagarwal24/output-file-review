@@ -267,11 +267,11 @@ body.locked{overflow:hidden}
   <div class="hdr-right">
     <span id="user-chip"><img id="uc-img" alt=""><span id="uc-email"></span><span class="uc-out" onclick="signOut()">Sign out</span></span>
     <span id="last-updated"></span>
-    <button class="btn" id="access-log-btn" onclick="openAccessLogs()" title="Who logged in and when">
+    <button class="btn" id="access-log-btn" onclick="openAccessLogs()" title="Who logged in and when (admin only)" style="display:none">
       <svg width="12" height="12" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.2" d="M12 8v4l3 2M12 3a9 9 0 100 18 9 9 0 000-18z"/></svg>
       Access Logs
     </button>
-    <button class="btn" id="data-csv-btn" onclick="exportFilteredCSV()" title="Download the current filtered data as CSV (row-level; split into 50k-row lots)">
+    <button class="btn" id="data-csv-btn" onclick="exportFilteredCSV()" title="Download the current filtered data as CSV (admin only; row-level; split into 50k-row lots)" style="display:none">
       <svg width="12" height="12" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.2" d="M12 3v11m0 0l-4-4m4 4l4-4M5 21h14"/></svg>
       Data CSV
     </button>
@@ -419,6 +419,10 @@ const AUTH_ALLOWED = new Set([
   'praveenagarwal24@gmail.com',
   'dhruv.kumar@spyne.co.in'
 ]);
+// Admin-only features (Data CSV export, Access Logs). Add more admin emails here if needed.
+const ADMIN_EMAILS = new Set(['praveen@spyne.ai']);
+function isAdmin(){ return ADMIN_EMAILS.has((AUTH_EMAIL||'').toLowerCase()); }
+function applyAdminUI(){ const show=isAdmin()?'':'none'; const a=document.getElementById('access-log-btn'), c=document.getElementById('data-csv-btn'); if(a) a.style.display=show; if(c) c.style.display=show; }
 let AUTH_TOKEN=null, AUTH_EMAIL=null, _booted=false;
 function _decodeJwt(t){ try{ return JSON.parse(decodeURIComponent(atob(t.split('.')[1].replace(/-/g,'+').replace(/_/g,'/')).split('').map(c=>'%'+('00'+c.charCodeAt(0).toString(16)).slice(-2)).join(''))); }catch(e){ return {}; } }
 function _isAuthErr(m){ return /not authoriz|unauthor|invalid token|no token|expired/i.test(m||''); }
@@ -436,6 +440,7 @@ function onGoogleSignIn(resp){
   const chip=document.getElementById('user-chip');
   if(chip){ chip.style.display='flex'; document.getElementById('uc-email').textContent=AUTH_EMAIL; const im=document.getElementById('uc-img'); if(p.picture){ im.src=p.picture; im.style.display=''; } else { im.style.display='none'; } }
   hideAuthGate();
+  applyAdminUI();  // reveal Data CSV / Access Logs only for admin
   logAccess('login');
   if(!_booted){ _booted=true; loadFilterOptions(); loadAll(); } else { loadAll(); }
 }
@@ -670,6 +675,7 @@ function closeModal(){ document.getElementById('modal-ov').classList.remove('ope
 // ── Access Logs (who logged in / last active) ──
 function uaShort(ua){ ua=ua||''; let br='Browser'; if(/Edg\//.test(ua))br='Edge'; else if(/OPR\//.test(ua))br='Opera'; else if(/Chrome\//.test(ua))br='Chrome'; else if(/Firefox\//.test(ua))br='Firefox'; else if(/Safari\//.test(ua))br='Safari'; let os='Device'; if(/Windows/.test(ua))os='Windows'; else if(/Macintosh|Mac OS/.test(ua))os='Mac'; else if(/Android/.test(ua))os='Android'; else if(/iPhone|iPad|iOS/.test(ua))os='iOS'; else if(/Linux/.test(ua))os='Linux'; return br+' · '+os; }
 async function openAccessLogs(){
+  if(!isAdmin()){ return; }  // admin-only
   document.getElementById('modal-title').textContent='Access Logs';
   document.getElementById('modal-body').innerHTML='<div class="loading-overlay" style="min-height:180px"><div class="spinner"></div><div style="color:var(--muted);font-size:12px">Loading access logs…</div></div>';
   document.getElementById('modal-ov').classList.add('open');
@@ -758,6 +764,7 @@ function dlCSV(rows,filename){ if(!rows||!rows.length)return; const cols=Object.
 // Fetched in safe 10k pages (LIMIT/OFFSET, stable ORDER BY) and buffered into 50k lots.
 async function exportFilteredCSV(){
   if(!AUTH_TOKEN){ showAuthGate(''); return; }
+  if(!isAdmin()){ return; }  // admin-only
   const W=buildWhere();
   const rtName=`CASE WHEN NULLIF(team_id,'') IS NOT NULL THEN COALESCE(NULLIF(apld_team_name,''), NULLIF(rooftop,'')) ELSE COALESCE(NULLIF(rooftop,''), NULLIF(apld_team_name,'')) END`;
   const cols=`enterprise_id AS enterprise_id, enterprise_name AS enterprise_name, team_id AS rooftop_id, ${rtName} AS rooftop_name, vin AS vin, issue_type AS issue_marked`;
