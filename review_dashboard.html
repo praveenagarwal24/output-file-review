@@ -767,14 +767,14 @@ async function exportFilteredCSV(){
   if(!isAdmin()){ return; }  // admin-only
   const W=buildWhere();
   const rtName=`CASE WHEN NULLIF(team_id,'') IS NOT NULL THEN COALESCE(NULLIF(apld_team_name,''), NULLIF(rooftop,'')) ELSE COALESCE(NULLIF(rooftop,''), NULLIF(apld_team_name,'')) END`;
-  const cols=`enterprise_id AS enterprise_id, enterprise_name AS enterprise_name, team_id AS rooftop_id, ${rtName} AS rooftop_name, vin AS vin, issue_type AS issue_marked`;
+  const cols=`enterprise_id AS enterprise_id, enterprise_name AS enterprise_name, team_id AS rooftop_id, ${rtName} AS rooftop_name, customer_segment AS customer_segment, vin AS vin, issue_type AS issue_marked`;
   const FETCH=10000, LOT=50000;
   const ov=document.getElementById('modal-ov'), mb=document.getElementById('modal-body');
   document.getElementById('modal-title').textContent='Export Filtered Data · CSV';
   ov.classList.add('open');
   const setMsg=h=>{ mb.innerHTML='<div style="padding:24px 20px;font-size:12px;line-height:1.75;text-align:center">'+h+'</div>'; };
   let lotNum=0;
-  const writeLot=rows=>{ lotNum++; const mapped=rows.map(r=>({'Enterprise ID':r.enterprise_id||'','Enterprise Name':r.enterprise_name||'','Rooftop ID':r.rooftop_id||'','Rooftop Name':r.rooftop_name||'','VIN':r.vin||'','Issue Marked':r.issue_marked||''})); dlCSV(mapped,`review_data_lot_${lotNum}.csv`); };
+  const writeLot=rows=>{ lotNum++; const mapped=rows.map(r=>({'Enterprise ID':r.enterprise_id||'','Enterprise Name':r.enterprise_name||'','Rooftop ID':r.rooftop_id||'','Rooftop Name':r.rooftop_name||'','Customer Segment':r.customer_segment||'','VIN':r.vin||'','Issue Marked':r.issue_marked||''})); dlCSV(mapped,`review_data_lot_${lotNum}.csv`); };
   const spin='<div class="spinner" style="margin:0 auto 12px"></div>';
   setMsg(spin+'Preparing export — applying current filters…');
   try{
