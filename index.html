@@ -262,6 +262,8 @@
         .tcb-vin:hover  { background: #1d4ed8; color: #fff; }
         .tcb-img  { background: #d1fae5; color: #047857; }
         .tcb-img:hover  { background: #047857; color: #fff; }
+        .tcb-spin { background: #ede9fe; color: #6d28d9; }
+        .tcb-spin:hover { background: #6d28d9; color: #fff; }
 
         .stat-card {
             background: white; border: 1px solid #e2e8f0; border-radius: 10px;
@@ -511,6 +513,9 @@
                     <span id="dashboard-lot-tag" class="hidden bg-amber-100 px-3 py-0.5 rounded-full text-[11px] font-bold text-amber-700"></span>
                     <button onclick="showPage('page-login')" class="bg-blue-800 text-white text-[10px] px-2 py-0.5 rounded-md font-bold hover:bg-blue-900 transition flex items-center space-x-1">
                         <span>← Change ID</span>
+                    </button>
+                    <button id="dash-spin-btn" onclick="openSpinReview({mode:'all'})" class="hidden bg-violet-600 text-white text-[10px] px-2 py-0.5 rounded-md font-bold hover:bg-violet-700 transition items-center space-x-1">
+                        <span>&#9673; 360 Spin Review</span>
                     </button>
                 </div>
                 <div class="relative">
@@ -1080,6 +1085,7 @@
     const DRIVE_API_KEY = 'AIzaSyBbMmcng4HhumcoPqwBrW4hQa9r_C8c0Hs';
     const AUTH_ALLOWED_EMAILS = new Set([
         'praveen@spyne.ai',
+        'sumit.rana@spyne.ai',
         'kishor@spyne.ai',
         'ajay.devrani@spyne.co.in',
         'raj.tripathi@spyne.ai',
@@ -1283,7 +1289,11 @@
         vin:        9,   // J: VIN  ← always col J regardless of source schema
         imageUrls:  10,  // K: Image URLs ← always col K regardless of source schema
         rooftop:    11,  // L: Rooftop / dealer name (optional, from CSV)
-        condition:  12   // M: Condition (new/used, optional, from CSV)
+        condition:  12,  // M: Condition (new/used, optional, from CSV)
+        spinUrl:      13,  // N: 360 spin URL (optional)
+        spinState:    14,  // O: spin state — approved / rejected / missing (optional)
+        spinCatalog:  15,  // P: catalog_url (optional)
+        spinProvider: 16   // Q: spin_provider (optional)
     };
 
     // =========================================================================
@@ -1813,10 +1823,21 @@
 
             const condition = (r[C.condition] || '').trim();
             const rooftopName = (r[C.rooftop] || '').trim() || t.rooftop || '';
-            if (!t.vins.has(vin)) t.vins.set(vin, { urls: [], condition: '', rooftop: '' });
+            if (!t.vins.has(vin)) t.vins.set(vin, { urls: [], condition: '', rooftop: '',
+                spinUrl: '', spinState: '', spinCatalog: '', spinProvider: '' });
             const entry = t.vins.get(vin);
             if (!entry.condition && condition) entry.condition = condition;
             if (!entry.rooftop && rooftopName) entry.rooftop = rooftopName;
+            // 360-spin fields (present only when the feed carried spin columns)
+            const rSpinUrl   = (r[C.spinUrl]   || '').trim();
+            const rSpinState = (r[C.spinState] || '').trim();
+            if (rSpinUrl && (!entry.spinUrl || entry.spinState !== 'approved')) {
+                entry.spinUrl = rSpinUrl; entry.spinState = 'approved';
+            } else if (rSpinState && rSpinState !== 'missing' && (!entry.spinState || entry.spinState === 'missing')) {
+                entry.spinState = rSpinState;
+            }
+            if (!entry.spinCatalog  && (r[C.spinCatalog]  || '').trim()) entry.spinCatalog  = (r[C.spinCatalog]  || '').trim();
+            if (!entry.spinProvider && (r[C.spinProvider] || '').trim()) entry.spinProvider = (r[C.spinProvider] || '').trim();
             const arr = entry.urls;
 
             // For CSV mode rows, URLs are pipe-OR-comma separated (splitUrls handles both) —
@@ -1846,9 +1867,12 @@
         teamsList  = [];
         vinsByTeam = new Map();
         for (const [teamId, t] of teamAgg.entries()) {
-            let imageCount = 0;
-            for (const entry of t.vins.values()) imageCount += (entry.urls || entry).length;
-            teamsList.push({ teamId, name: t.name, rooftop: t.rooftop || '', entId: t.entId || '', vinCount: t.vins.size, imageCount });
+            let imageCount = 0, spinCount = 0;
+            for (const entry of t.vins.values()) {
+                imageCount += (entry.urls || entry).length;
+                if (entry && entry.spinState && entry.spinState !== 'missing') spinCount++;
+            }
+            teamsList.push({ teamId, name: t.name, rooftop: t.rooftop || '', entId: t.entId || '', vinCount: t.vins.size, imageCount, spinCount });
             vinsByTeam.set(teamId, t.vins);
         }
         teamsList.sort((a, b) => a.name.localeCompare(b.name));
@@ -1859,9 +1883,54 @@
     // Split a pipe-or-comma separated URL string into an array of clean URLs
     function splitUrls(raw) {
         if (!raw) return [];
-        // Try pipe first (most common), then comma
-        const sep = raw.includes('|') ? '|' : ',';
-        return raw.split(sep).map(u => u.trim()).filter(Boolean);
+        raw = String(raw).trim();
+        // Pipe-separated (most common) → split on pipe.
+        if (raw.includes('|')) return raw.split('|').map(u => u.trim()).filter(Boolean);
+        // Otherwise split ONLY on a comma that starts a NEW url (comma followed by http(s)://),
+        // so a single URL containing literal commas in its path stays intact — e.g. Dealer
+        // eProcess: .../Used-2025-Kia-K4-EXwSmartCruiseControl,RearviewCamera,SmartKey&...
+        // (Splitting on every comma shredded one URL into broken fragments → blank previews.)
+        return raw.split(/\s*,\s*(?=https?:\/\/)/i).map(u => u.trim()).filter(Boolean);
+    }
+
+    // ── 360 spin helpers ─────────────────────────────────────────────────────
+    // Build a live Spyne spin URL from a media id (same params as the standalone
+    // 360-spin reviewer). Used when the feed carries spin_id / media_id but no spin_url.
+    function buildSpyneSpinUrl(id) {
+        if (!id) return '';
+        return 'https://assets.spyne.ai/360?version=v3&source=website&isScript=true&mediaId='
+             + encodeURIComponent(id)
+             + '&template=t2&ext360=1&catalog=2&isMob=false&hotspot=false';
+    }
+    // Decide a row's spin state from what the feed gives us:
+    //   approved — a live spin is available (explicit live state, or a spin URL present)
+    //   rejected — a spin id / catalog exists but no live spin
+    //   missing  — no spin reference at all
+    function classifySpin(o) {
+        const st = String(o.state || '').toLowerCase();
+        const live = st === 'spin_live' || st === 'live' || st === 'ok';
+        // Live state → approved if there's any spin reference to play (URL, or an id we build from).
+        if (live) return (o.spinUrl || o.spinId) ? 'approved' : 'missing';
+        // An explicit non-live state → rejected when a spin reference exists.
+        if (st)   return (o.spinUrl || o.spinId || o.catalog) ? 'rejected' : 'missing';
+        // No state given: trust a spin_url as live; an id/catalog alone stays rejected.
+        if (o.spinUrl) return 'approved';
+        if (o.spinId || o.catalog) return 'rejected';
+        return 'missing';
+    }
+    // Given the raw spin cells for a row, resolve the fields we store per-VIN.
+    function resolveSpin(spinUrlRaw, spinIdRaw, stateRaw, catalogRaw, providerRaw) {
+        const o = { spinUrl: String(spinUrlRaw || '').trim(),
+                    spinId:  String(spinIdRaw  || '').trim(),
+                    state:   String(stateRaw   || '').trim(),
+                    catalog: String(catalogRaw || '').trim(),
+                    provider:String(providerRaw|| '').trim() };
+        const kind = classifySpin(o);
+        // Only an approved row gets a playable URL built; rejected/missing never preview.
+        let url = o.spinUrl;
+        if (kind === 'approved' && !url && o.spinId) url = buildSpyneSpinUrl(o.spinId);
+        if (kind !== 'approved') url = '';
+        return { spinUrl: url, spinState: kind, spinCatalog: o.catalog, spinProvider: o.provider };
     }
 
     // =========================================================================
@@ -1985,6 +2054,12 @@
                 const teamIdCol = hLower.findIndex(h =>
                     h === 'team_id' || h === 'teamid' || h === 'team id'
                 );
+                // 360-spin columns (all optional) — a single CSV can carry image + spin.
+                const spinUrlCol   = hLower.findIndex(h => h === 'spin_url' || h === 'spinurl' || h === 'spin url' || h === '360_url' || h === 'spin');
+                const spinIdCol    = hLower.findIndex(h => h === 'spin_id' || h === 'spinid' || h === 'media_id' || h === 'mediaid');
+                const spinStateCol = hLower.findIndex(h => h === 'media_state' || h === 'spin_state' || h === 'spinstate');
+                const spinCatCol   = hLower.findIndex(h => h === 'catalog_url' || h === 'catalogurl' || h === 'catalog');
+                const spinProvCol  = hLower.findIndex(h => h === 'spin_provider' || h === 'provider');
 
                 if (vinCol === -1) { showError('CSV must have a VIN column.'); return; }
                 if (imgCol === -1) { showError('CSV must have an image URL column (e.g. Image URLs, photos, media).'); return; }
@@ -2011,12 +2086,29 @@
                     const key = vin + '|~|' + rooftop;
                     const csvTeamId = teamIdCol       >= 0 ? String(r[teamIdCol]       || '').trim() : '';
                     const csvEntId  = enterpriseIdCol >= 0 ? String(r[enterpriseIdCol] || '').trim() : '';
-                    if (!vinMap.has(key)) vinMap.set(key, { vin, rooftop, condition, csvTeamId, csvEntId, urls: new Set() });
+                    // 360-spin fields for this row (empty when the CSV has no spin columns)
+                    const spin = resolveSpin(
+                        spinUrlCol   >= 0 ? r[spinUrlCol]   : '',
+                        spinIdCol    >= 0 ? r[spinIdCol]    : '',
+                        spinStateCol >= 0 ? r[spinStateCol] : '',
+                        spinCatCol   >= 0 ? r[spinCatCol]   : '',
+                        spinProvCol  >= 0 ? r[spinProvCol]  : ''
+                    );
+                    if (!vinMap.has(key)) vinMap.set(key, { vin, rooftop, condition, csvTeamId, csvEntId, urls: new Set(),
+                        spinUrl: '', spinState: '', spinCatalog: '', spinProvider: '' });
                     const entry = vinMap.get(key);
                     if (imgRaw) splitUrls(imgRaw).forEach(u => { if (u) entry.urls.add(u); });
                     if (!entry.condition && condition) entry.condition = condition;
                     if (!entry.csvTeamId && csvTeamId) entry.csvTeamId = csvTeamId;
                     if (!entry.csvEntId  && csvEntId)  entry.csvEntId  = csvEntId;
+                    // First real spin wins; a later 'approved' upgrades a 'missing'/'rejected'.
+                    if (spin.spinUrl && (!entry.spinUrl || entry.spinState !== 'approved')) {
+                        entry.spinUrl = spin.spinUrl; entry.spinState = 'approved';
+                    } else if (spin.spinState !== 'missing' && (!entry.spinState || entry.spinState === 'missing')) {
+                        entry.spinState = spin.spinState;
+                    }
+                    if (!entry.spinCatalog  && spin.spinCatalog)  entry.spinCatalog  = spin.spinCatalog;
+                    if (!entry.spinProvider && spin.spinProvider) entry.spinProvider = spin.spinProvider;
                 });
 
                 setParseProgress(70, 'Building rows…');
@@ -2032,7 +2124,8 @@
                     syntheticRows.push([
                         vin, teamId, entId, enterpriseName,
                         '', '', '1', '', '',
-                        vin, imgUrls, rooftop, condition
+                        vin, imgUrls, rooftop, condition,
+                        data.spinUrl || '', data.spinState || '', data.spinCatalog || '', data.spinProvider || ''
                     ]);
                 }
 
@@ -2689,6 +2782,12 @@
             h === 'enterprise_id' || h === 'enterpriseid' || h === 'enterprise id');
         const teamIdCol = hLower.findIndex(h =>
             h === 'team_id' || h === 'teamid' || h === 'team id');
+        // 360-spin columns (all optional)
+        const spinUrlCol   = hLower.findIndex(h => h === 'spin_url' || h === 'spinurl' || h === 'spin url' || h === '360_url' || h === 'spin');
+        const spinIdCol    = hLower.findIndex(h => h === 'spin_id' || h === 'spinid' || h === 'media_id' || h === 'mediaid');
+        const spinStateCol = hLower.findIndex(h => h === 'media_state' || h === 'spin_state' || h === 'spinstate');
+        const spinCatCol   = hLower.findIndex(h => h === 'catalog_url' || h === 'catalogurl' || h === 'catalog');
+        const spinProvCol  = hLower.findIndex(h => h === 'spin_provider' || h === 'provider');
 
         if (vinCol === -1) throw new Error('no VIN column');
         if (imgCol === -1) throw new Error('no image-URL column');
@@ -2705,13 +2804,25 @@
             const condition = conditionCol >= 0 ? String(r[conditionCol] || '').trim() : '';
             const csvTeamId = teamIdCol       >= 0 ? String(r[teamIdCol]       || '').trim() : '';
             const csvEntId  = enterpriseIdCol >= 0 ? String(r[enterpriseIdCol] || '').trim() : '';
-            if (!vinMap.has(vin)) vinMap.set(vin, { vin, rooftop, condition, csvTeamId, csvEntId, urls: new Set() });
+            const spin = resolveSpin(
+                spinUrlCol   >= 0 ? r[spinUrlCol]   : '', spinIdCol   >= 0 ? r[spinIdCol]   : '',
+                spinStateCol >= 0 ? r[spinStateCol] : '', spinCatCol  >= 0 ? r[spinCatCol]  : '',
+                spinProvCol  >= 0 ? r[spinProvCol]  : '');
+            if (!vinMap.has(vin)) vinMap.set(vin, { vin, rooftop, condition, csvTeamId, csvEntId, urls: new Set(),
+                spinUrl: '', spinState: '', spinCatalog: '', spinProvider: '' });
             const e = vinMap.get(vin);
             if (imgRaw) splitUrls(imgRaw).forEach(u => { if (u) e.urls.add(u); });
             if (!e.condition && condition) e.condition = condition;
             if (!e.rooftop   && rooftop)   e.rooftop   = rooftop;
             if (!e.csvTeamId && csvTeamId) e.csvTeamId = csvTeamId;
             if (!e.csvEntId  && csvEntId)  e.csvEntId  = csvEntId;
+            if (spin.spinUrl && (!e.spinUrl || e.spinState !== 'approved')) {
+                e.spinUrl = spin.spinUrl; e.spinState = 'approved';
+            } else if (spin.spinState !== 'missing' && (!e.spinState || e.spinState === 'missing')) {
+                e.spinState = spin.spinState;
+            }
+            if (!e.spinCatalog  && spin.spinCatalog)  e.spinCatalog  = spin.spinCatalog;
+            if (!e.spinProvider && spin.spinProvider) e.spinProvider = spin.spinProvider;
         });
 
         const rows = [];
@@ -2724,7 +2835,8 @@
             const imgUrls = [...d.urls].join('|');
             // Col D (enterprise_name) left blank so buildTeamIndex keeps every file.
             // Col A (name) = rooftop name so the team label shows the rooftop.
-            rows.push([ rooftopName, teamId, eId, '', '', '', '1', '', '', d.vin, imgUrls, rooftopName, d.condition ]);
+            rows.push([ rooftopName, teamId, eId, '', '', '', '1', '', '', d.vin, imgUrls, rooftopName, d.condition,
+                        d.spinUrl || '', d.spinState || '', d.spinCatalog || '', d.spinProvider || '' ]);
         }
         return { rows, rooftopName: rooftopFallback, entId };
     }
@@ -3872,7 +3984,7 @@
             if (currentTeam) {
                 const teamVins = vinsByTeam.get(currentTeam.teamId);
                 if (teamVins) {
-                    currentTeamVINs = [...teamVins.entries()].map(([key, entry]) => { const vin = key.includes('|~|') ? key.split('|~|')[0] : key; return { vin, urls: Array.isArray(entry) ? entry : (entry.urls||[]), rooftop: Array.isArray(entry) ? '' : (entry.rooftop||''), condition: Array.isArray(entry) ? '' : (entry.condition||'') }; });
+                    currentTeamVINs = [...teamVins.entries()].map(([key, entry]) => { const vin = key.includes('|~|') ? key.split('|~|')[0] : key; return { vin, urls: Array.isArray(entry) ? entry : (entry.urls||[]), rooftop: Array.isArray(entry) ? '' : (entry.rooftop||''), condition: Array.isArray(entry) ? '' : (entry.condition||''), spinUrl: Array.isArray(entry) ? '' : (entry.spinUrl||''), spinState: Array.isArray(entry) ? '' : (entry.spinState||''), spinCatalog: Array.isArray(entry) ? '' : (entry.spinCatalog||'') }; });
                     renderVINSidebar();
                     updateProgressBadge();
                 }
@@ -4045,6 +4157,12 @@
     function renderDashboard() {
         const grid  = document.getElementById('dealer-grid');
         const empty = document.getElementById('dealer-empty');
+        // Show the top-level "360 Spin Review" button only when some team has spins.
+        try {
+            const anySpin = teamsList.some(t => t.spinCount > 0);
+            const dsb = document.getElementById('dash-spin-btn');
+            if (dsb) { dsb.classList.toggle('hidden', !anySpin); dsb.classList.toggle('inline-flex', anySpin); }
+        } catch (e) {}
         document.getElementById('current-enterprise-tag').innerText = selectedEnterprise;
         document.getElementById('enterprise-id-tag').innerText = selectedEnterpriseId || '';
         // Lot chip — only for Drive-loaded data (hidden for Sheet / uploaded CSV sources).
@@ -4176,6 +4294,7 @@
                             <span style="font-size:9px;color:#6b7280;text-align:center">${img1ReviewedCount}/${t.vinCount} &nbsp;${img1Pct}%</span>
                         </div>
                     </div>
+                    ${t.spinCount ? `<button class="team-card-btn tcb-spin" style="width:100%;margin-top:6px" onclick="event.stopPropagation();openSpinReview({mode:'team',teamId:'${t.teamId.replace(/'/g,"\\'")}'})">&#9673; 360 Spin (${t.spinCount})</button>` : ''}
                 `;
                 window['__teamRef_' + t.teamId.replace(/[^a-z0-9]/gi,'_')] = t;
                 grid.appendChild(card);
@@ -4391,6 +4510,30 @@
         return 'https://wsrv.nl/?url=' + encodeURIComponent(stripped) + '&w=' + widthPx + '&q=' + quality + '&output=webp';
     }
 
+    // Dealer eProcess (cloudflareimages.dealereprocess.com) hard-blocks BOTH direct
+    // hotlinks AND the wsrv proxy on the CDN URL itself. But each such URL embeds the
+    // TRUE origin as a base64 tail (…-ID<digits>-<base64> → http://images.unitsinventory.com/…).
+    // Decoding that origin and loading it (https-upgraded) is the ONLY path that works on
+    // fresh browsers. Returns the https origin, or null if this isn't a decodable eProcess URL.
+    function decodeDealerEprocessOriginal(url) {
+        if (!url) return null;
+        try {
+            const host = new URL(url).hostname.toLowerCase();
+            if (host.indexOf('dealereprocess') === -1) return null;
+            const seg = url.split('?')[0].split('/').pop() || '';
+            let b64 = null;
+            const m = seg.match(/-ID\d+-(.+)$/);              // cloudflareimages: …-ID<digits>-<base64>
+            if (m) b64 = m[1];
+            else if (/^[A-Za-z0-9+/_=-]{16,}$/.test(seg)) b64 = seg;   // bare base64 segment
+            if (!b64) return null;
+            let s = b64.replace(/-/g, '+').replace(/_/g, '/');
+            while (s.length % 4) s += '=';
+            const dec = atob(s);
+            if (!/^https?:\/\/[^\s]+\.[^\s]+/.test(dec)) return null;  // must be a real URL
+            return dec.replace(/^http:/i, 'https:');          // upgrade to https (mixed-content safe)
+        } catch (e) { return null; }
+    }
+
     function extractSourceUrl(url) {
         if (!url) return url;
         const m = url.match(/media\.spyneai\.com\/unsafe\/[^/]+\/(?:filters:[^/]+\/)?(https?:\/\/.+)/);
@@ -4415,7 +4558,8 @@
                    host.includes('vehicle-images') || host.includes('carnd') ||
                    host.includes('carscommerce') || host.includes('dealerfire') ||
                    host.includes('foxdealer') || host.includes('dealeron') ||
-                   host.includes('invimg') || host.includes('covertford') ||
+                   host.includes('dealereprocess') || host.includes('invimg') ||
+                   host.includes('covertford') ||
                    host.includes('hyundaiusa') || host.includes('toyota') ||
                    host.includes('ford.com') || host.includes('vdp') ||
                    host.includes('inventoryphotos');
@@ -4432,6 +4576,7 @@
                    host.includes('vehicle-images.carscommerce') ||
                    host.includes('img.vast.com') ||
                    host.includes('media.dealerfire') ||
+                   host.includes('dealereprocess') ||
                    host.includes('photos.motortrend');
         } catch(e) { return false; }
     }
@@ -4447,8 +4592,13 @@
 
         let result;
         const srcUrl = extractSourceUrl(originalUrl);
+        const epOrig = decodeDealerEprocessOriginal(srcUrl);
 
-        if (isDealerCdnUrl(srcUrl)) {
+        if (epOrig) {
+            // Dealer eProcess: CDN blocks direct + wsrv. Load the decoded origin,
+            // resized via wsrv (fast thumbnails); direct origin is the fallback.
+            result = wsrvThumbUrl(epOrig, widthPx, quality);
+        } else if (isDealerCdnUrl(srcUrl)) {
             // For hotlink-protected dealer CDNs, use wsrv.nl proxy as primary
             // (bypasses hotlink protection by fetching server-side)
             result = needsProxy(srcUrl) ? wsrvThumbUrl(srcUrl, widthPx, quality) : srcUrl;
@@ -4470,6 +4620,17 @@
         const seen = new Set();
         const chain = [];
         const add = (u) => { if (u && !seen.has(u)) { seen.add(u); chain.push(u); } };
+
+        const epOrig = decodeDealerEprocessOriginal(srcUrl);
+        if (epOrig) {
+            // eProcess cloudflareimages: only the decoded origin works.
+            add(wsrvThumbUrl(epOrig, widthPx, quality));   // resized (proven ✓)
+            add(epOrig);                                    // full-res direct (proven ✓)
+            add(spyneThumbUrl(epOrig, widthPx, quality));   // extra safety via Thumbor
+            // last-ditch: the CDN URL itself (may work off a cached/allowed origin)
+            add(needsProxy(srcUrl) ? wsrvThumbUrl(srcUrl, widthPx, quality) : srcUrl);
+            return chain;
+        }
 
         if (isDealerCdnUrl(srcUrl)) {
             if (needsProxy(srcUrl)) {
@@ -4897,12 +5058,20 @@
         teamIdLookupInFlight[tid] = true;
         const synthetic = teamIsSyntheticId(team);
         try {
-            const src  = (currentImg1VINs && currentImg1VINs.length) ? currentImg1VINs
-                       : (typeof currentTeamVINs !== 'undefined' && currentTeamVINs && currentTeamVINs.length) ? currentTeamVINs
-                       : [];
-            const vins = sampleVinsForLookup(src);
-            if (!vins.length) { teamIdLookupInFlight[tid] = false; return; }
-            const reqBody = { action: 'resolveTeamId', enterprise_id: String(team.entId || '').trim(), vins: vins };
+            let reqBody;
+            if (synthetic) {
+                // No CSV team_id → find the team FROM the VINs (VIN-based card 12897).
+                const src  = (currentImg1VINs && currentImg1VINs.length) ? currentImg1VINs
+                           : (typeof currentTeamVINs !== 'undefined' && currentTeamVINs && currentTeamVINs.length) ? currentTeamVINs
+                           : [];
+                const vins = sampleVinsForLookup(src);
+                if (!vins.length) { teamIdLookupInFlight[tid] = false; return; }
+                reqBody = { action: 'resolveTeamId', enterprise_id: String(team.entId || '').trim(), vins: vins };
+            } else {
+                // CSV already has a team_id → look up the names DIRECTLY by that team_id
+                // (fast, exact — no VINs). Server runs an /api/dataset query keyed on team_id.
+                reqBody = { action: 'resolveByTeamId', team_id: String(tid) };
+            }
             console.log('[team_id] request →', reqBody);
             const res  = await fetch(BQ_WEBAPP_URL, { method: 'POST', redirect: 'follow', body: JSON.stringify(reqBody) });
             const raw  = await res.text();
@@ -4931,20 +5100,23 @@
                     promptTeamNotInSpyne(team);
                 }
             } else {
-                // Real CSV team_id → VERIFY.
-                if (fetchedId && fetchedId === String(tid)) {
-                    resolvedTeamIds[tid] = fetchedId;
-                    resolvedTeamInfo[tid] = info;
-                    team.resolvedInfo = info;
+                // Real CSV team_id → KEEP it; just fetch the OTHER details (enterprise + team
+                // names) to enrich the display. No matching, no warning (Praveen's call).
+                const gotDetails = info.team_name || info.enterprise_name;
+                if (gotDetails) {
+                    const info2 = {
+                        enterprise_name: info.enterprise_name,
+                        enterprise_id:   info.enterprise_id || String(team.entId || ''),
+                        team_name:       info.team_name,
+                        team_id:         String(tid)          // keep the CSV team_id (do NOT adopt fetched)
+                    };
+                    resolvedTeamIds[tid]  = String(tid);       // bqTeamId stays the CSV team_id
+                    resolvedTeamInfo[tid] = info2;
+                    team.resolvedInfo     = info2;
                     applyTeamIdentityUI(team);
-                    if (typeof bgToast === 'function') bgToast('Team verified · ' + fetchedId, 'success');
-                } else {
-                    // Mismatch (or nothing resolved) → warn, keep the CSV team_id.
-                    teamIdMismatch[tid] = { csvId: String(tid), fetchedId: fetchedId };
-                    applyTeamIdentityUI(team);
-                    if (typeof bgToast === 'function')
-                        bgToast('⚠ team_id mismatch — CSV ' + tid + ' vs resolved ' + (fetchedId || '(none)') + '. Keeping CSV id.', 'error');
+                    if (typeof bgToast === 'function') bgToast('Team details loaded', 'success');
                 }
+                // else: no other details returned → leave the normal header (rooftop name + team_id chip) as-is.
             }
         } catch (e) {
             console.warn('[team_id] lookup failed', e);
@@ -6592,6 +6764,427 @@
             renderAdminUsersList();
         }
     }
+
+    // =========================================================================
+    // 360 SPIN REVIEW (v33) — self-contained module, reads the app's loaded data.
+    // Entry points: openSpinReview({mode:'all'}) and openSpinReview({mode:'team',teamId}).
+    // Lives inside the main script so it can read teamsList / vinsByTeam / resolvedTeamInfo.
+    // =========================================================================
+    const SPIN_VERDICTS = [
+        { key:'ok',        label:'Approved',       kind:'ok'   },
+        { key:'no_load',   label:'Spin broken',    kind:'fail' },
+        { key:'wrong_veh', label:'Wrong vehicle',  kind:'fail' },
+        { key:'quality',   label:'Quality issue',  kind:'flag' },
+        { key:'angles',    label:'Missing angles', kind:'flag' },
+    ];
+    const SPIN_INITIAL=12, SPIN_MAX_LOADED=24, SPIN_BATCH=30, SPIN_NEAR='700px 0px', SPIN_PRIME_SCAN=200, SPIN_GRACE=1500;
+
+    let spinROWS=[], spinList=[], spinCur=0, spinFilter='all', spinRendered=0, spinAutoload=true, spinDrawId=0;
+    let spinScopeLabel='', spinScopeMode='all', spinScopeTeamId='';
+    const spinLive=[]; const spinOnScreen=new Set();
+    let spinIO=null, spinMoreIO=null;
+    let spinScrollLock=true, spinGuardPaused=false, spinAnchorY=0, spinFreeTill=0, spinBlocked=0;
+    let spinInjected=false, spinStartedAt=0, spinGuardWired=false;
+
+    function spinActive(){ const p=document.getElementById('page-spin'); return p && p.classList.contains('active'); }
+
+    // ── verdict store (localStorage, per reviewer) ───────────────────────────
+    let SPIN_STORE={};
+    function spinStoreKey(){ return 'spyne_spin_v1_' + (getCurrentUser() || 'anon'); }
+    function spinLoadStore(){ try { SPIN_STORE = JSON.parse(localStorage.getItem(spinStoreKey()) || '{}') || {}; } catch(e){ SPIN_STORE={}; } }
+    function spinSaveStore(){ try { localStorage.setItem(spinStoreKey(), JSON.stringify(SPIN_STORE)); } catch(e){} }
+    function spinRK(r){ return r.teamId + '' + r.vin + '' + (r.rooftop || ''); }
+    function spinGetRec(r){ return SPIN_STORE[spinRK(r)] || null; }
+    function spinSetRec(r, patch){ const k=spinRK(r); SPIN_STORE[k]=Object.assign({verdict:'',note:''}, SPIN_STORE[k]||{}, patch); spinSaveStore(); }
+
+    function spinTeamMeta(teamId){ return teamsList.find(t=>t.teamId===teamId) || {teamId, name:teamId, rooftop:'', entId:''}; }
+
+    // ── build the review list from the app's loaded VIN data ─────────────────
+    function spinBuildRows(){
+        const rows=[];
+        const teamIds = spinScopeMode==='team' ? [spinScopeTeamId] : [...vinsByTeam.keys()];
+        for (const teamId of teamIds){
+            const vmap = vinsByTeam.get(teamId); if(!vmap) continue;
+            const meta = spinTeamMeta(teamId);
+            for (const [key, entry] of vmap.entries()){
+                const e = Array.isArray(entry) ? {} : (entry || {});
+                const st = e.spinState || '';
+                if (!st || st==='missing') continue;   // only vehicles that have a spin reference
+                const vin = key.includes('|~|') ? key.split('|~|')[0] : key;
+                rows.push({
+                    vin, teamId, rooftop: e.rooftop || meta.rooftop || '', entId: meta.entId || '',
+                    spinUrl: e.spinUrl || '', spinState: st, catalog: e.spinCatalog || '',
+                    imgCount: (e.urls || []).length, firstImg: (e.urls || [])[0] || ''
+                });
+            }
+        }
+        return rows;
+    }
+
+    function spinKindOf(key){ return (SPIN_VERDICTS.find(v=>v.key===key)||{}).kind || ''; }
+    function spinEsc(s){ return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
+
+    function spinVisible(){
+        if(spinFilter==='all') return spinROWS;
+        if(spinFilter==='todo') return spinROWS.filter(r=>!(spinGetRec(r)||{}).verdict);
+        if(spinFilter==='approved'||spinFilter==='rejected') return spinROWS.filter(r=>r.spinState===spinFilter);
+        return spinROWS.filter(r=>(spinGetRec(r)||{}).verdict===spinFilter);
+    }
+
+    function spinChips(){
+        const f=document.getElementById('spin-filters'); if(!f) return;
+        const defs=[['all','Everything'],['todo','Not reviewed'],['approved','Spyne approved'],['rejected','Rejected'],
+                    ...SPIN_VERDICTS.map(v=>[v.key,v.label])];
+        f.innerHTML='';
+        defs.forEach(([k,label])=>{
+            const n = k==='all'?spinROWS.length
+                    : k==='todo'?spinROWS.filter(r=>!(spinGetRec(r)||{}).verdict).length
+                    : (k==='approved'||k==='rejected')?spinROWS.filter(r=>r.spinState===k).length
+                    : spinROWS.filter(r=>(spinGetRec(r)||{}).verdict===k).length;
+            const b=document.createElement('button');
+            b.className='spin-chip'; b.setAttribute('aria-pressed', String(spinFilter===k));
+            b.textContent=label+' '+n;
+            b.onclick=()=>{ spinFilter=k; spinCur=0; spinDraw(); };
+            f.appendChild(b);
+        });
+    }
+
+    function spinObservers(){
+        if(spinIO) spinIO.disconnect();
+        if(spinMoreIO) spinMoreIO.disconnect();
+        spinOnScreen.clear();
+        spinIO=new IntersectionObserver(es=>{
+            es.forEach(e=>{ const i=Number(e.target.dataset.i);
+                if(e.isIntersecting){ spinOnScreen.add(i); if(spinAutoload) spinLoadOne(i); }
+                else spinOnScreen.delete(i);
+            });
+        }, {rootMargin:SPIN_NEAR});
+        spinMoreIO=new IntersectionObserver(es=>{ if(es.some(e=>e.isIntersecting)) spinRenderMore(); }, {rootMargin:'900px 0px'});
+        const s=document.getElementById('spin-sentinel'); if(s) spinMoreIO.observe(s);
+    }
+
+    function spinDraw(){
+        const g=document.getElementById('spin-grid'); if(!g) return;
+        g.innerHTML=''; spinLive.length=0; spinRendered=0; spinDrawId++; spinGuardPaused=false;
+        spinList=spinVisible();
+        spinObservers();
+        if(!spinList.length){
+            g.innerHTML='<p style="color:#94a3b8;padding:24px">Nothing matches this filter.</p>';
+        } else {
+            spinRenderMore(Math.max(SPIN_BATCH, SPIN_INITIAL));
+            spinPrimeFirst();
+        }
+        spinChips(); spinTally(); spinUpdateHint();
+    }
+
+    function spinRenderMore(n){
+        n=n||SPIN_BATCH;
+        const g=document.getElementById('spin-grid');
+        const end=Math.min(spinList.length, spinRendered+n);
+        const frag=document.createDocumentFragment();
+        for(let i=spinRendered;i<end;i++) frag.appendChild(spinCardEl(i));
+        g.appendChild(frag);
+        spinRendered=end;
+        const s=document.getElementById('spin-sentinel');
+        if(spinMoreIO && s){ spinMoreIO.unobserve(s); if(spinRendered<spinList.length) spinMoreIO.observe(s); }
+        spinUpdateHint();
+    }
+
+    function spinStageFor(r){
+        if(r.spinState==='approved')
+            return '<div class="spin-ph"><span>Spin not loaded</span><button data-act="load">Load spin</button></div>';
+        return '<div class="spin-ph none"><span>Not approved by Spyne</span></div><div class="spin-band">Rejected</div>';
+    }
+
+    function spinCardEl(i){
+        const r=spinList[i];
+        const rec=spinGetRec(r)||{};
+        const c=document.createElement('div');
+        c.className='spin-card'+(i===spinCur?' cur':'');
+        c.dataset.v=spinKindOf(rec.verdict); c.dataset.i=String(i);
+        const acts=SPIN_VERDICTS.map((v,n)=>
+            '<button class="spin-v '+(rec.verdict===v.key?'on':'')+'" data-k="'+v.key+'"><kbd>'+(n+1)+'</kbd>'+v.label+'</button>').join('');
+        c.innerHTML=
+            '<div class="spin-meta"><span class="spin-idx">'+(i+1)+'</span>'+
+            '<span class="spin-vin">'+spinEsc(r.vin||'—')+'</span>'+
+            '<span class="spin-ttl">'+spinEsc(r.rooftop||'')+'</span></div>'+
+            '<div class="spin-stage" data-kind="'+r.spinState+'">'+spinStageFor(r)+'</div>'+
+            '<div class="spin-acts">'+acts+'</div>'+
+            '<input class="spin-note" placeholder="Note (optional)" value="'+spinEsc(rec.note||'')+'">';
+        c.querySelectorAll('.spin-v').forEach(b=>b.onclick=()=>spinSetVerdict(i,b.dataset.k));
+        const ld=c.querySelector('[data-act="load"]'); if(ld) ld.onclick=()=>spinLoadOne(i);
+        c.querySelector('.spin-note').oninput=e=>spinSetRec(spinList[i],{note:e.target.value});
+        c.onclick=e=>{ if(!e.target.closest('button,a,input')){ spinCur=i; spinMarkCur(); } };
+        if(r.spinState==='approved' && spinIO) spinIO.observe(c);
+        return c;
+    }
+
+    function spinMarkCur(scroll){
+        if(spinCur>=spinRendered) spinRenderMore(spinCur-spinRendered+SPIN_BATCH);
+        document.querySelectorAll('#spin-grid .spin-card').forEach(c=>c.classList.toggle('cur', Number(c.dataset.i)===spinCur));
+        if(!scroll) return;
+        const el=document.querySelector('#spin-grid .spin-card.cur'); if(el) el.scrollIntoView({block:'nearest'});
+    }
+
+    function spinLoadOne(i){
+        const r=spinList[i];
+        if(!r || r.spinState!=='approved' || !r.spinUrl) return;
+        const card=document.querySelector('#spin-grid .spin-card[data-i="'+i+'"]'); if(!card) return;
+        const stage=card.querySelector('.spin-stage'); if(!stage || stage.querySelector('iframe')) return;
+        stage.innerHTML='<iframe src="'+spinEsc(r.spinUrl)+'" loading="lazy" tabindex="-1" referrerpolicy="no-referrer-when-downgrade" allowfullscreen></iframe><div class="spin-shield" title="Click to interact with this spin"></div>';
+        const f=stage.querySelector('iframe');
+        f.addEventListener('load',()=>{ if(document.activeElement===f){ f.blur(); window.focus(); } });
+        stage.querySelector('.spin-shield').onclick=()=>{ const s=stage.querySelector('.spin-shield'); if(s) s.remove(); stage.dataset.active='1'; spinGuardPaused=true; };
+        stage.onmouseenter=()=>{ if(stage.dataset.active) spinGuardPaused=true; };
+        stage.onmouseleave=()=>{ spinGuardPaused=false; const fr=stage.querySelector('iframe'); if(fr && document.activeElement===fr){ fr.blur(); window.focus(); } };
+        spinLive.push(i); spinTrim(); spinUpdateHint();
+    }
+
+    function spinTrim(){
+        while(spinLive.length>SPIN_MAX_LOADED){
+            const k=spinLive.findIndex(x=>!spinOnScreen.has(x));
+            if(k<0) break;
+            spinUnload(spinLive.splice(k,1)[0]);
+        }
+    }
+    function spinUnload(i){
+        const stage=document.querySelector('#spin-grid .spin-card[data-i="'+i+'"] .spin-stage');
+        if(!stage || !stage.querySelector('iframe')) return;
+        if(stage.dataset.active) spinGuardPaused=false;
+        delete stage.dataset.active;
+        stage.innerHTML='<div class="spin-ph"><span>Unloaded to save memory</span><button data-act="load">Load spin</button></div>';
+        stage.querySelector('[data-act="load"]').onclick=()=>spinLoadOne(i);
+    }
+
+    function spinPrimeFirst(){
+        const mine=spinDrawId; let i=0, opened=0;
+        (function step(){
+            if(mine!==spinDrawId || opened>=SPIN_INITIAL) return;
+            while(i<spinList.length && spinList[i].spinState!=='approved') i++;
+            if(i>=spinList.length || i>=SPIN_PRIME_SCAN) return;
+            if(i>=spinRendered) spinRenderMore(i-spinRendered+SPIN_BATCH);
+            spinLoadOne(i++); opened++;
+            setTimeout(step,120);
+        })();
+    }
+
+    function spinSetVerdict(i,key){
+        const r=spinList[i]; if(!r) return;
+        const rec=spinGetRec(r)||{};
+        const next = rec.verdict===key ? '' : key;
+        spinSetRec(r,{verdict:next});
+        const card=document.querySelector('#spin-grid .spin-card[data-i="'+i+'"]');
+        if(card){ card.dataset.v=spinKindOf(next); card.querySelectorAll('.spin-v').forEach(b=>b.classList.toggle('on', b.dataset.k===next)); }
+        spinChips(); spinTally();
+    }
+
+    function spinTally(){
+        const done=spinROWS.filter(r=>(spinGetRec(r)||{}).verdict).length;
+        const by=k=>spinROWS.filter(r=>spinKindOf((spinGetRec(r)||{}).verdict)===k).length;
+        const set=(id,v)=>{ const el=document.getElementById(id); if(el) el.textContent=v; };
+        set('spin-cAll',spinROWS.length); set('spin-cDone',done);
+        set('spin-cOk',by('ok')); set('spin-cFlag',by('flag')); set('spin-cFail',by('fail'));
+    }
+
+    function spinUpdateHint(){
+        const el=document.getElementById('spin-hint'); if(!el) return;
+        el.textContent = spinLive.length+' spins live · '+spinRendered+'/'+spinList.length+' cards'
+            + (spinBlocked ? ' · '+spinBlocked+' scroll jumps blocked' : '');
+    }
+
+    function spinLoadVisible(){ [...spinOnScreen].sort((a,b)=>a-b).forEach(spinLoadOne); }
+    function spinToggleAuto(){ spinAutoload=!spinAutoload; const b=document.getElementById('spin-autoBtn'); if(b) b.textContent='Auto-load: '+(spinAutoload?'on':'off'); if(spinAutoload) spinLoadVisible(); }
+    function spinToggleLock(){ spinScrollLock=!spinScrollLock; spinAnchorY=window.scrollY; const b=document.getElementById('spin-lockBtn'); if(b) b.textContent='Scroll lock: '+(spinScrollLock?'on':'off'); }
+
+    // ── submit to BigQuery via the app's existing relay ──────────────────────
+    function spinSubmit(){
+        const reviewer=getCurrentUser();
+        if(!reviewer){ bgToast('Sign in first.','error'); return; }
+        const now=new Date();
+        const elapsed=Math.max(1, Math.round((Date.now()-spinStartedAt)/1000));
+        const out=[];
+        spinROWS.forEach(r=>{
+            const rec=spinGetRec(r); if(!rec || !rec.verdict) return;
+            const meta=spinTeamMeta(r.teamId);
+            const rinfo=resolvedTeamInfo[r.teamId]||null;
+            const enterprise=(rinfo&&rinfo.enterprise_name)||selectedEnterprise||meta.name||'';
+            const entId=(rinfo&&rinfo.enterprise_id)||meta.entId||selectedEnterpriseId||'';
+            const bqRooftop=(rinfo&&rinfo.team_name)||r.rooftop||'';
+            const vd=SPIN_VERDICTS.find(v=>v.key===rec.verdict);
+            out.push({
+                review_date: now.toISOString().slice(0,10),
+                reviewed_at: now.toISOString(),
+                reviewer,
+                enterprise, enterprise_id: entId,
+                rooftop: bqRooftop,
+                condition: '',
+                team_id: bqTeamId({teamId:r.teamId}) || r.teamId,
+                vin: r.vin,
+                total_images: r.imgCount||0,
+                issue_type: vd?vd.label:'',
+                review_time_seconds: elapsed,
+                avg_review_time_seconds: 0,
+                first_image_url: r.firstImg||'',
+                comment: rec.note||'',
+                review_mode: '360_spin',
+                review_type: 'spin',
+                spin_state: r.spinState||'',
+                spin_url: r.spinUrl||'',
+                spin_verdict: rec.verdict||'',
+                spin_note: rec.note||''
+            });
+        });
+        if(!out.length){ bgToast('No spin verdicts to submit yet.','info'); return; }
+        const perRow=Math.round((elapsed/out.length)*1000)/1000;
+        out.forEach(r=>r.avg_review_time_seconds=perRow);
+        bgToast('Saving '+out.length+' spin reviews to BigQuery… ','info');
+        try { saveTeamToBQ(out, spinScopeLabel || '360 spins'); }
+        catch(e){ bgToast('Spin save failed to start: '+((e&&e.message)||e),'error'); }
+    }
+
+    function spinExportCSV(){
+        const cols=['vin','rooftop','team_id','spin_state','spin_url','spin_verdict','spin_note','reviewed_at'];
+        const now=new Date().toISOString();
+        const esc=s=>'"'+String(s==null?'':s).replace(/"/g,'""')+'"';
+        const lines=[cols.map(esc).join(',')];
+        spinROWS.forEach(r=>{
+            const rec=spinGetRec(r)||{};
+            lines.push([r.vin, r.rooftop, (bqTeamId({teamId:r.teamId})||r.teamId), r.spinState, r.spinUrl,
+                        rec.verdict||'', rec.note||'', rec.verdict?now:''].map(esc).join(','));
+        });
+        const blob=new Blob(['﻿'+lines.join('\r\n')],{type:'text/csv'});
+        const a=document.createElement('a');
+        a.href=URL.createObjectURL(blob);
+        a.download='spin_review_'+new Date().toISOString().slice(0,10)+'.csv';
+        document.body.appendChild(a); a.click(); a.remove();
+    }
+
+    function spinBack(){ showPage('page-dashboard'); }
+
+    // ── one-time DOM + CSS injection ─────────────────────────────────────────
+    function spinInject(){
+        if(spinInjected) return;
+        const style=document.createElement('style');
+        style.textContent=[
+            '#page-spin{background:#26282b;color:#eceef0;font:13px/1.45 ui-sans-serif,-apple-system,"Segoe UI",Roboto,sans-serif}',
+            '#page-spin .spin-header{position:sticky;top:0;z-index:20;background:#303338;border-bottom:1px solid #3d4148;padding:10px 16px;display:flex;gap:14px;align-items:center;flex-wrap:wrap}',
+            '#page-spin h2{font-size:14px;font-weight:600;margin:0}',
+            '#page-spin .spin-counts{display:flex;gap:12px;color:#a4a9b0;font-variant-numeric:tabular-nums}',
+            '#page-spin .spin-counts b{color:#eceef0}',
+            '#page-spin .spin-btn{background:#3a3e44;border:1px solid #3d4148;border-radius:5px;padding:6px 12px;color:#eceef0;cursor:pointer;font:inherit}',
+            '#page-spin .spin-btn:hover{background:#454a51}',
+            '#page-spin .spin-btn.primary{background:#5b8dd6;border-color:#5b8dd6;color:#fff}',
+            '#page-spin .spin-filters{display:flex;gap:6px;padding:8px 16px;background:#2b2e32;border-bottom:1px solid #3d4148;flex-wrap:wrap}',
+            '#page-spin .spin-chip{background:transparent;border:1px solid #3d4148;border-radius:99px;padding:3px 11px;color:#a4a9b0;font-size:12px;cursor:pointer}',
+            '#page-spin .spin-chip[aria-pressed="true"]{background:#5b8dd6;border-color:#5b8dd6;color:#fff}',
+            '#page-spin .spin-grid{display:grid;gap:14px;padding:14px 16px 90px;grid-template-columns:repeat(auto-fill,minmax(420px,1fr))}',
+            '#page-spin .spin-card{background:#303338;border:1px solid #3d4148;border-radius:5px;overflow:hidden;display:flex;flex-direction:column}',
+            '#page-spin .spin-card.cur{border-color:#5b8dd6;box-shadow:0 0 0 1px #5b8dd6}',
+            '#page-spin .spin-card[data-v="ok"]{border-left:3px solid #4ea672}',
+            '#page-spin .spin-card[data-v="flag"]{border-left:3px solid #c99a3f}',
+            '#page-spin .spin-card[data-v="fail"]{border-left:3px solid #c0584f}',
+            '#page-spin .spin-meta{display:flex;gap:10px;align-items:baseline;padding:8px 10px;border-bottom:1px solid #3d4148}',
+            '#page-spin .spin-vin{font:12px/1 ui-monospace,Menlo,monospace}',
+            '#page-spin .spin-ttl{color:#a4a9b0;font-size:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}',
+            '#page-spin .spin-idx{color:#a4a9b0;font-size:11px;font-variant-numeric:tabular-nums}',
+            '#page-spin .spin-stage{position:relative;aspect-ratio:4/3;background:#7d7f83}',
+            '#page-spin .spin-stage[data-kind="rejected"]{background:repeating-linear-gradient(45deg,#1a1113,#1a1113 10px,#211417 10px,#211417 20px)}',
+            '#page-spin .spin-stage iframe{width:100%;height:100%;border:0;display:block}',
+            '#page-spin .spin-shield{position:absolute;inset:0;z-index:2}',
+            '#page-spin .spin-band{position:absolute;left:0;right:0;top:50%;transform:translateY(-50%);z-index:3;text-align:center;font:600 13px/1 ui-sans-serif,system-ui;letter-spacing:.16em;text-transform:uppercase;padding:9px 0;background:#7f1d1dd9;color:#fecaca;border-top:1px solid #ef444455;border-bottom:1px solid #ef444455}',
+            '#page-spin .spin-ph{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;color:#2c2e31;font-size:12px;gap:8px;flex-direction:column}',
+            '#page-spin .spin-ph.none{color:#cbd5e1}',
+            '#page-spin .spin-ph button{background:#00000026;border:1px solid #0003;border-radius:5px;padding:6px 14px;color:#1d1f22;cursor:pointer}',
+            '#page-spin .spin-acts{display:flex;gap:5px;padding:8px 10px;flex-wrap:wrap;align-items:center}',
+            '#page-spin .spin-v{background:#3a3e44;border:1px solid #3d4148;border-radius:5px;padding:4px 9px;font-size:12px;color:#eceef0;cursor:pointer}',
+            '#page-spin .spin-v kbd{color:#a4a9b0;font:inherit;margin-right:5px}',
+            '#page-spin .spin-v.on{background:#5b8dd6;border-color:#5b8dd6;color:#fff}',
+            '#page-spin .spin-note{width:calc(100% - 20px);margin:0 10px 10px;background:#2a2d31;border:1px solid #3d4148;border-radius:5px;color:#eceef0;padding:5px 8px;font:12px/1.4 inherit}',
+            '#page-spin .spin-footer{position:fixed;bottom:0;left:0;right:0;background:#303338;border-top:1px solid #3d4148;padding:8px 16px;font-size:12px;color:#a4a9b0;display:flex;gap:16px;align-items:center;z-index:20}',
+            '#page-spin .spin-spacer{flex:1}'
+        ].join('\n');
+        document.head.appendChild(style);
+
+        const page=document.createElement('div');
+        page.id='page-spin'; page.className='page-view';
+        page.innerHTML=
+            '<div class="spin-header">'+
+              '<button class="spin-btn" onclick="spinBack()">&larr; Dashboard</button>'+
+              '<h2 id="spin-title">360 Spin Review</h2>'+
+              '<div class="spin-counts">'+
+                '<span>Reviewed <b id="spin-cDone">0</b>/<b id="spin-cAll">0</b></span>'+
+                '<span>Approved <b id="spin-cOk">0</b></span>'+
+                '<span>Flagged <b id="spin-cFlag">0</b></span>'+
+                '<span>Failed <b id="spin-cFail">0</b></span>'+
+              '</div>'+
+              '<div class="spin-spacer"></div>'+
+              '<button class="spin-btn" id="spin-lockBtn" onclick="spinToggleLock()">Scroll lock: on</button>'+
+              '<button class="spin-btn" id="spin-autoBtn" onclick="spinToggleAuto()">Auto-load: on</button>'+
+              '<button class="spin-btn" onclick="spinLoadVisible()">Load on-screen</button>'+
+              '<button class="spin-btn" onclick="spinExportCSV()">Export CSV</button>'+
+              '<button class="spin-btn primary" onclick="spinSubmit()">Submit</button>'+
+            '</div>'+
+            '<div class="spin-filters" id="spin-filters"></div>'+
+            '<div class="spin-grid" id="spin-grid"></div>'+
+            '<div id="spin-sentinel" style="height:1px;margin-bottom:90px"></div>'+
+            '<div class="spin-footer">'+
+              '<span><b>j</b>/<b>k</b> move · <b>1</b>&ndash;<b>5</b> verdict · <b>l</b> load spin</span>'+
+              '<span class="spin-spacer"></span><span id="spin-hint"></span>'+
+            '</div>';
+        document.body.appendChild(page);
+
+        // Keyboard (only acts while the spin page is active)
+        document.addEventListener('keydown',e=>{
+            if(!spinActive()) return;
+            if(/^(INPUT|TEXTAREA)$/.test(e.target.tagName)) return;
+            if(!spinList.length) return;
+            if(e.key==='j'||e.key==='ArrowDown'){ spinCur=Math.min(spinCur+1,spinList.length-1); spinMarkCur(true); e.preventDefault(); }
+            else if(e.key==='k'||e.key==='ArrowUp'){ spinCur=Math.max(spinCur-1,0); spinMarkCur(true); e.preventDefault(); }
+            else if(e.key==='l'){ spinLoadOne(spinCur); }
+            else if(/^[1-5]$/.test(e.key)){ const v=SPIN_VERDICTS[Number(e.key)-1]; if(v) spinSetVerdict(spinCur,v.key); }
+        });
+        // Scroll guard (only acts while the spin page is active)
+        if(!spinGuardWired){
+            const gesture=()=>{ spinFreeTill=Date.now()+SPIN_GRACE; };
+            ['wheel','touchstart','touchmove','touchend','keydown','mousedown','pointerdown']
+                .forEach(ev=>addEventListener(ev,gesture,{passive:true,capture:true}));
+            addEventListener('scroll',()=>{
+                if(!spinActive()) return;
+                const now=Date.now(), y=window.scrollY;
+                if(now<spinFreeTill){ spinFreeTill=now+SPIN_GRACE; spinAnchorY=y; return; }
+                if(!spinScrollLock || spinGuardPaused){ spinAnchorY=y; return; }
+                if(Math.abs(y-spinAnchorY)>2){ window.scrollTo(0,spinAnchorY); spinBlocked++; spinUpdateHint(); return; }
+                spinAnchorY=y;
+            },{passive:true});
+            spinGuardWired=true;
+        }
+        spinInjected=true;
+    }
+
+    // ── public entry point ───────────────────────────────────────────────────
+    function openSpinReview(scope){
+        scope=scope||{mode:'all'};
+        if(!teamsList.length){ try{ bgToast('Load a team first.','info'); }catch(e){} return; }
+        spinInject();
+        spinLoadStore();
+        spinScopeMode = scope.mode==='team' ? 'team' : 'all';
+        spinScopeTeamId = scope.teamId || '';
+        const meta = spinScopeMode==='team' ? spinTeamMeta(spinScopeTeamId) : null;
+        spinScopeLabel = meta ? (meta.rooftop || meta.name || spinScopeTeamId) : (selectedEnterprise || 'All rooftops');
+        spinROWS = spinBuildRows();
+        spinCur=0; spinFilter='all'; spinAutoload=true; spinScrollLock=true; spinBlocked=0;
+        spinStartedAt=Date.now(); spinAnchorY=0;
+        const t=document.getElementById('spin-title');
+        if(t) t.textContent='360 Spin Review — ' + spinScopeLabel + ' (' + spinROWS.length + ')';
+        const lb=document.getElementById('spin-lockBtn'); if(lb) lb.textContent='Scroll lock: on';
+        const ab=document.getElementById('spin-autoBtn'); if(ab) ab.textContent='Auto-load: on';
+        showPage('page-spin');
+        window.scrollTo(0,0);
+        spinDraw();
+    }
+    window.openSpinReview = openSpinReview;
+    window.spinBack = spinBack; window.spinToggleLock = spinToggleLock; window.spinToggleAuto = spinToggleAuto;
+    window.spinLoadVisible = spinLoadVisible; window.spinExportCSV = spinExportCSV; window.spinSubmit = spinSubmit;
 
     window.onload = init;
     </script>
