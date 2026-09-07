@@ -6821,8 +6821,9 @@
             const meta = spinTeamMeta(teamId);
             for (const [key, entry] of vmap.entries()){
                 const e = Array.isArray(entry) ? {} : (entry || {});
-                const st = e.spinState || '';
-                if (!st || st==='missing') continue;   // only vehicles that have a spin reference
+                // Show ALL vehicles — approved, rejected, AND no-spin (missing).
+                // No-spin cards still get a VDP link + verdict buttons so the reviewer can open the VDP.
+                const st = (e.spinState === 'approved' || e.spinState === 'rejected') ? e.spinState : 'missing';
                 const vin = key.includes('|~|') ? key.split('|~|')[0] : key;
                 rows.push({
                     vin, teamId, rooftop: e.rooftop || meta.rooftop || '', entId: meta.entId || '',
@@ -6841,19 +6842,19 @@
     function spinVisible(){
         if(spinFilter==='all') return spinROWS;
         if(spinFilter==='todo') return spinROWS.filter(r=>!(spinGetRec(r)||{}).verdict);
-        if(spinFilter==='approved'||spinFilter==='rejected') return spinROWS.filter(r=>r.spinState===spinFilter);
+        if(spinFilter==='approved'||spinFilter==='rejected'||spinFilter==='missing') return spinROWS.filter(r=>r.spinState===spinFilter);
         return spinROWS.filter(r=>(spinGetRec(r)||{}).verdict===spinFilter);
     }
 
     function spinChips(){
         const f=document.getElementById('spin-filters'); if(!f) return;
-        const defs=[['all','Everything'],['todo','Not reviewed'],['approved','Spyne approved'],['rejected','Rejected'],
+        const defs=[['all','Everything'],['todo','Not reviewed'],['approved','Spyne approved'],['rejected','Rejected'],['missing','No spin'],
                     ...SPIN_VERDICTS.map(v=>[v.key,v.label])];
         f.innerHTML='';
         defs.forEach(([k,label])=>{
             const n = k==='all'?spinROWS.length
                     : k==='todo'?spinROWS.filter(r=>!(spinGetRec(r)||{}).verdict).length
-                    : (k==='approved'||k==='rejected')?spinROWS.filter(r=>r.spinState===k).length
+                    : (k==='approved'||k==='rejected'||k==='missing')?spinROWS.filter(r=>r.spinState===k).length
                     : spinROWS.filter(r=>(spinGetRec(r)||{}).verdict===k).length;
             const b=document.createElement('button');
             b.className='spin-chip'; b.setAttribute('aria-pressed', String(spinFilter===k));
@@ -7026,6 +7027,10 @@
             + (spinBlocked ? ' · '+spinBlocked+' scroll jumps blocked' : '');
     }
 
+    let spinTile = 420;   // grid tile min-width (px) — zoom control
+    function spinApplyZoom(){ const p=document.getElementById('page-spin'); if(p) p.style.setProperty('--spin-tile', spinTile+'px'); }
+    function spinZoom(dir){ spinTile = Math.max(260, Math.min(760, spinTile + (dir>0?80:-80))); spinApplyZoom(); }
+
     function spinLoadVisible(){ [...spinOnScreen].sort((a,b)=>a-b).forEach(spinLoadOne); }
     function spinToggleAuto(){ spinAutoload=!spinAutoload; const b=document.getElementById('spin-autoBtn'); if(b) b.textContent='Auto-load: '+(spinAutoload?'on':'off'); if(spinAutoload) spinLoadVisible(); }
     function spinToggleLock(){ spinScrollLock=!spinScrollLock; spinAnchorY=window.scrollY; const b=document.getElementById('spin-lockBtn'); if(b) b.textContent='Scroll lock: '+(spinScrollLock?'on':'off'); }
@@ -7106,7 +7111,10 @@
         const style=document.createElement('style');
         style.textContent=[
             '#page-spin{background:#26282b;color:#eceef0;font:13px/1.45 ui-sans-serif,-apple-system,"Segoe UI",Roboto,sans-serif}',
-            '#page-spin .spin-header{position:sticky;top:0;z-index:20;background:#303338;border-bottom:1px solid #3d4148;padding:10px 16px;display:flex;gap:14px;align-items:center;flex-wrap:wrap}',
+            '#page-spin .spin-frozen{position:sticky;top:0;z-index:30}',
+            '#page-spin .spin-header{background:#303338;border-bottom:1px solid #3d4148;padding:10px 16px;display:flex;gap:14px;align-items:center;flex-wrap:wrap}',
+            '#page-spin .spin-zoom{display:flex;gap:4px}',
+            '#page-spin .spin-zoom .spin-btn{padding:4px 10px;font-weight:700}',
             '#page-spin h2{font-size:14px;font-weight:600;margin:0}',
             '#page-spin .spin-counts{display:flex;gap:12px;color:#a4a9b0;font-variant-numeric:tabular-nums}',
             '#page-spin .spin-counts b{color:#eceef0}',
@@ -7116,7 +7124,7 @@
             '#page-spin .spin-filters{display:flex;gap:6px;padding:8px 16px;background:#2b2e32;border-bottom:1px solid #3d4148;flex-wrap:wrap}',
             '#page-spin .spin-chip{background:transparent;border:1px solid #3d4148;border-radius:99px;padding:3px 11px;color:#a4a9b0;font-size:12px;cursor:pointer}',
             '#page-spin .spin-chip[aria-pressed="true"]{background:#5b8dd6;border-color:#5b8dd6;color:#fff}',
-            '#page-spin .spin-grid{display:grid;gap:14px;padding:14px 16px 90px;grid-template-columns:repeat(auto-fill,minmax(420px,1fr))}',
+            '#page-spin .spin-grid{display:grid;gap:14px;padding:14px 16px 90px;grid-template-columns:repeat(auto-fill,minmax(var(--spin-tile,420px),1fr))}',
             '#page-spin .spin-card{background:#303338;border:1px solid #3d4148;border-radius:5px;overflow:hidden;display:flex;flex-direction:column}',
             '#page-spin .spin-card.cur{border-color:#5b8dd6;box-shadow:0 0 0 1px #5b8dd6}',
             '#page-spin .spin-card[data-v="ok"]{border-left:3px solid #4ea672}',
@@ -7154,6 +7162,7 @@
         const page=document.createElement('div');
         page.id='page-spin'; page.className='page-view';
         page.innerHTML=
+            '<div class="spin-frozen">'+
             '<div class="spin-header">'+
               '<button class="spin-btn" onclick="spinBack()">&larr; Dashboard</button>'+
               '<h2 id="spin-title">360 Spin Review</h2>'+
@@ -7164,6 +7173,10 @@
                 '<span>Failed <b id="spin-cFail">0</b></span>'+
               '</div>'+
               '<div class="spin-spacer"></div>'+
+              '<div class="spin-zoom">'+
+                '<button class="spin-btn" title="Zoom out" onclick="spinZoom(-1)">&minus;</button>'+
+                '<button class="spin-btn" title="Zoom in" onclick="spinZoom(1)">&plus;</button>'+
+              '</div>'+
               '<button class="spin-btn" id="spin-lockBtn" onclick="spinToggleLock()">Scroll lock: on</button>'+
               '<button class="spin-btn" id="spin-autoBtn" onclick="spinToggleAuto()">Auto-load: on</button>'+
               '<button class="spin-btn" onclick="spinLoadVisible()">Load on-screen</button>'+
@@ -7171,6 +7184,7 @@
               '<button class="spin-btn primary" onclick="spinSubmit()">Submit</button>'+
             '</div>'+
             '<div class="spin-filters" id="spin-filters"></div>'+
+            '</div>'+
             '<div class="spin-grid" id="spin-grid"></div>'+
             '<div id="spin-sentinel" style="height:1px;margin-bottom:90px"></div>'+
             '<div class="spin-footer">'+
@@ -7225,12 +7239,14 @@
         const lb=document.getElementById('spin-lockBtn'); if(lb) lb.textContent='Scroll lock: on';
         const ab=document.getElementById('spin-autoBtn'); if(ab) ab.textContent='Auto-load: on';
         showPage('page-spin');
+        spinApplyZoom();
         window.scrollTo(0,0);
         spinDraw();
     }
     window.openSpinReview = openSpinReview;
     window.spinBack = spinBack; window.spinToggleLock = spinToggleLock; window.spinToggleAuto = spinToggleAuto;
     window.spinLoadVisible = spinLoadVisible; window.spinExportCSV = spinExportCSV; window.spinSubmit = spinSubmit;
+    window.spinZoom = spinZoom;
 
     window.onload = init;
     </script>
