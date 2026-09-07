@@ -1293,7 +1293,8 @@
         spinUrl:      13,  // N: 360 spin URL (optional)
         spinState:    14,  // O: spin state — approved / rejected / missing (optional)
         spinCatalog:  15,  // P: catalog_url (optional)
-        spinProvider: 16   // Q: spin_provider (optional)
+        spinProvider: 16,  // Q: spin_provider (optional)
+        vdpUrl:       17   // R: VDP / listing URL (optional)
     };
 
     // =========================================================================
@@ -1824,20 +1825,23 @@
             const condition = (r[C.condition] || '').trim();
             const rooftopName = (r[C.rooftop] || '').trim() || t.rooftop || '';
             if (!t.vins.has(vin)) t.vins.set(vin, { urls: [], condition: '', rooftop: '',
-                spinUrl: '', spinState: '', spinCatalog: '', spinProvider: '' });
+                spinUrl: '', spinState: '', spinCatalog: '', spinProvider: '', vdpUrl: '' });
             const entry = t.vins.get(vin);
             if (!entry.condition && condition) entry.condition = condition;
             if (!entry.rooftop && rooftopName) entry.rooftop = rooftopName;
-            // 360-spin fields (present only when the feed carried spin columns)
+            // 360-spin fields (present only when the feed carried spin columns).
+            // Keep the best state (approved > rejected > missing) with its URL.
             const rSpinUrl   = (r[C.spinUrl]   || '').trim();
             const rSpinState = (r[C.spinState] || '').trim();
-            if (rSpinUrl && (!entry.spinUrl || entry.spinState !== 'approved')) {
-                entry.spinUrl = rSpinUrl; entry.spinState = 'approved';
-            } else if (rSpinState && rSpinState !== 'missing' && (!entry.spinState || entry.spinState === 'missing')) {
-                entry.spinState = rSpinState;
+            const _sr = s => s === 'approved' ? 2 : (s === 'rejected' ? 1 : 0);
+            if (rSpinState && _sr(rSpinState) > _sr(entry.spinState || '')) {
+                entry.spinState = rSpinState; if (rSpinUrl) entry.spinUrl = rSpinUrl;
+            } else if (rSpinState && _sr(rSpinState) === _sr(entry.spinState || '') && rSpinUrl && !entry.spinUrl) {
+                entry.spinUrl = rSpinUrl;
             }
             if (!entry.spinCatalog  && (r[C.spinCatalog]  || '').trim()) entry.spinCatalog  = (r[C.spinCatalog]  || '').trim();
             if (!entry.spinProvider && (r[C.spinProvider] || '').trim()) entry.spinProvider = (r[C.spinProvider] || '').trim();
+            if (!entry.vdpUrl       && (r[C.vdpUrl]       || '').trim()) entry.vdpUrl       = (r[C.vdpUrl]       || '').trim();
             const arr = entry.urls;
 
             // For CSV mode rows, URLs are pipe-OR-comma separated (splitUrls handles both) —
@@ -1926,10 +1930,10 @@
                     catalog: String(catalogRaw || '').trim(),
                     provider:String(providerRaw|| '').trim() };
         const kind = classifySpin(o);
-        // Only an approved row gets a playable URL built; rejected/missing never preview.
+        // Build a playable URL whenever we have a url or an id — approved AND rejected
+        // rows both get previewed (rejected shown with a red border so the reviewer can look).
         let url = o.spinUrl;
-        if (kind === 'approved' && !url && o.spinId) url = buildSpyneSpinUrl(o.spinId);
-        if (kind !== 'approved') url = '';
+        if (!url && o.spinId && kind !== 'missing') url = buildSpyneSpinUrl(o.spinId);
         return { spinUrl: url, spinState: kind, spinCatalog: o.catalog, spinProvider: o.provider };
     }
 
@@ -2060,6 +2064,7 @@
                 const spinStateCol = hLower.findIndex(h => h === 'media_state' || h === 'spin_state' || h === 'spinstate');
                 const spinCatCol   = hLower.findIndex(h => h === 'catalog_url' || h === 'catalogurl' || h === 'catalog');
                 const spinProvCol  = hLower.findIndex(h => h === 'spin_provider' || h === 'provider');
+                const vdpCol       = hLower.findIndex(h => h === 'vdp_url' || h === 'vdpurl' || h === 'vdp' || h === 'vdp url' || h === 'vehicle_url' || h === 'listing_url' || h === 'detail_url');
 
                 if (vinCol === -1) { showError('CSV must have a VIN column.'); return; }
                 if (imgCol === -1) { showError('CSV must have an image URL column (e.g. Image URLs, photos, media).'); return; }
@@ -2094,21 +2099,24 @@
                         spinCatCol   >= 0 ? r[spinCatCol]   : '',
                         spinProvCol  >= 0 ? r[spinProvCol]  : ''
                     );
+                    const vdp = vdpCol >= 0 ? String(r[vdpCol] || '').trim() : '';
                     if (!vinMap.has(key)) vinMap.set(key, { vin, rooftop, condition, csvTeamId, csvEntId, urls: new Set(),
-                        spinUrl: '', spinState: '', spinCatalog: '', spinProvider: '' });
+                        spinUrl: '', spinState: '', spinCatalog: '', spinProvider: '', vdpUrl: '' });
                     const entry = vinMap.get(key);
                     if (imgRaw) splitUrls(imgRaw).forEach(u => { if (u) entry.urls.add(u); });
                     if (!entry.condition && condition) entry.condition = condition;
                     if (!entry.csvTeamId && csvTeamId) entry.csvTeamId = csvTeamId;
                     if (!entry.csvEntId  && csvEntId)  entry.csvEntId  = csvEntId;
-                    // First real spin wins; a later 'approved' upgrades a 'missing'/'rejected'.
-                    if (spin.spinUrl && (!entry.spinUrl || entry.spinState !== 'approved')) {
-                        entry.spinUrl = spin.spinUrl; entry.spinState = 'approved';
-                    } else if (spin.spinState !== 'missing' && (!entry.spinState || entry.spinState === 'missing')) {
-                        entry.spinState = spin.spinState;
+                    // Keep the best spin state (approved > rejected > missing) with its URL.
+                    const _sr = s => s === 'approved' ? 2 : (s === 'rejected' ? 1 : 0);
+                    if (spin.spinState && _sr(spin.spinState) > _sr(entry.spinState || '')) {
+                        entry.spinState = spin.spinState; if (spin.spinUrl) entry.spinUrl = spin.spinUrl;
+                    } else if (_sr(spin.spinState) === _sr(entry.spinState || '') && spin.spinUrl && !entry.spinUrl) {
+                        entry.spinUrl = spin.spinUrl;
                     }
                     if (!entry.spinCatalog  && spin.spinCatalog)  entry.spinCatalog  = spin.spinCatalog;
                     if (!entry.spinProvider && spin.spinProvider) entry.spinProvider = spin.spinProvider;
+                    if (!entry.vdpUrl && vdp) entry.vdpUrl = vdp;
                 });
 
                 setParseProgress(70, 'Building rows…');
@@ -2125,7 +2133,8 @@
                         vin, teamId, entId, enterpriseName,
                         '', '', '1', '', '',
                         vin, imgUrls, rooftop, condition,
-                        data.spinUrl || '', data.spinState || '', data.spinCatalog || '', data.spinProvider || ''
+                        data.spinUrl || '', data.spinState || '', data.spinCatalog || '', data.spinProvider || '',
+                        data.vdpUrl || ''
                     ]);
                 }
 
@@ -2788,6 +2797,7 @@
         const spinStateCol = hLower.findIndex(h => h === 'media_state' || h === 'spin_state' || h === 'spinstate');
         const spinCatCol   = hLower.findIndex(h => h === 'catalog_url' || h === 'catalogurl' || h === 'catalog');
         const spinProvCol  = hLower.findIndex(h => h === 'spin_provider' || h === 'provider');
+        const vdpCol       = hLower.findIndex(h => h === 'vdp_url' || h === 'vdpurl' || h === 'vdp' || h === 'vdp url' || h === 'vehicle_url' || h === 'listing_url' || h === 'detail_url');
 
         if (vinCol === -1) throw new Error('no VIN column');
         if (imgCol === -1) throw new Error('no image-URL column');
@@ -2808,21 +2818,24 @@
                 spinUrlCol   >= 0 ? r[spinUrlCol]   : '', spinIdCol   >= 0 ? r[spinIdCol]   : '',
                 spinStateCol >= 0 ? r[spinStateCol] : '', spinCatCol  >= 0 ? r[spinCatCol]  : '',
                 spinProvCol  >= 0 ? r[spinProvCol]  : '');
+            const vdp = vdpCol >= 0 ? String(r[vdpCol] || '').trim() : '';
             if (!vinMap.has(vin)) vinMap.set(vin, { vin, rooftop, condition, csvTeamId, csvEntId, urls: new Set(),
-                spinUrl: '', spinState: '', spinCatalog: '', spinProvider: '' });
+                spinUrl: '', spinState: '', spinCatalog: '', spinProvider: '', vdpUrl: '' });
             const e = vinMap.get(vin);
             if (imgRaw) splitUrls(imgRaw).forEach(u => { if (u) e.urls.add(u); });
             if (!e.condition && condition) e.condition = condition;
             if (!e.rooftop   && rooftop)   e.rooftop   = rooftop;
             if (!e.csvTeamId && csvTeamId) e.csvTeamId = csvTeamId;
             if (!e.csvEntId  && csvEntId)  e.csvEntId  = csvEntId;
-            if (spin.spinUrl && (!e.spinUrl || e.spinState !== 'approved')) {
-                e.spinUrl = spin.spinUrl; e.spinState = 'approved';
-            } else if (spin.spinState !== 'missing' && (!e.spinState || e.spinState === 'missing')) {
-                e.spinState = spin.spinState;
+            const _sr = s => s === 'approved' ? 2 : (s === 'rejected' ? 1 : 0);
+            if (spin.spinState && _sr(spin.spinState) > _sr(e.spinState || '')) {
+                e.spinState = spin.spinState; if (spin.spinUrl) e.spinUrl = spin.spinUrl;
+            } else if (_sr(spin.spinState) === _sr(e.spinState || '') && spin.spinUrl && !e.spinUrl) {
+                e.spinUrl = spin.spinUrl;
             }
             if (!e.spinCatalog  && spin.spinCatalog)  e.spinCatalog  = spin.spinCatalog;
             if (!e.spinProvider && spin.spinProvider) e.spinProvider = spin.spinProvider;
+            if (!e.vdpUrl && vdp) e.vdpUrl = vdp;
         });
 
         const rows = [];
@@ -2836,7 +2849,7 @@
             // Col D (enterprise_name) left blank so buildTeamIndex keeps every file.
             // Col A (name) = rooftop name so the team label shows the rooftop.
             rows.push([ rooftopName, teamId, eId, '', '', '', '1', '', '', d.vin, imgUrls, rooftopName, d.condition,
-                        d.spinUrl || '', d.spinState || '', d.spinCatalog || '', d.spinProvider || '' ]);
+                        d.spinUrl || '', d.spinState || '', d.spinCatalog || '', d.spinProvider || '', d.vdpUrl || '' ]);
         }
         return { rows, rooftopName: rooftopFallback, entId };
     }
@@ -3984,7 +3997,7 @@
             if (currentTeam) {
                 const teamVins = vinsByTeam.get(currentTeam.teamId);
                 if (teamVins) {
-                    currentTeamVINs = [...teamVins.entries()].map(([key, entry]) => { const vin = key.includes('|~|') ? key.split('|~|')[0] : key; return { vin, urls: Array.isArray(entry) ? entry : (entry.urls||[]), rooftop: Array.isArray(entry) ? '' : (entry.rooftop||''), condition: Array.isArray(entry) ? '' : (entry.condition||''), spinUrl: Array.isArray(entry) ? '' : (entry.spinUrl||''), spinState: Array.isArray(entry) ? '' : (entry.spinState||''), spinCatalog: Array.isArray(entry) ? '' : (entry.spinCatalog||'') }; });
+                    currentTeamVINs = [...teamVins.entries()].map(([key, entry]) => { const vin = key.includes('|~|') ? key.split('|~|')[0] : key; return { vin, urls: Array.isArray(entry) ? entry : (entry.urls||[]), rooftop: Array.isArray(entry) ? '' : (entry.rooftop||''), condition: Array.isArray(entry) ? '' : (entry.condition||''), spinUrl: Array.isArray(entry) ? '' : (entry.spinUrl||''), spinState: Array.isArray(entry) ? '' : (entry.spinState||''), spinCatalog: Array.isArray(entry) ? '' : (entry.spinCatalog||''), vdpUrl: Array.isArray(entry) ? '' : (entry.vdpUrl||'') }; });
                     renderVINSidebar();
                     updateProgressBadge();
                 }
@@ -6814,6 +6827,7 @@
                 rows.push({
                     vin, teamId, rooftop: e.rooftop || meta.rooftop || '', entId: meta.entId || '',
                     spinUrl: e.spinUrl || '', spinState: st, catalog: e.spinCatalog || '',
+                    vdp: e.vdpUrl || '',
                     imgCount: (e.urls || []).length, firstImg: (e.urls || [])[0] || ''
                 });
             }
@@ -6891,32 +6905,52 @@
     }
 
     function spinStageFor(r){
-        if(r.spinState==='approved')
+        if(r.spinUrl)
             return '<div class="spin-ph"><span>Spin not loaded</span><button data-act="load">Load spin</button></div>';
-        return '<div class="spin-ph none"><span>Not approved by Spyne</span></div><div class="spin-band">Rejected</div>';
+        // No playable spin URL.
+        if(r.spinState==='rejected')
+            return '<div class="spin-ph none"><span>Rejected — no spin URL</span></div>';
+        return '<div class="spin-ph none"><span>No spin</span></div>';
     }
 
     function spinCardEl(i){
         const r=spinList[i];
         const rec=spinGetRec(r)||{};
+        const isRej = r.spinState==='rejected';
         const c=document.createElement('div');
-        c.className='spin-card'+(i===spinCur?' cur':'');
+        c.className='spin-card'+(i===spinCur?' cur':'')+(isRej?' rej':'');
         c.dataset.v=spinKindOf(rec.verdict); c.dataset.i=String(i);
         const acts=SPIN_VERDICTS.map((v,n)=>
             '<button class="spin-v '+(rec.verdict===v.key?'on':'')+'" data-k="'+v.key+'"><kbd>'+(n+1)+'</kbd>'+v.label+'</button>').join('');
+        const vdpLink = r.vdp
+            ? '<a class="spin-vdp" href="'+spinEsc(r.vdp)+'" target="_blank" rel="noopener" title="Open VDP page">Open VDP &#8599;</a>'
+            : '';
+        const rejTag = isRej ? '<span class="spin-rejtag">REJECTED</span>' : '';
         c.innerHTML=
             '<div class="spin-meta"><span class="spin-idx">'+(i+1)+'</span>'+
             '<span class="spin-vin">'+spinEsc(r.vin||'—')+'</span>'+
+            '<button class="spin-copy" title="Copy VIN" data-vin="'+spinEsc(r.vin||'')+'">'+
+              '<span class="spin-copy-ic">&#128203;</span><span class="spin-copy-ok" style="display:none">&#10003;</span></button>'+
+            rejTag+
             '<span class="spin-ttl">'+spinEsc(r.rooftop||'')+'</span></div>'+
             '<div class="spin-stage" data-kind="'+r.spinState+'">'+spinStageFor(r)+'</div>'+
-            '<div class="spin-acts">'+acts+'</div>'+
+            '<div class="spin-acts">'+acts+vdpLink+'</div>'+
             '<input class="spin-note" placeholder="Note (optional)" value="'+spinEsc(rec.note||'')+'">';
         c.querySelectorAll('.spin-v').forEach(b=>b.onclick=()=>spinSetVerdict(i,b.dataset.k));
         const ld=c.querySelector('[data-act="load"]'); if(ld) ld.onclick=()=>spinLoadOne(i);
+        const cp=c.querySelector('.spin-copy'); if(cp) cp.onclick=(e)=>{ e.stopPropagation(); spinCopyVin(cp.dataset.vin, cp); };
         c.querySelector('.spin-note').oninput=e=>spinSetRec(spinList[i],{note:e.target.value});
         c.onclick=e=>{ if(!e.target.closest('button,a,input')){ spinCur=i; spinMarkCur(); } };
-        if(r.spinState==='approved' && spinIO) spinIO.observe(c);
+        if(r.spinUrl && spinIO) spinIO.observe(c);   // lazy-load approved AND rejected spins
         return c;
+    }
+
+    function spinCopyVin(vin, btn){
+        const flash=()=>{ if(!btn) return; const ic=btn.querySelector('.spin-copy-ic'), ok=btn.querySelector('.spin-copy-ok');
+            if(ic&&ok){ ic.style.display='none'; ok.style.display=''; setTimeout(()=>{ ic.style.display=''; ok.style.display='none'; },1200); } };
+        const fb=()=>{ try{ const ta=document.createElement('textarea'); ta.value=vin; ta.style.position='fixed'; ta.style.opacity='0';
+            document.body.appendChild(ta); ta.focus(); ta.select(); document.execCommand('copy'); document.body.removeChild(ta); }catch(e){} flash(); };
+        try{ if(navigator.clipboard&&navigator.clipboard.writeText){ navigator.clipboard.writeText(vin).then(flash).catch(fb); } else fb(); }catch(e){ fb(); }
     }
 
     function spinMarkCur(scroll){
@@ -6928,7 +6962,7 @@
 
     function spinLoadOne(i){
         const r=spinList[i];
-        if(!r || r.spinState!=='approved' || !r.spinUrl) return;
+        if(!r || !r.spinUrl) return;   // approved AND rejected load (rejected shown with red border)
         const card=document.querySelector('#spin-grid .spin-card[data-i="'+i+'"]'); if(!card) return;
         const stage=card.querySelector('.spin-stage'); if(!stage || stage.querySelector('iframe')) return;
         stage.innerHTML='<iframe src="'+spinEsc(r.spinUrl)+'" loading="lazy" tabindex="-1" referrerpolicy="no-referrer-when-downgrade" allowfullscreen></iframe><div class="spin-shield" title="Click to interact with this spin"></div>';
@@ -6960,7 +6994,7 @@
         const mine=spinDrawId; let i=0, opened=0;
         (function step(){
             if(mine!==spinDrawId || opened>=SPIN_INITIAL) return;
-            while(i<spinList.length && spinList[i].spinState!=='approved') i++;
+            while(i<spinList.length && !spinList[i].spinUrl) i++;
             if(i>=spinList.length || i>=SPIN_PRIME_SCAN) return;
             if(i>=spinRendered) spinRenderMore(i-spinRendered+SPIN_BATCH);
             spinLoadOne(i++); opened++;
@@ -7037,8 +7071,13 @@
         if(!out.length){ bgToast('No spin verdicts to submit yet.','info'); return; }
         const perRow=Math.round((elapsed/out.length)*1000)/1000;
         out.forEach(r=>r.avg_review_time_seconds=perRow);
-        bgToast('Saving '+out.length+' spin reviews to BigQuery… ','info');
-        try { saveTeamToBQ(out, spinScopeLabel || '360 spins'); }
+        // Mirror the image flow: download the CSV, return to the dashboard immediately,
+        // and fire the BigQuery save in the BACKGROUND (retries + notifies on its own).
+        const label = spinScopeLabel || '360 spins';
+        try { spinExportCSV(); } catch(e){}
+        showPage('page-dashboard');
+        bgToast('Saving ' + out.length + ' spin reviews for ' + label + ' to BigQuery in the background…','info');
+        try { saveTeamToBQ(out, label); }
         catch(e){ bgToast('Spin save failed to start: '+((e&&e.message)||e),'error'); }
     }
 
@@ -7083,7 +7122,14 @@
             '#page-spin .spin-card[data-v="ok"]{border-left:3px solid #4ea672}',
             '#page-spin .spin-card[data-v="flag"]{border-left:3px solid #c99a3f}',
             '#page-spin .spin-card[data-v="fail"]{border-left:3px solid #c0584f}',
-            '#page-spin .spin-meta{display:flex;gap:10px;align-items:baseline;padding:8px 10px;border-bottom:1px solid #3d4148}',
+            '#page-spin .spin-card.rej{border-color:#b91c1c}',
+            '#page-spin .spin-card.rej .spin-stage{outline:3px solid #b91c1c;outline-offset:-3px}',
+            '#page-spin .spin-rejtag{background:#b91c1c;color:#fff;font-size:9px;font-weight:700;letter-spacing:.08em;padding:1px 6px;border-radius:4px;align-self:center}',
+            '#page-spin .spin-copy{background:transparent;border:1px solid #3d4148;border-radius:4px;color:#a4a9b0;cursor:pointer;padding:0 5px;font-size:11px;line-height:1.7;align-self:center}',
+            '#page-spin .spin-copy:hover{background:#3a3e44;color:#eceef0}',
+            '#page-spin .spin-vdp{color:#7dd3fc;text-decoration:none;font-size:12px;margin-left:auto;white-space:nowrap;align-self:center}',
+            '#page-spin .spin-vdp:hover{color:#bae6fd;text-decoration:underline}',
+            '#page-spin .spin-meta{display:flex;gap:8px;align-items:center;padding:8px 10px;border-bottom:1px solid #3d4148}',
             '#page-spin .spin-vin{font:12px/1 ui-monospace,Menlo,monospace}',
             '#page-spin .spin-ttl{color:#a4a9b0;font-size:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}',
             '#page-spin .spin-idx{color:#a4a9b0;font-size:11px;font-variant-numeric:tabular-nums}',
