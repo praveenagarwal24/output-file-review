@@ -1882,6 +1882,9 @@
         teamsList.sort((a, b) => a.name.localeCompare(b.name));
         console.log('[buildTeamIndex] done —', teamsList.length, 'teams,',
             teamsList.reduce((s, t) => s + t.vinCount, 0), 'VINs total');
+        // v37: warm the team_id matches in the background so opening a rooftop is
+        // usually instant (the open-gate then finds the answer already cached).
+        try { if (typeof prefetchTeamIds === 'function') prefetchTeamIds(); } catch (e) {}
     }
 
     // Split a pipe-or-comma separated URL string into an array of clean URLs
@@ -4941,8 +4944,10 @@
     const resolvedTeamInfo = {};  // teamId -> {enterprise_name, enterprise_id, team_name, team_id}
     const teamIdLookupInFlight = {};
     const teamIdNotFound = {};     // synthetic teamId -> true when Metabase returned no team_id
-    const teamLookupDone = {};     // teamId -> true once the lookup ran (any outcome) — avoids re-query on re-open
+    const teamLookupDone = {};     // teamId -> true once the lookup reached a DEFINITIVE answer (matched or not-in-db)
     const teamIdMismatch = {};     // teamId -> {csvId, fetchedId} when CSV team_id ≠ resolved team_id
+    const teamIdMatched  = {};     // teamId -> true (full identity from DB) / false (definitively not in DB) — v37 gate
+    const teamIdLookupError = {};  // teamId -> true when the last lookup EXHAUSTED retries (couldn't reach DB) — v37
 
     // Copy any value to the clipboard (reuses copyTeamId's clipboard + ✓ flash).
     function copyValue(btn) {
@@ -4994,6 +4999,30 @@
         if (!team) return '';
         return resolvedTeamIds[team.teamId] || team.resolvedTeamId || team.teamId || '';
     }
+    // A team_id is a PLACEHOLDER (not matched to the DB) if it's empty or one the
+    // app fabricated from the rooftop name (csv-… / drive-…). A matched DB team_id
+    // is anything else. (csv-all-rooftops is the aggregate view — handled separately.)
+    function isSyntheticTeamId(id) {
+        id = String(id || '');
+        return !id || id.startsWith('csv-') || id.startsWith('drive-');
+    }
+    // Make sure the team_id detection has finished (start it if needed, then wait
+    // out the async Metabase lookup up to maxMs). Returns when teamLookupDone[tid]
+    // is set (any outcome) or the timeout elapses. Used to gate submit so a fast
+    // reviewer can't save before the real team_id is resolved.
+    async function ensureTeamResolved(team, maxMs) {
+        maxMs = maxMs || 12000;
+        const tid = team && team.teamId;
+        if (!tid) return;
+        if (teamLookupDone[tid]) return;
+        if (teamIdLookupInFlight[tid]) { /* already running — just wait below */ }
+        else if (teamNeedsTeamIdLookup(team)) { resolveTeamIdForTeam(team); }
+        else return;   // nothing to resolve (no real enterprise_id, etc.)
+        const start = Date.now();
+        while (!teamLookupDone[tid] && (Date.now() - start) < maxMs) {
+            await new Promise(r => setTimeout(r, 150));
+        }
+    }
     // A synthetic id = one the app FABRICATED because the CSV had no team_id:
     // 'csv-<rooftop>' (Upload-CSV path) or 'drive-<rooftop>' (Drive path). A real
     // team_id from the CSV has neither prefix.
@@ -5011,8 +5040,9 @@
         const tid = String(team.teamId);
         if (tid === 'csv-all-rooftops') return false;                  // virtual aggregate — skip
         if (teamLookupDone[tid]) return false;                         // already processed this session
+        if (!teamIsSyntheticId(team)) return true;                     // real CSV team_id → verify by id (enterprise not needed)
         const eid = String(team.entId || '').trim();
-        if (!eid || eid === 'drive-ent-001' || eid === 'csv-ent-001') return false;  // no real enterprise_id → skip
+        if (!eid || eid === 'drive-ent-001' || eid === 'csv-ent-001') return false;  // synthetic w/o enterprise → can't VIN-lookup
         return true;
     }
     // Sample min(500, all VINs) distinct VINs at random (v27 raised from 100).
@@ -5027,6 +5057,21 @@
             const t = uniq[i]; uniq[i] = uniq[j]; uniq[j] = t;
         }
         return uniq.slice(0, n);
+    }
+    // VINs to sample for a synthetic team's lookup. Prefer the team's OWN VINs
+    // (so prefetch works for ANY team, not just the open one); fall back to the
+    // currently-open team's VIN arrays.
+    function getTeamLookupVins(team) {
+        const tid = team && team.teamId;
+        const vmap = tid && (typeof vinsByTeam !== 'undefined') && vinsByTeam.get(tid);
+        if (vmap && vmap.size) {
+            const arr = [];
+            for (const key of vmap.keys()) { arr.push({ vin: key.includes('|~|') ? key.split('|~|')[0] : key }); }
+            return arr;
+        }
+        if (typeof currentImg1VINs !== 'undefined' && currentImg1VINs && currentImg1VINs.length) return currentImg1VINs;
+        if (typeof currentTeamVINs !== 'undefined' && currentTeamVINs && currentTeamVINs.length) return currentTeamVINs;
+        return [];
     }
     // Re-apply the cached header UI for a team (strip / warning / nothing) on re-open.
     function applyTeamIdentityUI(team) {
@@ -5057,87 +5102,178 @@
                      + '</b> (keeping CSV id)';
         el.classList.remove('hidden');
     }
-    // Resolve + verify the team identity from Metabase (non-blocking, cached).
+    // Resolve + VERIFY the team identity from Metabase. Robust (v37): retries
+    // transient errors so the lookup "shouldn't fail" on a flaky call, and records a
+    // DEFINITIVE outcome — teamIdMatched[tid] = true (real team_id + team_name +
+    // enterprise_name from the DB) or false (definitively not in the DB). If every
+    // retry is exhausted (DB unreachable) it sets teamIdLookupError[tid] and leaves
+    // teamLookupDone UNSET so it can be retried. No modals here — the open-gate blocks.
     async function resolveTeamIdForTeam(team) {
         const tid = team && team.teamId;
-        // Already processed this session → just re-apply the cached UI (no slow re-query).
-        if (tid && teamLookupDone[tid]) {
-            applyTeamIdentityUI(team);
-            if (teamIdNotFound[tid]) promptTeamNotInSpyne(team);
-            return;
-        }
+        if (!tid) return;
+        if (teamLookupDone[tid]) { applyTeamIdentityUI(team); return; }   // definitive answer cached
         if (!teamNeedsTeamIdLookup(team)) return;
         if (teamIdLookupInFlight[tid]) return;
         teamIdLookupInFlight[tid] = true;
+        teamIdLookupError[tid] = false;
         const synthetic = teamIsSyntheticId(team);
+        const MAX_ATTEMPTS = 4;
         try {
             let reqBody;
             if (synthetic) {
-                // No CSV team_id → find the team FROM the VINs (VIN-based card 12897).
-                const src  = (currentImg1VINs && currentImg1VINs.length) ? currentImg1VINs
-                           : (typeof currentTeamVINs !== 'undefined' && currentTeamVINs && currentTeamVINs.length) ? currentTeamVINs
-                           : [];
-                const vins = sampleVinsForLookup(src);
-                if (!vins.length) { teamIdLookupInFlight[tid] = false; return; }
+                const vins = sampleVinsForLookup(getTeamLookupVins(team));
+                if (!vins.length) { teamIdLookupError[tid] = true; return; }   // nothing to look up with → unverifiable
                 reqBody = { action: 'resolveTeamId', enterprise_id: String(team.entId || '').trim(), vins: vins };
             } else {
-                // CSV already has a team_id → look up the names DIRECTLY by that team_id
-                // (fast, exact — no VINs). Server runs an /api/dataset query keyed on team_id.
                 reqBody = { action: 'resolveByTeamId', team_id: String(tid) };
             }
-            console.log('[team_id] request →', reqBody);
-            const res  = await fetch(BQ_WEBAPP_URL, { method: 'POST', redirect: 'follow', body: JSON.stringify(reqBody) });
-            const raw  = await res.text();
-            let data = {}; try { data = JSON.parse(raw); } catch (e) { /* non-JSON */ }
-            console.log('[team_id] response ←', res.status, raw);
-            const fetchedId = data && data.ok ? String(data.team_id || '').trim() : '';
-            const info = {
-                enterprise_name: String((data && data.enterprise_name) || '').trim(),
-                enterprise_id:   String((data && data.enterprise_id)   || team.entId || '').trim(),
-                team_name:       String((data && data.team_name)       || '').trim(),
-                team_id:         fetchedId
-            };
-            teamLookupDone[tid] = true;
-
-            if (synthetic) {
-                // No CSV team_id → adopt the resolved one, or prompt "not in Spyne".
-                if (fetchedId) {
-                    resolvedTeamIds[tid] = fetchedId;
-                    team.resolvedTeamId = fetchedId;
-                    resolvedTeamInfo[tid] = info;
-                    team.resolvedInfo = info;
-                    applyTeamIdentityUI(team);
-                    if (typeof bgToast === 'function') bgToast('team_id resolved: ' + fetchedId, 'success');
-                } else {
-                    teamIdNotFound[tid] = true;
-                    promptTeamNotInSpyne(team);
+            let data = null, lastErr = '';
+            for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+                try {
+                    console.log('[team_id] request → (try ' + attempt + '/' + MAX_ATTEMPTS + ')', reqBody.action, tid);
+                    const res = await fetch(BQ_WEBAPP_URL, { method: 'POST', redirect: 'follow', body: JSON.stringify(reqBody) });
+                    if (!res.ok) throw new Error('http ' + res.status);
+                    const raw = await res.text();
+                    let parsed; try { parsed = JSON.parse(raw); } catch (e) { throw new Error('bad json'); }
+                    console.log('[team_id] response ←', res.status, String(raw).slice(0, 300));
+                    if (!parsed || parsed.ok === false) throw new Error((parsed && parsed.error) || 'server not-ok');
+                    data = parsed;   // reached the DB with a real answer
+                    break;
+                } catch (e) {
+                    lastErr = String((e && e.message) || e);
+                    if (attempt < MAX_ATTEMPTS) { await new Promise(r => setTimeout(r, 700 * attempt)); }
                 }
-            } else {
-                // Real CSV team_id → KEEP it; just fetch the OTHER details (enterprise + team
-                // names) to enrich the display. No matching, no warning (Praveen's call).
-                const gotDetails = info.team_name || info.enterprise_name;
-                if (gotDetails) {
-                    const info2 = {
-                        enterprise_name: info.enterprise_name,
-                        enterprise_id:   info.enterprise_id || String(team.entId || ''),
-                        team_name:       info.team_name,
-                        team_id:         String(tid)          // keep the CSV team_id (do NOT adopt fetched)
-                    };
-                    resolvedTeamIds[tid]  = String(tid);       // bqTeamId stays the CSV team_id
-                    resolvedTeamInfo[tid] = info2;
-                    team.resolvedInfo     = info2;
-                    applyTeamIdentityUI(team);
-                    if (typeof bgToast === 'function') bgToast('Team details loaded', 'success');
-                }
-                // else: no other details returned → leave the normal header (rooftop name + team_id chip) as-is.
             }
+            if (!data) {   // all retries exhausted → error (NOT a block, NOT a pass)
+                teamIdLookupError[tid] = true;
+                console.warn('[team_id] lookup could not complete for', tid, '—', lastErr);
+                return;
+            }
+            // Definitive DB answer.
+            const fetchedId = String(data.team_id || '').trim();
+            const realId    = synthetic ? fetchedId : String(tid);
+            const info = {
+                enterprise_name: String(data.enterprise_name || '').trim(),
+                enterprise_id:   String(data.enterprise_id || team.entId || '').trim(),
+                team_name:       String(data.team_name || '').trim(),
+                team_id:         realId
+            };
+            // "Matched" = a real (non-placeholder) team_id AND full identity names.
+            const fullIdentity = !!realId && !isSyntheticTeamId(realId) && !!info.team_name && !!info.enterprise_name;
+            teamLookupDone[tid] = true;
+            if (fullIdentity) {
+                resolvedTeamIds[tid]  = realId;
+                team.resolvedTeamId   = realId;
+                resolvedTeamInfo[tid] = info;
+                team.resolvedInfo     = info;
+                teamIdMatched[tid]    = true;
+            } else {
+                teamIdMatched[tid]    = false;
+                if (synthetic) teamIdNotFound[tid] = true;
+            }
+            applyTeamIdentityUI(team);
         } catch (e) {
             console.warn('[team_id] lookup failed', e);
-            teamLookupDone[tid] = true;
-            // Only the synthetic (no CSV id) case blocks the reviewer; a real id just stays as-is.
-            if (synthetic) { teamIdNotFound[tid] = true; promptTeamNotInSpyne(team); }
+            teamIdLookupError[tid] = true;   // treat unexpected failure as retryable, not a block
         } finally {
             teamIdLookupInFlight[tid] = false;
+        }
+    }
+
+    // ── v37: background prefetch so opening a rooftop is usually instant ──────
+    let _teamPrefetchToken = 0;
+    function prefetchTeamIds() {
+        if (typeof teamsList === 'undefined' || !teamsList.length) return;
+        const myToken = ++_teamPrefetchToken;
+        const queue = teamsList.filter(t => t && t.teamId && t.teamId !== 'csv-all-rooftops'
+                                        && !teamLookupDone[t.teamId] && teamIdMatched[t.teamId] === undefined);
+        let i = 0, active = 0; const CONC = 4;
+        (function pump() {
+            if (myToken !== _teamPrefetchToken) return;   // superseded by a newer dataset
+            while (active < CONC && i < queue.length) {
+                const t = queue[i++];
+                if (teamLookupDone[t.teamId] || teamIdLookupInFlight[t.teamId]) continue;
+                active++;
+                Promise.resolve(resolveTeamIdForTeam(t)).catch(() => {}).then(() => { active--; pump(); });
+            }
+        })();
+    }
+
+    // ── v37: open-time gate overlay ───────────────────────────────────────────
+    function ensureTeamGateEl() {
+        let el = document.getElementById('teamid-gate');
+        if (el) return el;
+        el = document.createElement('div');
+        el.id = 'teamid-gate';
+        el.style.cssText = 'position:fixed;inset:0;z-index:9999;display:none;align-items:center;justify-content:center;'
+                         + 'background:rgba(15,23,42,0.72);backdrop-filter:blur(2px)';
+        el.innerHTML = '<div id="teamid-gate-card" style="background:#fff;border-radius:14px;max-width:440px;width:90%;'
+            + 'padding:26px 24px;text-align:center;box-shadow:0 20px 60px rgba(0,0,0,.35);font-family:inherit"></div>';
+        document.body.appendChild(el);
+        return el;
+    }
+    function showTeamGate(state, team) {
+        const el = ensureTeamGateEl();
+        const card = el.querySelector('#teamid-gate-card');
+        const rooftopNm = team ? (team.rooftop || team.name || team.teamId) : '';
+        if (state === 'checking') {
+            card.innerHTML =
+                '<div style="width:38px;height:38px;margin:0 auto 14px;border:4px solid #dbeafe;border-top-color:#2563eb;'
+                + 'border-radius:50%;animation:spin 0.8s linear infinite"></div>'
+                + '<div style="font-weight:700;color:#1e293b;font-size:16px">Checking Team ID…</div>'
+                + '<div style="color:#64748b;font-size:13px;margin-top:6px">Matching this rooftop against your database. '
+                + 'This can take up to ~30s the first time.</div>'
+                + '<button id="teamid-gate-back" style="margin-top:16px;background:#e2e8f0;color:#334155;border:none;'
+                + 'border-radius:9px;padding:8px 16px;font-weight:600;cursor:pointer;font-size:12px">← Back to teams</button>';
+            card.querySelector('#teamid-gate-back').onclick = teamGateBack;
+        } else if (state === 'blocked') {
+            card.innerHTML =
+                '<div style="font-size:34px;margin-bottom:8px">⛔</div>'
+                + '<div style="font-weight:800;color:#b91c1c;font-size:16px">Team ID not matched in your database</div>'
+                + '<div style="color:#475569;font-size:13px;margin:8px 0 4px">Rooftop: <b>' + escapeHtml(String(rooftopNm)) + '</b></div>'
+                + '<div style="color:#475569;font-size:13px;margin-bottom:18px">This rooftop can’t be reviewed until its '
+                + 'team_id is matched (its VINs must exist in Spyne, or the CSV must carry a real team_id).</div>'
+                + '<button id="teamid-gate-back" style="background:#2563eb;color:#fff;border:none;border-radius:9px;'
+                + 'padding:10px 18px;font-weight:700;cursor:pointer">← Back to teams</button>';
+            card.querySelector('#teamid-gate-back').onclick = teamGateBack;
+        } else if (state === 'error') {
+            card.innerHTML =
+                '<div style="font-size:34px;margin-bottom:8px">⚠️</div>'
+                + '<div style="font-weight:800;color:#b45309;font-size:16px">Couldn’t verify Team ID</div>'
+                + '<div style="color:#475569;font-size:13px;margin:8px 0 18px">The database couldn’t be reached after several '
+                + 'tries. No review is recorded until it’s verified.</div>'
+                + '<button id="teamid-gate-retry" style="background:#2563eb;color:#fff;border:none;border-radius:9px;'
+                + 'padding:10px 18px;font-weight:700;cursor:pointer;margin-right:8px">Retry</button>'
+                + '<button id="teamid-gate-back" style="background:#e2e8f0;color:#334155;border:none;border-radius:9px;'
+                + 'padding:10px 18px;font-weight:700;cursor:pointer">← Back to teams</button>';
+            card.querySelector('#teamid-gate-back').onclick = teamGateBack;
+            card.querySelector('#teamid-gate-retry').onclick = function () {
+                if (team) { teamIdLookupError[team.teamId] = false; enforceTeamIdGate(team); }
+            };
+        }
+        el.style.display = 'flex';
+    }
+    function hideTeamGate() { const el = document.getElementById('teamid-gate'); if (el) el.style.display = 'none'; }
+    function teamGateBack() { hideTeamGate(); try { goBackToTeamsPage(); } catch (e) { showPage('page-dashboard'); } }
+
+    // Block the review until this rooftop's team_id is MATCHED. Exempts All Rooftops.
+    async function enforceTeamIdGate(team) {
+        const tid = team && team.teamId;
+        if (!tid || tid === 'csv-all-rooftops') return;         // aggregate exempt
+        if (teamIdMatched[tid] === true) { hideTeamGate(); return; }   // already matched (prefetched) → instant
+        showTeamGate('checking', team);
+        while (true) {
+            // still the team on screen? (reviewer may have navigated away)
+            const openId = (reviewMode === '1img') ? (currentImg1Team && currentImg1Team.teamId) : (currentTeam && currentTeam.teamId);
+            if (openId !== tid) { hideTeamGate(); return; }
+            if (teamIdMatched[tid] === true) { hideTeamGate(); return; }
+            if (teamLookupDone[tid] && teamIdMatched[tid] === false) { showTeamGate('blocked', team); return; }
+            if (teamIdLookupError[tid]) { showTeamGate('error', team); return; }
+            if (!teamIdLookupInFlight[tid] && !teamLookupDone[tid]) {
+                if (teamNeedsTeamIdLookup(team)) { teamIdLookupError[tid] = false; resolveTeamIdForTeam(team); }
+                else { showTeamGate('blocked', team); return; }   // unverifiable (no enterprise_id / no VINs)
+            }
+            await new Promise(r => setTimeout(r, 200));
         }
     }
     // Go back to the teams list (same as the header "Teams" button).
@@ -5377,9 +5513,10 @@
         renderReviewTeamId(bqTeamId(team), team.entId);
         renderEnterpriseMeta(team.teamId);
         applyTeamIdentityUI(team);   // show cached identity (strip / mismatch warning), if any
-        // If this rooftop's CSV had no team_id, resolve the real one from Metabase
-        // (sample VINs + enterprise_id) in the background so CSV/BQ get the right id.
-        resolveTeamIdForTeam(team);
+        // v37: GATE — the review is blocked behind a "Checking Team ID…" overlay until
+        // this rooftop's team_id is MATCHED in the database. Prefetch usually makes this
+        // instant; unmatched rooftops are blocked outright. (All Rooftops is exempt.)
+        enforceTeamIdGate(team);
 
         // Mode badge removed — title already says "1st Image Review"
         const modeBadge = document.getElementById('review-mode-badge');
@@ -6195,6 +6332,34 @@
                 return;
             }
             btn.__1imgMode = false;
+
+            // ── v36 GATE: only save when the team_id is MATCHED in the database ──
+            // Wait out any in-flight detection (so a fast submit can't beat it), then
+            // block if the resolved id is still a placeholder (csv-…/drive-…). The
+            // aggregate "All Rooftops" view is exempt (it has no single team_id).
+            const gateTid = currentImg1Team?.teamId || '';
+            if (gateTid && gateTid !== 'csv-all-rooftops') {
+                const okB = document.getElementById('complete-ok-btn');
+                const prevHTML = okB.innerHTML;
+                okB.disabled = true;
+                okB.innerHTML = '<span>Matching Team ID…</span>';
+                await ensureTeamResolved(currentImg1Team, 12000);
+                okB.disabled = false; okB.innerHTML = prevHTML;
+                const resolvedId = bqTeamId(currentImg1Team) || gateTid;
+                if (isSyntheticTeamId(resolvedId)) {
+                    // Not matched → do NOT save. Keep the reviewer on the page with marks intact.
+                    closeCompleteModal();
+                    resetCompleteOkBtn();
+                    const rooftopNm = currentImg1Team?.rooftop || currentImg1Team?.name || gateTid;
+                    alert('⛔ Team ID not matched in the database — this review was NOT saved.\n\n'
+                        + 'Rooftop: ' + rooftopNm + '\n'
+                        + 'Resolved id: ' + resolvedId + ' (placeholder)\n\n'
+                        + 'A review can only be submitted once this rooftop\'s team_id is matched '
+                        + '(its VINs must exist in Spyne / the CSV must carry a real team_id). '
+                        + 'Your marks are kept — fix the mapping and submit again.');
+                    return;
+                }
+            }
 
             // Build BQ rows — only VINs that were actually MARKED (skip untouched
             // "Pending"). Pending VINs are saved only if promoted to OK via the
