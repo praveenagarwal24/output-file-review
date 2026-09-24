@@ -982,6 +982,25 @@ function buildWhere(opts={}) {
 
 const COLORS={'OK':'#10b981','Raw':'#f97316','Stock':'#3b82f6','Bad Input':'#8b5cf6','Banner':'#ec4899','Background':'#14b8a6','Quality':'#f59e0b','Hero Angle':'#6366f1','Photo NA':'#94a3b8','Unsupported Vehicle':'#ef4444','Pending':'#64748b','Sequence':'#06b6d4','No exterior':'#84cc16','Input Overlap':'#a78bfa'};
 const ic=t=>COLORS[t]||'#64748b';
+// One-line definitions per issue type (edit wording freely).
+const ISSUE_DEFS={
+  'OK':'Image passed QC — no issue found.',
+  'Pending':'Review not yet completed / awaiting action.',
+  'Stock':'A stock or placeholder image was used instead of the actual vehicle.',
+  'Raw':'Unedited image — background replacement / enhancement not applied.',
+  'Photo NA':'No photo available for this VIN.',
+  'Error':'Processing or system error while generating the image.',
+  'Hero Angle':'Hero image is at the wrong angle (not the standard front 3/4 view).',
+  'Background':'Incorrect or poorly replaced background.',
+  'Unsupported Vehicle':'Vehicle type not supported by the pipeline.',
+  'Bad Input':'Poor input photo — blurry, obstructed, or wrongly framed.',
+  'Banner':'Missing or incorrect promotional banner / overlay.',
+  'Quality':'General image-quality issue (resolution, lighting, artifacts).',
+  'Sequence':'Images are in the wrong order / sequence.',
+  'No exterior':'No exterior shots of the vehicle available.',
+  'Input Overlap':'Duplicate or overlapping input images.'
+};
+const idef=t=>(ISSUE_DEFS[t]||'').replace(/"/g,'');
 const pct=(a,b)=>b>0?Math.round(a/b*100):0;
 const N=v=>parseInt(v)||0;
 const money=v=>{const n=Number(v)||0;if(n>=1e6)return '$'+(n/1e6).toFixed(1)+'M';if(n>=1e3)return '$'+(n/1e3).toFixed(1)+'K';return '$'+Math.round(n);};
@@ -1368,7 +1387,7 @@ ORDER BY g, bucket`;
       <div class="chart-card">
         <div class="chart-title">Issue Types · click a row to drill</div>
         <table><thead><tr><th>Issue Type</th><th title="Rooftop-level: rooftops with ≥1 VIN having this issue">Rooftops</th><th title="VIN-level: VIN reviews with this issue">Count</th><th>% Iss</th><th>% VINs</th><th title="Rooftops with this issue ÷ all rooftops reviewed">% Rooftops</th></tr></thead>
-        <tbody>${issR.filter(r=>r.issue_type!=='OK'&&r.issue_type!=='Pending').map(r=>{const c=N(r.cnt);const rf=rfissByType[r.issue_type]||0;const rfp=rovTot?Math.round(rf/rovTot*100):0;return `<tr style="cursor:pointer" onclick="drillIssue('${(r.issue_type||'').replace(/'/g,"\\'")}')"><td><span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:${ic(r.issue_type)};margin-right:7px"></span>${r.issue_type} <span style="color:var(--muted);font-size:9px">⤢</span></td><td><b>${rf.toLocaleString()}</b></td><td><b>${c.toLocaleString()}</b></td><td>${pct(c,issues)}%</td><td>${pct(c,total)}%</td><td>${rfp}%</td></tr>`;}).join('')}</tbody></table>
+        <tbody>${issR.filter(r=>r.issue_type!=='OK'&&r.issue_type!=='Pending').map(r=>{const c=N(r.cnt);const rf=rfissByType[r.issue_type]||0;const rfp=rovTot?Math.round(rf/rovTot*100):0;return `<tr style="cursor:pointer" onclick="drillIssue('${(r.issue_type||'').replace(/'/g,"\\'")}')"><td><span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:${ic(r.issue_type)};margin-right:7px"></span>${r.issue_type} <span onclick="event.stopPropagation()" title="${idef(r.issue_type)}" style="cursor:help;color:var(--muted);font-weight:700;font-size:10px">ⓘ</span> <span style="color:var(--muted);font-size:9px">⤢</span></td><td><b>${rf.toLocaleString()}</b></td><td><b>${c.toLocaleString()}</b></td><td>${pct(c,issues)}%</td><td>${pct(c,total)}%</td><td>${rfp}%</td></tr>`;}).join('')}</tbody></table>
       </div>
       <div class="chart-card">
         <div class="trend-controls">
@@ -1456,7 +1475,7 @@ ORDER BY g, bucket`;
 
     `;
 
-    document.getElementById('last-updated').textContent='Updated '+new Date().toLocaleTimeString();
+    document.getElementById('last-updated').textContent='Updated '+new Date().toLocaleTimeString()+' · auto 5m';
     enableSort(mc);  // make all rendered tables sortable
     renderTrend();   // draw the interactive daily trend
     renderIssueTrend(); // draw the Issue Trend (CS view)
@@ -1468,6 +1487,8 @@ ORDER BY g, bucket`;
 document.querySelectorAll('.qs-item').forEach(i=>{ if(i.textContent.trim()==='All time') i.classList.add('active'); else i.classList.remove('active'); });
 // Boot: show the Google Sign-In gate; data loads only after an authorized sign-in.
 initAuth();
+// Auto-refresh every 5 minutes — skip while signed out, tab hidden, or a drill/modal is open.
+setInterval(()=>{ try{ const m=document.getElementById('modal-ov'); if(AUTH_TOKEN && !document.hidden && !(m&&m.classList.contains('open'))) loadAll(); }catch(e){} }, 300000);
 </script>
 </body>
 </html>
