@@ -267,6 +267,7 @@ body.locked{overflow:hidden}
   <div class="hdr-right">
     <span id="user-chip"><img id="uc-img" alt=""><span id="uc-email"></span><span class="uc-out" onclick="signOut()">Sign out</span></span>
     <span id="last-updated"></span>
+    <span id="sync-timer" title="Auto-refreshes on this countdown" style="font-size:11px;color:var(--muted);white-space:nowrap"></span>
     <button class="btn" id="access-log-btn" onclick="openAccessLogs()" title="Who logged in and when (admin only)" style="display:none">
       <svg width="12" height="12" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.2" d="M12 8v4l3 2M12 3a9 9 0 100 18 9 9 0 000-18z"/></svg>
       Access Logs
@@ -1001,6 +1002,7 @@ const ISSUE_DEFS={
   'Input Overlap':'Duplicate or overlapping input images.'
 };
 const idef=t=>(ISSUE_DEFS[t]||'').replace(/"/g,'');
+const ICO_INFO='<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="vertical-align:middle"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4"/><path d="M12 8h.01"/></svg>';
 const pct=(a,b)=>b>0?Math.round(a/b*100):0;
 const N=v=>parseInt(v)||0;
 const money=v=>{const n=Number(v)||0;if(n>=1e6)return '$'+(n/1e6).toFixed(1)+'M';if(n>=1e3)return '$'+(n/1e3).toFixed(1)+'K';return '$'+Math.round(n);};
@@ -1387,7 +1389,7 @@ ORDER BY g, bucket`;
       <div class="chart-card">
         <div class="chart-title">Issue Types · click a row to drill</div>
         <table><thead><tr><th>Issue Type</th><th title="Rooftop-level: rooftops with ≥1 VIN having this issue">Rooftops</th><th title="VIN-level: VIN reviews with this issue">Count</th><th>% Iss</th><th>% VINs</th><th title="Rooftops with this issue ÷ all rooftops reviewed">% Rooftops</th></tr></thead>
-        <tbody>${issR.filter(r=>r.issue_type!=='OK'&&r.issue_type!=='Pending').map(r=>{const c=N(r.cnt);const rf=rfissByType[r.issue_type]||0;const rfp=rovTot?Math.round(rf/rovTot*100):0;return `<tr style="cursor:pointer" onclick="drillIssue('${(r.issue_type||'').replace(/'/g,"\\'")}')"><td><span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:${ic(r.issue_type)};margin-right:7px"></span>${r.issue_type} <span onclick="event.stopPropagation()" title="${idef(r.issue_type)}" style="cursor:help;color:var(--muted);font-weight:700;font-size:10px">ⓘ</span> <span style="color:var(--muted);font-size:9px">⤢</span></td><td><b>${rf.toLocaleString()}</b></td><td><b>${c.toLocaleString()}</b></td><td>${pct(c,issues)}%</td><td>${pct(c,total)}%</td><td>${rfp}%</td></tr>`;}).join('')}</tbody></table>
+        <tbody>${issR.filter(r=>r.issue_type!=='OK'&&r.issue_type!=='Pending').map(r=>{const c=N(r.cnt);const rf=rfissByType[r.issue_type]||0;const rfp=rovTot?Math.round(rf/rovTot*100):0;return `<tr style="cursor:pointer" onclick="drillIssue('${(r.issue_type||'').replace(/'/g,"\\'")}')"><td><span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:${ic(r.issue_type)};margin-right:7px"></span>${r.issue_type} <span onclick="event.stopPropagation()" title="${idef(r.issue_type)}" style="cursor:default;color:var(--muted)">${ICO_INFO}</span> <span style="color:var(--muted);font-size:9px">⤢</span></td><td><b>${rf.toLocaleString()}</b></td><td><b>${c.toLocaleString()}</b></td><td>${pct(c,issues)}%</td><td>${pct(c,total)}%</td><td>${rfp}%</td></tr>`;}).join('')}</tbody></table>
       </div>
       <div class="chart-card">
         <div class="trend-controls">
@@ -1475,7 +1477,8 @@ ORDER BY g, bucket`;
 
     `;
 
-    document.getElementById('last-updated').textContent='Updated '+new Date().toLocaleTimeString()+' · auto 5m';
+    document.getElementById('last-updated').textContent='Updated '+new Date().toLocaleTimeString();
+    _nextSync=Date.now()+SYNC_MS; renderSyncTimer();  // reset the auto-refresh countdown on every (re)load
     enableSort(mc);  // make all rendered tables sortable
     renderTrend();   // draw the interactive daily trend
     renderIssueTrend(); // draw the Issue Trend (CS view)
@@ -1487,8 +1490,27 @@ ORDER BY g, bucket`;
 document.querySelectorAll('.qs-item').forEach(i=>{ if(i.textContent.trim()==='All time') i.classList.add('active'); else i.classList.remove('active'); });
 // Boot: show the Google Sign-In gate; data loads only after an authorized sign-in.
 initAuth();
-// Auto-refresh every 5 minutes — skip while signed out, tab hidden, or a drill/modal is open.
-setInterval(()=>{ try{ const m=document.getElementById('modal-ov'); if(AUTH_TOKEN && !document.hidden && !(m&&m.classList.contains('open'))) loadAll(); }catch(e){} }, 300000);
+// ── Auto-refresh with a live countdown (running timer) ──
+const SYNC_MS=300000;                 // 5 minutes
+let _nextSync=Date.now()+SYNC_MS;     // reset in loadAll() after each successful (re)load
+function renderSyncTimer(){
+  const el=document.getElementById('sync-timer'); if(!el) return;
+  if(!AUTH_TOKEN){ el.textContent=''; return; }
+  let ms=_nextSync-Date.now(); if(ms<0) ms=0;
+  const s=Math.floor(ms/1000), m=Math.floor(s/60), ss=String(s%60).padStart(2,'0');
+  el.textContent='· next sync '+m+':'+ss;
+}
+setInterval(()=>{
+  try{
+    if(!AUTH_TOKEN) return;
+    renderSyncTimer();
+    if(Date.now()>=_nextSync){
+      const mo=document.getElementById('modal-ov');
+      if(!document.hidden && !(mo&&mo.classList.contains('open'))){ loadAll(); }   // loadAll resets _nextSync
+      else { _nextSync=Date.now()+15000; }                                          // busy/hidden → retry in 15s
+    }
+  }catch(e){}
+}, 1000);
 </script>
 </body>
 </html>
