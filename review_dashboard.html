@@ -369,6 +369,12 @@ body.locked{overflow:hidden}
     <div class="ms-box" onclick="msToggle('segment')"><span class="ms-label ph" id="ms-lbl-segment">All segments</span><span class="ms-clear" id="ms-clr-segment" title="Clear" onclick="msClear(event,'segment')">✕</span><span class="ms-caret">▾</span></div>
     <div class="ms-panel" id="ms-panel-segment"><input class="ms-search" id="ms-search-segment" placeholder="Search segments…" oninput="msFilter('segment')" onclick="event.stopPropagation()"><div class="ms-list" id="ms-list-segment"></div></div>
   </div>
+
+  <span class="filter-label">Condition</span>
+  <div class="ms" id="ms-condition">
+    <div class="ms-box" onclick="msToggle('condition')"><span class="ms-label ph" id="ms-lbl-condition">All conditions</span><span class="ms-clear" id="ms-clr-condition" title="Clear" onclick="msClear(event,'condition')">✕</span><span class="ms-caret">▾</span></div>
+    <div class="ms-panel" id="ms-panel-condition"><input class="ms-search" id="ms-search-condition" placeholder="Search conditions…" oninput="msFilter('condition')" onclick="event.stopPropagation()"><div class="ms-list" id="ms-list-condition"></div></div>
+  </div>
 </div>
 
 <div class="modal-ov" id="modal-ov" onclick="if(event.target===this)closeModal()">
@@ -966,8 +972,15 @@ const MS={
   rooftop:{opts:[],sel:new Set(),ph:'All rooftops'},
   reviewer:{opts:[],sel:new Set(),ph:'All reviewers'},
   poc:{opts:[],sel:new Set(),ph:'All POCs'},
-  segment:{opts:[{value:'Ent',label:'Ent',title:'Enterprise'},{value:'Mid',label:'Mid',title:'Mid-market'},{value:'SMB',label:'SMB',title:'SMB'},{value:'Others',label:'Others',title:'No segment / other'}],sel:new Set(),ph:'All segments'}
+  segment:{opts:[{value:'Ent',label:'Ent',title:'Enterprise'},{value:'Mid',label:'Mid',title:'Mid-market'},{value:'SMB',label:'SMB',title:'SMB'},{value:'Others',label:'Others',title:'No segment / other'}],sel:new Set(),ph:'All segments'},
+  condition:{opts:[{value:'New',label:'New',title:'New / 0km'},{value:'Used',label:'Used',title:'Used / Pre-owned / Usado'},{value:'Certified/CPO',label:'Certified / CPO',title:'Certified Pre-Owned'},{value:'Others',label:'Others',title:'Demo / blank / other'}],sel:new Set(),ph:'All conditions'}
 };
+// Vehicle-condition values are messy (New/new/0km, Used/Usado/Pre-owned, Certified/cpo…),
+// so the filter buckets them with this normaliser (used in the WHERE clause).
+const COND_NORM = "CASE WHEN LOWER(TRIM(condition)) LIKE '%certif%' OR LOWER(TRIM(condition))='cpo' OR LOWER(TRIM(condition))='ctp' THEN 'Certified/CPO' " +
+  "WHEN LOWER(TRIM(condition)) LIKE '%used%' OR LOWER(TRIM(condition)) LIKE '%pre%own%' OR LOWER(TRIM(condition))='usado' THEN 'Used' " +
+  "WHEN LOWER(TRIM(condition)) LIKE 'new%' OR LOWER(TRIM(condition))='0km' THEN 'New' " +
+  "ELSE 'Others' END";
 const _esc=s=>(''+s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
 function msVals(key){ return [...MS[key].sel]; }
 function msLabelText(key){ const m=MS[key],n=m.sel.size; if(!n) return m.ph; if(n===1){ const v=[...m.sel][0], o=m.opts.find(o=>o.value===v); return o?o.label:v; } return n+' selected'; }
@@ -992,6 +1005,7 @@ function buildWhere(opts={}) {
   const segs=msVals('segment');
   if(segs.length){ const spec=segs.filter(s=>s!=='Others'), alt=[]; if(spec.length) alt.push(`customer_segment IN (${inList(spec)})`); if(segs.indexOf('Others')>=0) alt.push(`(customer_segment IS NULL OR customer_segment NOT IN ('Ent','Mid','SMB'))`); if(alt.length) parts.push('('+alt.join(' OR ')+')'); }
   const poc=msVals('poc'); if(poc.length){ const L=inList(poc); parts.push(`(ae_poc_email IN (${L}) OR ob_poc_email IN (${L}) OR cs_poc_email IN (${L}))`); }
+  const cond=msVals('condition'); if(cond.length) parts.push(`(${COND_NORM}) IN (${inList(cond)})`);
   return parts.length ? 'WHERE '+parts.join(' AND ') : '';
 }
 
@@ -1261,7 +1275,7 @@ async function loadFilterOptions(){
     MS.rooftop.opts=rts.filter(r=>r.rooftop).map(r=>({value:r.rooftop,label:r.rooftop,title:r.rooftop}));
     MS.reviewer.opts=rvs.filter(r=>r.reviewer).map(r=>({value:r.reviewer,label:r.reviewer.split('@')[0],title:r.reviewer}));
     MS.poc.opts=pocs.filter(r=>r.poc).map(r=>({value:r.poc,label:r.poc.split('@')[0],title:r.poc}));
-    ['enterprise','rooftop','reviewer','poc','segment'].forEach(k=>msUpdateLabel(k));
+    ['enterprise','rooftop','reviewer','poc','segment','condition'].forEach(k=>msUpdateLabel(k));
   }catch(e){console.warn('filter options:',e);}
 }
 
