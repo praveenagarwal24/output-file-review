@@ -3601,6 +3601,7 @@
         // Select only UNMARKED VINs — skip any that already have a tag (OK or an issue).
         let added = 0, skipped = 0;
         currentImg1VINs.forEach((v, i) => {
+            if (!condMatches(v)) return;             // only within the active condition filter
             const st = getImg1Review(currentImg1Team.teamId, v.vin, v.rooftop || '');
             if (st) { skipped++; return; }           // already marked → skip
             if (!selectedVINIndices.has(i)) { selectedVINIndices.add(i); added++; }
@@ -3633,6 +3634,7 @@
         selectedVINIndices.clear();
         let n = 0;
         currentImg1VINs.forEach((v, i) => {
+            if (!condMatches(v)) return;          // only select within the active condition filter
             const issue = _isIssueMarked(v);
             const pick = mode === 'all' ? true
                        : mode === 'marked' ? issue
@@ -3672,7 +3674,7 @@
     function unmarkAllIssues() {
         if (reviewMode !== '1img' || !currentImg1Team) return;
         const targets = [];
-        currentImg1VINs.forEach((v, i) => { if (_isIssueMarked(v)) targets.push(i); });
+        currentImg1VINs.forEach((v, i) => { if (condMatches(v) && _isIssueMarked(v)) targets.push(i); });
         if (!targets.length) { if (typeof bgToast === 'function') bgToast('No issue-marked VINs to unmark.', 'info'); return; }
         if (!confirm('Clear the issue tag on all ' + targets.length + ' issue-marked VIN' + (targets.length === 1 ? '' : 's') + ' (back to pending)?\n\nOK-approved VINs are left as-is.')) return;
         _unmarkIndices(targets);
