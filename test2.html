@@ -6293,6 +6293,7 @@
             const rinfoCsv  = resolvedTeamInfo[currentImg1Team.teamId] || currentImg1Team.resolvedInfo || null;
             const outRooftop = (rinfoCsv && rinfoCsv.team_name) || '';
             currentImg1VINs.forEach((v, idx) => {
+                if (!condMatches(v)) return;           // condition-scoped CSV, matches the BQ submit
                 const teamId  = currentImg1Team.teamId;
                 const rooftop = v.rooftop || '';
                 const st      = getImg1Review(teamId, v.vin, rooftop) || 'pending';
@@ -6423,6 +6424,7 @@
             const bqEnterprise = (rinfo && rinfo.enterprise_name) || selectedEnterprise || currentImg1Team?.name || '';
             const bqEntId      = (rinfo && rinfo.enterprise_id)   || currentImg1Team?.entId || selectedEnterpriseId || '';
             (currentImg1VINs || []).forEach(v => {
+                if (!condMatches(v)) return;           // condition-scoped: only write the filtered condition to BQ
                 const rooftop = v.rooftop || currentImg1Team?.rooftop || '';
                 const st      = getImg1Review(teamId, v.vin, rooftop);
                 if (!st) return;                       // skip pending / unmarked VINs
