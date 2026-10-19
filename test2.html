@@ -667,6 +667,12 @@
                         </div>
                     </div>
                 </div>
+                <div class="px-3 py-2 border-b border-slate-100 flex-shrink-0">
+                    <label class="text-[10px] font-semibold text-slate-400 uppercase tracking-wider block mb-1">Condition</label>
+                    <select id="cond-filter" onchange="setCondFilter(this.value)" class="w-full text-[11px] border border-slate-200 rounded px-2 py-1 bg-white text-slate-700 focus:outline-none focus:ring-1 focus:ring-blue-400">
+                        <option value="All">All</option>
+                    </select>
+                </div>
                 <div id="vin-list" class="flex-1 min-h-0 overflow-y-auto p-2 space-y-0.5"></div>
             </aside>
 
@@ -5509,6 +5515,8 @@
                 condition: Array.isArray(entry) ? '' : (entry.condition || '')
             };
         }) : [];
+        img1CondFilter = 'All';                 // default All on each rooftop load
+        populateCondFilter();
 
         // Reuse the same review page — update header labels
         document.getElementById('review-team-name').innerText = team.rooftop || team.name || '1st Image Review';
@@ -5696,6 +5704,26 @@
     // render1ImgVinList() — it's the 1st-image VIN sidebar renderer.
     function render1ImgVinList() { return render1ImgSidebar(); }
 
+    // ── Condition filter (view-only: narrows which VINs show; never touches review/submit) ──
+    let img1CondFilter = 'All';
+    function condMatches(v) { return img1CondFilter === 'All' || String(v.condition || '').trim() === img1CondFilter; }
+    // Rebuild the dropdown options from the current rooftop's distinct conditions.
+    function populateCondFilter() {
+        const sel = document.getElementById('cond-filter');
+        if (!sel) return;
+        const conds = [...new Set(currentImg1VINs.map(v => String(v.condition || '').trim()).filter(Boolean))].sort();
+        // keep current pick if it's still present, else reset to All
+        if (img1CondFilter !== 'All' && conds.indexOf(img1CondFilter) < 0) img1CondFilter = 'All';
+        sel.innerHTML = '<option value="All">All' + (currentImg1VINs.length ? ' (' + currentImg1VINs.length + ')' : '') + '</option>' +
+            conds.map(c => { const n = currentImg1VINs.filter(v => String(v.condition || '').trim() === c).length; return '<option value="' + escapeHtml(c) + '"' + (c === img1CondFilter ? ' selected' : '') + '>' + escapeHtml(c) + ' (' + n + ')</option>'; }).join('');
+        sel.value = img1CondFilter;
+    }
+    function setCondFilter(v) {
+        img1CondFilter = v || 'All';
+        render1ImgSidebar();
+        if (reviewMode === '1img' && img1ViewMode === 'grid') { try { render1ImgGallery(); } catch (e) {} }
+    }
+
     function render1ImgSidebar() {
         const list = document.getElementById('vin-list');
         const searchTerm = (document.getElementById('vin-search').value || '').toLowerCase().trim();
@@ -5705,6 +5733,7 @@
             const st = getImg1Review(currentImg1Team.teamId, v.vin, v.rooftop || '');
             if (st === 'ok') ok++;
             if (st === 'raw' || st === 'stock' || st === 'internal') issue++;
+            if (!condMatches(v)) return;                                 // condition view-filter
             if (searchTerm && !v.vin.toLowerCase().includes(searchTerm)) return;
 
             // stateClass drives CSS: 'approved'=green bg, 'rejected'=red bg, 'pending'=grey
@@ -5857,6 +5886,7 @@
         const frag = document.createDocumentFragment();
 
         currentImg1VINs.forEach((v, idx) => {
+            if (!condMatches(v)) return;                                 // condition view-filter
             const st = getImg1Review(currentImg1Team.teamId, v.vin, v.rooftop || '') || 'pending';
             const firstUrl = v.urls[0] || '';
 
