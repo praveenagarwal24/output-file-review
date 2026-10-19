@@ -5554,9 +5554,13 @@
                     // Single view: show summary modal, pending VINs stay as pending
                     openImg1Complete(false);  // false = don't auto-approve pending
                 } else {
-                    // Grid view: confirm then auto-approve pending as OK (original behaviour)
-                    const pending = currentImg1VINs.filter(v => !getImg1Review(currentImg1Team.teamId, v.vin, v.rooftop || '')).length;
-                    if (pending > 0 && !confirm(pending + ' VINs still pending. Mark all as Done anyway?')) return;
+                    // Grid view: confirm then auto-approve pending as OK. When a condition
+                    // filter is active, only that condition is finalised — others stay pending.
+                    const pending = currentImg1VINs.filter(v => condMatches(v) && !getImg1Review(currentImg1Team.teamId, v.vin, v.rooftop || '')).length;
+                    const scoped  = img1CondFilter !== 'All';
+                    const noun    = scoped ? '"' + img1CondFilter + '" VINs' : 'VINs';
+                    const extra   = scoped ? ' (other conditions stay pending for later)' : '';
+                    if (pending > 0 && !confirm(pending + ' ' + noun + ' still pending. Mark them as Done' + extra + '?')) return;
                     openImg1Complete(true);   // true = auto-approve pending as OK
                 }
             };
@@ -6064,6 +6068,7 @@
         const bulkRows = [];   // only newly auto-approved VINs
 
         currentImg1VINs.forEach((v, idx) => {
+            if (!condMatches(v)) return;   // condition-scoped Done: leave other conditions untouched
             const rooftop = v.rooftop || '';
             const alreadyReviewed = !!getImg1Review(teamId, v.vin, rooftop);
 
@@ -6124,7 +6129,18 @@
             else pending++;
         });
         const titleName = currentImg1Team.rooftop || currentImg1Team.name || '';
-        document.getElementById('complete-subtitle').innerText = titleName + ' · 1st Image Review';
+        let subtitle = titleName + ' · 1st Image Review';
+        // Condition-scoped Done: tell the reviewer what was submitted vs what's pending by condition.
+        if (img1CondFilter !== 'All') {
+            const pend = {};
+            currentImg1VINs.forEach(v => {
+                const c = String(v.condition || '').trim() || '(blank)';
+                if (c !== img1CondFilter && !getImg1Review(teamId, v.vin, v.rooftop || '')) pend[c] = (pend[c] || 0) + 1;
+            });
+            const pendStr = Object.keys(pend).sort().map(c => c + ' (' + pend[c] + ')').join(', ');
+            subtitle += ' — ✅ submitted "' + img1CondFilter + '"' + (pendStr ? '  ·  ⏳ pending: ' + pendStr + ' (review later)' : '  ·  all conditions complete');
+        }
+        document.getElementById('complete-subtitle').innerText = subtitle;
         document.getElementById('complete-approved').innerText = ok;
         document.getElementById('complete-rejected').innerText = issue;
         document.getElementById('complete-total').innerText    = currentImg1VINs.length;
