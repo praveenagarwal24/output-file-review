@@ -1,0 +1,17 @@
+{
+  "name": "website-review",
+  "version": "1.0.0",
+  "description": "Spyne internal output-file review dashboards, served behind Google sign-in.",
+  "private": true,
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "start": "node server.js",
+    "build": "node -e \"require('fs').accessSync('public/index.html')\""
+  },
+  "dependencies": {
+    "cookie-parser": "^1.4.7",
+    "express": "^4.21.2"
+  }
+}

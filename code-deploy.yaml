@@ -1,0 +1,10 @@
+version: 0.2
+artifacts:
+  files:
+    - imagedefinitions.json
+phases:
+  post_build:
+    commands:
+      - test -f imagedefinitions.json
+      - cat imagedefinitions.json
+      - echo Container deploy completed
