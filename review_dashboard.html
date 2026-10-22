@@ -1329,9 +1329,9 @@ ORDER BY g, bucket`;
               CASE WHEN NULLIF(team_id,'') IS NOT NULL THEN COALESCE(NULLIF(apld_team_name,''), NULLIF(rooftop,'')) ELSE COALESCE(NULLIF(rooftop,''), NULLIF(apld_team_name,'')) END AS rt_name,
               ROW_NUMBER() OVER (PARTITION BY team_id, vin ORDER BY reviewed_at DESC) rn
             FROM ${SRC} ${W}) WHERE rn=1),
-    e  AS (SELECT 'ent' k, enterprise_name nm, CAST(NULL AS STRING) tid, COUNT(*) n, ROUND(100*COUNTIF(issue_type IN ('OK','Pending'))/COUNT(*),1) acc FROM latest WHERE enterprise_name IS NOT NULL AND enterprise_name!='' AND NOT REGEXP_CONTAINS(enterprise_name, r'^[0-9]+$') GROUP BY nm),
-    r2 AS (SELECT 'rt'  k, ANY_VALUE(rt_name) nm, ANY_VALUE(team_id) tid, COUNT(*) n, ROUND(100*COUNTIF(issue_type IN ('OK','Pending'))/COUNT(*),1) acc FROM latest WHERE rt_key IS NOT NULL AND rt_key!='' GROUP BY rt_key),
-    c  AS (SELECT 'cs'  k, cs_poc_email nm, CAST(NULL AS STRING) tid, COUNT(*) n, ROUND(100*COUNTIF(issue_type IN ('OK','Pending'))/COUNT(*),1) acc FROM latest WHERE cs_poc_email IS NOT NULL AND cs_poc_email!='' GROUP BY nm)
+    e  AS (SELECT 'ent' k, enterprise_name nm, CAST(NULL AS STRING) tid, COUNT(*) n, ROUND(100.0*COUNTIF(issue_type IN ('OK','Pending'))/COUNT(*),1) acc FROM latest WHERE enterprise_name IS NOT NULL AND enterprise_name!='' AND NOT REGEXP_CONTAINS(enterprise_name, r'^[0-9]+$') GROUP BY nm),
+    r2 AS (SELECT 'rt'  k, ANY_VALUE(rt_name) nm, ANY_VALUE(team_id) tid, COUNT(*) n, ROUND(100.0*COUNTIF(issue_type IN ('OK','Pending'))/COUNT(*),1) acc FROM latest WHERE rt_key IS NOT NULL AND rt_key!='' GROUP BY rt_key),
+    c  AS (SELECT 'cs'  k, cs_poc_email nm, CAST(NULL AS STRING) tid, COUNT(*) n, ROUND(100.0*COUNTIF(issue_type IN ('OK','Pending'))/COUNT(*),1) acc FROM latest WHERE cs_poc_email IS NOT NULL AND cs_poc_email!='' GROUP BY nm)
     SELECT * FROM (SELECT * FROM e  ORDER BY (n>=100) DESC, acc DESC, n DESC LIMIT 1)
     UNION ALL SELECT * FROM (SELECT * FROM r2 ORDER BY (n>=100) DESC, acc DESC, n DESC LIMIT 1)
     UNION ALL SELECT * FROM (SELECT * FROM c  ORDER BY (n>=100) DESC, acc DESC, n DESC LIMIT 1)`;
