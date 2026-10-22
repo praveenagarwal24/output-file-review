@@ -1266,10 +1266,10 @@ function topVolCard(label,row,color){
 async function loadFilterOptions(){
   try{
     const[ents,rts,rvs,pocs]=await runQueries([
-      `SELECT DISTINCT enterprise_name FROM ${SRC} WHERE enterprise_name IS NOT NULL ORDER BY enterprise_name`,
-      `SELECT DISTINCT rooftop FROM ${TBL} WHERE rooftop IS NOT NULL ORDER BY rooftop`,
-      `SELECT DISTINCT reviewer FROM ${TBL} WHERE reviewer IS NOT NULL ORDER BY reviewer`,
-      `SELECT DISTINCT poc FROM (SELECT ae_poc_email AS poc FROM ${SRC} UNION DISTINCT SELECT ob_poc_email FROM ${SRC} UNION DISTINCT SELECT cs_poc_email FROM ${SRC}) WHERE poc IS NOT NULL AND poc != '' ORDER BY poc`
+      `SELECT DISTINCT enterprise_name FROM rr WHERE enterprise_name IS NOT NULL ORDER BY enterprise_name`,
+      `SELECT DISTINCT rooftop FROM rr WHERE rooftop IS NOT NULL ORDER BY rooftop`,
+      `SELECT DISTINCT reviewer FROM rr WHERE reviewer IS NOT NULL ORDER BY reviewer`,
+      `SELECT DISTINCT poc FROM (SELECT ae_poc_email AS poc FROM rr UNION SELECT ob_poc_email FROM rr UNION SELECT cs_poc_email FROM rr) x WHERE poc IS NOT NULL AND poc != '' ORDER BY poc`
     ]);
     MS.enterprise.opts=ents.filter(r=>r.enterprise_name).map(r=>({value:r.enterprise_name,label:r.enterprise_name,title:r.enterprise_name}));
     MS.rooftop.opts=rts.filter(r=>r.rooftop).map(r=>({value:r.rooftop,label:r.rooftop,title:r.rooftop}));
@@ -1291,52 +1291,46 @@ async function loadAll(){
     // ── One combined BigQuery job (was ~10 serialized calls) ──
     // A shared filtered CTE feeds every aggregate via UNION ALL with a `_k` tag +
     // a generic wide schema (s1..s6 strings, n1..n7 ints); parsed back below.
-    const COMB = `
-WITH s AS (SELECT *, COALESCE(NULLIF(team_id,''), rooftop) AS rt_key, CASE WHEN NULLIF(team_id,'') IS NOT NULL THEN COALESCE(NULLIF(apld_team_name,''), NULLIF(rooftop,'')) ELSE COALESCE(NULLIF(rooftop,''), NULLIF(apld_team_name,'')) END AS rt_name, CONCAT(COALESCE(NULLIF(team_id,''), rooftop),'|',CAST(vin AS STRING)) AS rtv FROM ${SRC} ${W})
-SELECT 'ov' _k, CAST(NULL AS STRING) s1, CAST(NULL AS STRING) s2, CAST(NULL AS STRING) s3, CAST(NULL AS STRING) s4, CAST(NULL AS STRING) s5, CAST(NULL AS STRING) s6, COUNT(*) n1, COUNTIF(issue_type='OK' OR issue_type='Pending') n2, COUNTIF(issue_type NOT IN ('OK','Pending')) n3, COUNT(DISTINCT reviewer) n4, COUNT(DISTINCT rt_key) n5, COUNT(DISTINCT COALESCE(enterprise_name, enterprise)) n6, COUNT(DISTINCT rtv) n7 FROM s
-UNION ALL SELECT 'iss', issue_type, NULL,NULL,NULL,NULL,NULL, COUNT(*), NULL,NULL,NULL,NULL,NULL,NULL FROM s GROUP BY issue_type
-UNION ALL SELECT 'rv', reviewer, CAST(MAX(review_date) AS STRING), NULL,NULL,NULL,NULL, COUNT(*), COUNTIF(issue_type='OK' OR issue_type='Pending'), COUNTIF(issue_type NOT IN ('OK','Pending')), COUNT(DISTINCT rt_key), COUNT(DISTINCT rtv), CAST(ROUND(SUM(IFNULL(SAFE_CAST(avg_review_time_seconds AS FLOAT64),0))) AS INT64), NULL FROM s GROUP BY reviewer
-UNION ALL SELECT 'rvit', reviewer, issue_type, NULL,NULL,NULL,NULL, COUNT(*), NULL,NULL,NULL,NULL,NULL,NULL FROM s WHERE issue_type NOT IN ('OK','Pending') GROUP BY reviewer, issue_type
-UNION ALL SELECT 'rt', s.rt_key, ANY_VALUE(s.enterprise), ANY_VALUE(s.enterprise_name), ANY_VALUE(s.rt_name), ANY_VALUE(s.cs_poc_email), CAST(MAX(s.review_date) AS STRING), COUNT(DISTINCT s.rtv), COUNT(*), COUNTIF(s.issue_type='OK' OR s.issue_type='Pending'), COUNTIF(s.issue_type NOT IN ('OK','Pending')), NULL,NULL,NULL FROM s GROUP BY s.rt_key
-UNION ALL SELECT 'rtid', s.rt_key, ANY_VALUE(CAST(s.team_id AS STRING)), ANY_VALUE(CAST(s.enterprise_id AS STRING)), NULL,NULL,NULL, NULL,NULL,NULL,NULL,NULL,NULL,NULL FROM s GROUP BY s.rt_key
-UNION ALL SELECT 'rtit', rt_key, issue_type, NULL,NULL,NULL,NULL, COUNT(*), NULL,NULL,NULL,NULL,NULL,NULL FROM s WHERE issue_type NOT IN ('OK','Pending') GROUP BY rt_key, issue_type
-UNION ALL SELECT 'es', s.enterprise_name, ANY_VALUE(s.cs_poc_email), CAST(MAX(s.review_date) AS STRING), CAST(ANY_VALUE(s.enterprise_id) AS STRING), NULL,NULL, COUNT(DISTINCT s.rt_key), COUNT(DISTINCT s.rtv), COUNT(*), COUNTIF(s.issue_type='OK' OR s.issue_type='Pending'), COUNTIF(s.issue_type NOT IN ('OK','Pending')), NULL,NULL FROM s WHERE s.enterprise_name IS NOT NULL GROUP BY s.enterprise_name
-UNION ALL SELECT 'esit', enterprise_name, issue_type, NULL,NULL,NULL,NULL, COUNT(*), NULL,NULL,NULL,NULL,NULL,NULL FROM s WHERE enterprise_name IS NOT NULL AND issue_type NOT IN ('OK','Pending') GROUP BY enterprise_name, issue_type
-UNION ALL SELECT 'sg', CASE WHEN s.customer_segment IN ('Ent','Mid','SMB') THEN s.customer_segment ELSE 'Others' END AS seg, CAST(MAX(s.review_date) AS STRING), NULL,NULL,NULL,NULL, COUNT(DISTINCT s.rt_key), COUNT(DISTINCT s.rtv), COUNT(*), COUNTIF(s.issue_type='OK' OR s.issue_type='Pending'), COUNTIF(s.issue_type NOT IN ('OK','Pending')), COUNT(DISTINCT COALESCE(s.enterprise_name, s.enterprise)), NULL FROM s GROUP BY seg
-UNION ALL SELECT 'sgit', CASE WHEN customer_segment IN ('Ent','Mid','SMB') THEN customer_segment ELSE 'Others' END AS seg, issue_type, NULL,NULL,NULL,NULL, COUNT(*), NULL,NULL,NULL,NULL,NULL,NULL FROM s WHERE issue_type NOT IN ('OK','Pending') GROUP BY seg, issue_type
-UNION ALL SELECT 'rov', NULL,NULL,NULL,NULL,NULL,NULL, COUNT(DISTINCT rt_key), COUNT(DISTINCT IF(issue_type NOT IN ('OK','Pending'), rt_key, NULL)), COUNT(DISTINCT COALESCE(enterprise_name, enterprise)), COUNT(*), COUNT(DISTINCT rtv), NULL,NULL FROM s
+    const COMB = `WITH s AS (SELECT *, COALESCE(NULLIF(team_id,''), rooftop) AS rt_key,
+  CASE WHEN NULLIF(team_id,'') IS NOT NULL THEN COALESCE(NULLIF(apld_team_name,''), NULLIF(rooftop,'')) ELSE COALESCE(NULLIF(rooftop,''), NULLIF(apld_team_name,'')) END AS rt_name
+  FROM rr ${W})
+SELECT 'ov' _k, NULL::text s1, NULL::text s2, NULL::text s3, NULL::text s4, NULL::text s5, NULL::text s6, SUM(cnt) n1, SUM(cnt) FILTER (WHERE issue_type IN ('OK','Pending')) n2, SUM(cnt) FILTER (WHERE issue_type NOT IN ('OK','Pending')) n3, COUNT(DISTINCT reviewer) n4, COUNT(DISTINCT rt_key) n5, COUNT(DISTINCT enterprise_name) n6, hll_cardinality(hll_union_agg(rtv_hll))::bigint n7 FROM s
+UNION ALL SELECT 'iss', issue_type, NULL,NULL,NULL,NULL,NULL, SUM(cnt), NULL,NULL,NULL,NULL,NULL,NULL FROM s GROUP BY issue_type
+UNION ALL SELECT 'rv', reviewer, MAX(review_date)::text, NULL,NULL,NULL,NULL, SUM(cnt), SUM(cnt) FILTER (WHERE issue_type IN ('OK','Pending')), SUM(cnt) FILTER (WHERE issue_type NOT IN ('OK','Pending')), COUNT(DISTINCT rt_key), hll_cardinality(hll_union_agg(rtv_hll))::bigint, ROUND(SUM(rtime_sum))::bigint, NULL FROM s GROUP BY reviewer
+UNION ALL SELECT 'rvit', reviewer, issue_type, NULL,NULL,NULL,NULL, SUM(cnt), NULL,NULL,NULL,NULL,NULL,NULL FROM s WHERE issue_type NOT IN ('OK','Pending') GROUP BY reviewer, issue_type
+UNION ALL SELECT 'rt', s.rt_key, any_value(enterprise_name), any_value(enterprise_name), any_value(s.rt_name), any_value(cs_poc_email), MAX(review_date)::text, hll_cardinality(hll_union_agg(rtv_hll))::bigint, SUM(cnt), SUM(cnt) FILTER (WHERE issue_type IN ('OK','Pending')), SUM(cnt) FILTER (WHERE issue_type NOT IN ('OK','Pending')), NULL,NULL,NULL FROM s GROUP BY s.rt_key
+UNION ALL SELECT 'rtid', s.rt_key, any_value(team_id), any_value(enterprise_id), NULL,NULL,NULL, NULL,NULL,NULL,NULL,NULL,NULL,NULL FROM s GROUP BY s.rt_key
+UNION ALL SELECT 'rtit', rt_key, issue_type, NULL,NULL,NULL,NULL, SUM(cnt), NULL,NULL,NULL,NULL,NULL,NULL FROM s WHERE issue_type NOT IN ('OK','Pending') GROUP BY rt_key, issue_type
+UNION ALL SELECT 'es', enterprise_name, any_value(cs_poc_email), MAX(review_date)::text, any_value(enterprise_id)::text, NULL,NULL, COUNT(DISTINCT rt_key), hll_cardinality(hll_union_agg(rtv_hll))::bigint, SUM(cnt), SUM(cnt) FILTER (WHERE issue_type IN ('OK','Pending')), SUM(cnt) FILTER (WHERE issue_type NOT IN ('OK','Pending')), NULL,NULL FROM s WHERE enterprise_name IS NOT NULL GROUP BY enterprise_name
+UNION ALL SELECT 'esit', enterprise_name, issue_type, NULL,NULL,NULL,NULL, SUM(cnt), NULL,NULL,NULL,NULL,NULL,NULL FROM s WHERE enterprise_name IS NOT NULL AND issue_type NOT IN ('OK','Pending') GROUP BY enterprise_name, issue_type
+UNION ALL SELECT 'sg', CASE WHEN customer_segment IN ('Ent','Mid','SMB') THEN customer_segment ELSE 'Others' END AS seg, MAX(review_date)::text, NULL,NULL,NULL,NULL, COUNT(DISTINCT rt_key), hll_cardinality(hll_union_agg(rtv_hll))::bigint, SUM(cnt), SUM(cnt) FILTER (WHERE issue_type IN ('OK','Pending')), SUM(cnt) FILTER (WHERE issue_type NOT IN ('OK','Pending')), COUNT(DISTINCT enterprise_name), NULL FROM s GROUP BY seg
+UNION ALL SELECT 'sgit', CASE WHEN customer_segment IN ('Ent','Mid','SMB') THEN customer_segment ELSE 'Others' END AS seg, issue_type, NULL,NULL,NULL,NULL, SUM(cnt), NULL,NULL,NULL,NULL,NULL,NULL FROM s WHERE issue_type NOT IN ('OK','Pending') GROUP BY seg, issue_type
+UNION ALL SELECT 'rov', NULL,NULL,NULL,NULL,NULL,NULL, COUNT(DISTINCT rt_key), COUNT(DISTINCT rt_key) FILTER (WHERE issue_type NOT IN ('OK','Pending')), COUNT(DISTINCT enterprise_name), SUM(cnt), hll_cardinality(hll_union_agg(rtv_hll))::bigint, NULL,NULL FROM s
 UNION ALL SELECT 'rfiss', issue_type, NULL,NULL,NULL,NULL,NULL, COUNT(DISTINCT rt_key), NULL,NULL,NULL,NULL,NULL,NULL FROM s WHERE issue_type NOT IN ('OK','Pending') GROUP BY issue_type
-UNION ALL SELECT 'cs', cs_poc_email, NULL,NULL,NULL,NULL, CAST(MAX(review_date) AS STRING), COUNT(DISTINCT rt_key), COUNT(DISTINCT rtv), COUNT(*), COUNTIF(issue_type='OK' OR issue_type='Pending'), COUNTIF(issue_type NOT IN ('OK','Pending')), NULL,NULL FROM s GROUP BY cs_poc_email
-UNION ALL SELECT 'csit', cs_poc_email, issue_type, NULL,NULL,NULL,NULL, COUNT(*), NULL,NULL,NULL,NULL,NULL,NULL FROM s WHERE issue_type NOT IN ('OK','Pending') GROUP BY cs_poc_email, issue_type
-UNION ALL SELECT * FROM (SELECT 'worst', CAST(team_id AS STRING), MAX(enterprise_name), MAX(apld_team_name), MAX(ae_poc_email), MAX(ob_poc_email), MAX(cs_poc_email), COUNTIF(issue_type NOT IN ('OK','Pending')), CAST(NULL AS INT64),CAST(NULL AS INT64),CAST(NULL AS INT64),CAST(NULL AS INT64),CAST(NULL AS INT64),CAST(NULL AS INT64) FROM s WHERE enterprise_name IS NOT NULL GROUP BY team_id ORDER BY 8 DESC LIMIT 1)`;
-    const TREND = `WITH t AS (SELECT CASE WHEN customer_segment IN ('Ent','Mid','SMB') THEN customer_segment ELSE 'Others' END seg, review_date, vin, COALESCE(NULLIF(team_id,''), rooftop) rt_key, COALESCE(enterprise_name, enterprise) ent_key, CONCAT(COALESCE(NULLIF(team_id,''), rooftop),'|',CAST(vin AS STRING)) rtv, issue_type FROM ${SRC} ${WND})
-SELECT 'day' g, CAST(review_date AS STRING) bucket, seg, COUNT(*) cnt, COUNTIF(issue_type NOT IN ('OK','Pending')) iss, COUNT(DISTINCT rtv) vins, COUNT(DISTINCT rt_key) rts, COUNT(DISTINCT ent_key) ents, COUNT(DISTINCT IF(issue_type NOT IN ('OK','Pending'), rt_key, NULL)) frts FROM t GROUP BY bucket, seg
-UNION ALL SELECT 'day' g, CAST(review_date AS STRING) bucket, 'All' seg, COUNT(*), COUNTIF(issue_type NOT IN ('OK','Pending')), COUNT(DISTINCT rtv), COUNT(DISTINCT rt_key), COUNT(DISTINCT ent_key), COUNT(DISTINCT IF(issue_type NOT IN ('OK','Pending'), rt_key, NULL)) FROM t GROUP BY bucket
-UNION ALL SELECT 'week' g, FORMAT_DATE('%Y-%m-%d', DATE_TRUNC(review_date, WEEK(MONDAY))) bucket, seg, COUNT(*), COUNTIF(issue_type NOT IN ('OK','Pending')), COUNT(DISTINCT rtv), COUNT(DISTINCT rt_key), COUNT(DISTINCT ent_key), COUNT(DISTINCT IF(issue_type NOT IN ('OK','Pending'), rt_key, NULL)) FROM t GROUP BY bucket, seg
-UNION ALL SELECT 'week' g, FORMAT_DATE('%Y-%m-%d', DATE_TRUNC(review_date, WEEK(MONDAY))) bucket, 'All' seg, COUNT(*), COUNTIF(issue_type NOT IN ('OK','Pending')), COUNT(DISTINCT rtv), COUNT(DISTINCT rt_key), COUNT(DISTINCT ent_key), COUNT(DISTINCT IF(issue_type NOT IN ('OK','Pending'), rt_key, NULL)) FROM t GROUP BY bucket
-UNION ALL SELECT 'month' g, FORMAT_DATE('%Y-%m', DATE_TRUNC(review_date, MONTH)) bucket, seg, COUNT(*), COUNTIF(issue_type NOT IN ('OK','Pending')), COUNT(DISTINCT rtv), COUNT(DISTINCT rt_key), COUNT(DISTINCT ent_key), COUNT(DISTINCT IF(issue_type NOT IN ('OK','Pending'), rt_key, NULL)) FROM t GROUP BY bucket, seg
-UNION ALL SELECT 'month' g, FORMAT_DATE('%Y-%m', DATE_TRUNC(review_date, MONTH)) bucket, 'All' seg, COUNT(*), COUNTIF(issue_type NOT IN ('OK','Pending')), COUNT(DISTINCT rtv), COUNT(DISTINCT rt_key), COUNT(DISTINCT ent_key), COUNT(DISTINCT IF(issue_type NOT IN ('OK','Pending'), rt_key, NULL)) FROM t GROUP BY bucket
+UNION ALL SELECT 'cs', cs_poc_email, NULL,NULL,NULL,NULL, MAX(review_date)::text, COUNT(DISTINCT rt_key), hll_cardinality(hll_union_agg(rtv_hll))::bigint, SUM(cnt), SUM(cnt) FILTER (WHERE issue_type IN ('OK','Pending')), SUM(cnt) FILTER (WHERE issue_type NOT IN ('OK','Pending')), NULL,NULL FROM s GROUP BY cs_poc_email
+UNION ALL SELECT 'csit', cs_poc_email, issue_type, NULL,NULL,NULL,NULL, SUM(cnt), NULL,NULL,NULL,NULL,NULL,NULL FROM s WHERE issue_type NOT IN ('OK','Pending') GROUP BY cs_poc_email, issue_type
+UNION ALL SELECT * FROM (SELECT 'worst', team_id::text, MAX(enterprise_name), MAX(apld_team_name), MAX(ae_poc_email), MAX(ob_poc_email), MAX(cs_poc_email), SUM(cnt) FILTER (WHERE issue_type NOT IN ('OK','Pending')), NULL::bigint,NULL::bigint,NULL::bigint,NULL::bigint,NULL::bigint,NULL::bigint FROM s WHERE enterprise_name IS NOT NULL GROUP BY team_id ORDER BY 8 DESC LIMIT 1) z`;
+    const TREND = `WITH t AS (SELECT CASE WHEN customer_segment IN ('Ent','Mid','SMB') THEN customer_segment ELSE 'Others' END seg, review_date, COALESCE(NULLIF(team_id,''), rooftop) rt_key, enterprise_name ent_key, issue_type, cnt, rtv_hll FROM rr ${WND})
+SELECT 'day' g, review_date::text bucket, seg, SUM(cnt) cnt, SUM(cnt) FILTER (WHERE issue_type NOT IN ('OK','Pending')) iss, hll_cardinality(hll_union_agg(rtv_hll))::bigint vins, COUNT(DISTINCT rt_key) rts, COUNT(DISTINCT ent_key) ents, COUNT(DISTINCT rt_key) FILTER (WHERE issue_type NOT IN ('OK','Pending')) frts FROM t GROUP BY review_date, seg
+UNION ALL SELECT 'day', review_date::text, 'All', SUM(cnt), SUM(cnt) FILTER (WHERE issue_type NOT IN ('OK','Pending')), hll_cardinality(hll_union_agg(rtv_hll))::bigint, COUNT(DISTINCT rt_key), COUNT(DISTINCT ent_key), COUNT(DISTINCT rt_key) FILTER (WHERE issue_type NOT IN ('OK','Pending')) FROM t GROUP BY review_date
+UNION ALL SELECT 'week', to_char(date_trunc('week', review_date),'YYYY-MM-DD'), seg, SUM(cnt), SUM(cnt) FILTER (WHERE issue_type NOT IN ('OK','Pending')), hll_cardinality(hll_union_agg(rtv_hll))::bigint, COUNT(DISTINCT rt_key), COUNT(DISTINCT ent_key), COUNT(DISTINCT rt_key) FILTER (WHERE issue_type NOT IN ('OK','Pending')) FROM t GROUP BY date_trunc('week', review_date), seg
+UNION ALL SELECT 'week', to_char(date_trunc('week', review_date),'YYYY-MM-DD'), 'All', SUM(cnt), SUM(cnt) FILTER (WHERE issue_type NOT IN ('OK','Pending')), hll_cardinality(hll_union_agg(rtv_hll))::bigint, COUNT(DISTINCT rt_key), COUNT(DISTINCT ent_key), COUNT(DISTINCT rt_key) FILTER (WHERE issue_type NOT IN ('OK','Pending')) FROM t GROUP BY date_trunc('week', review_date)
+UNION ALL SELECT 'month', to_char(date_trunc('month', review_date),'YYYY-MM'), seg, SUM(cnt), SUM(cnt) FILTER (WHERE issue_type NOT IN ('OK','Pending')), hll_cardinality(hll_union_agg(rtv_hll))::bigint, COUNT(DISTINCT rt_key), COUNT(DISTINCT ent_key), COUNT(DISTINCT rt_key) FILTER (WHERE issue_type NOT IN ('OK','Pending')) FROM t GROUP BY date_trunc('month', review_date), seg
+UNION ALL SELECT 'month', to_char(date_trunc('month', review_date),'YYYY-MM'), 'All', SUM(cnt), SUM(cnt) FILTER (WHERE issue_type NOT IN ('OK','Pending')), hll_cardinality(hll_union_agg(rtv_hll))::bigint, COUNT(DISTINCT rt_key), COUNT(DISTINCT ent_key), COUNT(DISTINCT rt_key) FILTER (WHERE issue_type NOT IN ('OK','Pending')) FROM t GROUP BY date_trunc('month', review_date)
 ORDER BY g, bucket`;
     // TOP Enterprise/Rooftop/CS by ACCURACY on a LATEST-review-per-VIN basis (each VIN counted
     // once, its most recent verdict). Qualify with >=100 latest-review VINs; if none qualify the
     // (n>=100) sort key collapses so the best-accuracy row still wins (auto-relax).
     // Ties on accuracy broken by higher volume. Numeric/junk enterprise names excluded.
     // (Top REVIEWER is by VOLUME instead — highest total reviews — taken from rvR[0], not here.)
-    const TOPS = `WITH latest AS (
-      SELECT enterprise_name, rt_key, rt_name, team_id, cs_poc_email, reviewer, issue_type
-      FROM (SELECT enterprise_name, rooftop, team_id, cs_poc_email, reviewer, issue_type,
-              COALESCE(NULLIF(team_id,''), rooftop) AS rt_key,
-              CASE WHEN NULLIF(team_id,'') IS NOT NULL THEN COALESCE(NULLIF(apld_team_name,''), NULLIF(rooftop,'')) ELSE COALESCE(NULLIF(rooftop,''), NULLIF(apld_team_name,'')) END AS rt_name,
-              ROW_NUMBER() OVER (PARTITION BY team_id, vin ORDER BY reviewed_at DESC) rn
-            FROM ${SRC} ${W}) WHERE rn=1),
-    e  AS (SELECT 'ent' k, enterprise_name nm, CAST(NULL AS STRING) tid, COUNT(*) n, ROUND(100.0*COUNTIF(issue_type IN ('OK','Pending'))/COUNT(*),1) acc FROM latest WHERE enterprise_name IS NOT NULL AND enterprise_name!='' AND NOT REGEXP_CONTAINS(enterprise_name, r'^[0-9]+$') GROUP BY nm),
-    r2 AS (SELECT 'rt'  k, ANY_VALUE(rt_name) nm, ANY_VALUE(team_id) tid, COUNT(*) n, ROUND(100.0*COUNTIF(issue_type IN ('OK','Pending'))/COUNT(*),1) acc FROM latest WHERE rt_key IS NOT NULL AND rt_key!='' GROUP BY rt_key),
-    c  AS (SELECT 'cs'  k, cs_poc_email nm, CAST(NULL AS STRING) tid, COUNT(*) n, ROUND(100.0*COUNTIF(issue_type IN ('OK','Pending'))/COUNT(*),1) acc FROM latest WHERE cs_poc_email IS NOT NULL AND cs_poc_email!='' GROUP BY nm)
-    SELECT * FROM (SELECT * FROM e  ORDER BY (n>=100) DESC, acc DESC, n DESC LIMIT 1)
-    UNION ALL SELECT * FROM (SELECT * FROM r2 ORDER BY (n>=100) DESC, acc DESC, n DESC LIMIT 1)
-    UNION ALL SELECT * FROM (SELECT * FROM c  ORDER BY (n>=100) DESC, acc DESC, n DESC LIMIT 1)`;
+    const TOPS = `WITH e AS (SELECT 'ent' k, enterprise_name nm, NULL::text tid, SUM(cnt) n, ROUND(100.0*COALESCE(SUM(cnt) FILTER (WHERE issue_type IN ('OK','Pending')),0)/NULLIF(SUM(cnt),0),1) acc FROM rr ${W} ${W?'AND':'WHERE'} enterprise_name IS NOT NULL AND enterprise_name!='' AND NOT (enterprise_name ~ '^[0-9]+$') GROUP BY nm),
+r2 AS (SELECT 'rt' k, any_value(CASE WHEN NULLIF(team_id,'') IS NOT NULL THEN COALESCE(NULLIF(apld_team_name,''),NULLIF(rooftop,'')) ELSE COALESCE(NULLIF(rooftop,''),NULLIF(apld_team_name,'')) END) nm, any_value(team_id) tid, SUM(cnt) n, ROUND(100.0*COALESCE(SUM(cnt) FILTER (WHERE issue_type IN ('OK','Pending')),0)/NULLIF(SUM(cnt),0),1) acc FROM rr ${W} ${W?'AND':'WHERE'} COALESCE(NULLIF(team_id,''),rooftop) IS NOT NULL GROUP BY COALESCE(NULLIF(team_id,''),rooftop)),
+c AS (SELECT 'cs' k, cs_poc_email nm, NULL::text tid, SUM(cnt) n, ROUND(100.0*COALESCE(SUM(cnt) FILTER (WHERE issue_type IN ('OK','Pending')),0)/NULLIF(SUM(cnt),0),1) acc FROM rr ${W} ${W?'AND':'WHERE'} cs_poc_email IS NOT NULL AND cs_poc_email!='' GROUP BY nm)
+SELECT * FROM (SELECT * FROM e ORDER BY (n>=100) DESC, acc DESC, n DESC LIMIT 1)
+UNION ALL SELECT * FROM (SELECT * FROM r2 ORDER BY (n>=100) DESC, acc DESC, n DESC LIMIT 1)
+UNION ALL SELECT * FROM (SELECT * FROM c ORDER BY (n>=100) DESC, acc DESC, n DESC LIMIT 1)`;
     // Issue Trend: per-day per-issue-type issue counts (issues only), bucketed client-side by day/week/month.
-    const ITREND = `SELECT review_date, issue_type, COUNT(*) as cnt FROM ${SRC} ${WND} ${WND?'AND':'WHERE'} issue_type NOT IN ('OK','Pending') GROUP BY review_date, issue_type ORDER BY review_date`;
+    const ITREND = `SELECT review_date, issue_type, SUM(cnt) as cnt FROM rr ${WND} ${WND?'AND':'WHERE'} issue_type NOT IN ('OK','Pending') GROUP BY review_date, issue_type ORDER BY review_date`;
     const [combRows, trendR, topsR, itrendR] = await runQueries([COMB, TREND, TOPS, ITREND]);
     window._itrendAll = itrendR||[];
     const tops={}; (topsR||[]).forEach(r=>{ tops[r.k]={nm:r.nm, tid:r.tid, n:N(r.n), acc:(+r.acc||0)}; });
