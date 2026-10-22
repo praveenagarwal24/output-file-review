@@ -673,21 +673,11 @@ async function query(sql, _try) {
 // GET queries if the batch action isn't deployed on the endpoint yet.
 let _batchOk = null; // null=unknown, true=supported, false=unsupported
 async function runQueries(sqls){
-  if(_batchOk===false) return Promise.all(sqls.map(query));
-  let d=null;
-  for(let t=0;t<3 && d===null;t++){
-    try{
-      const res=await fetch(BQ,{method:'POST',headers:{'Content-Type':'text/plain;charset=utf-8'},body:JSON.stringify({action:'batch',queries:sqls,idToken:AUTH_TOKEN}),redirect:'follow'});
-      d=JSON.parse(await res.text());   // text-first: a transient HTML page won't throw an unparseable error
-    }catch(e){ d=null; if(t<2) await _sleep(500*(t+1)); }
-  }
-  if(d && d.ok===false && _isAuthErr(d.error)){ onAuthFail(d.error); throw new Error(d.error); }
-  if(d && d.ok && Array.isArray(d.results) && d.results.length===sqls.length){
-    _batchOk=true;
-    return d.results.map(r=>{ if(r && r.ok) return r.rows||[]; throw new Error((r && r.error)||'Query failed'); });
-  }
-  _batchOk=false;               // batch not available -> singles for the rest of the session
-  return Promise.all(sqls.map(query));
+  // Sequential — the RDS box is small (2GB); running these heavy aggregations
+  // concurrently (batch or Promise.all) exhausts RAM and everything stalls.
+  const out=[];
+  for(const s of sqls){ out.push(await query(s)); }
+  return out;
 }
 
 // ── Drill-down modal ──
@@ -1291,7 +1281,7 @@ async function loadAll(){
     // ── One combined BigQuery job (was ~10 serialized calls) ──
     // A shared filtered CTE feeds every aggregate via UNION ALL with a `_k` tag +
     // a generic wide schema (s1..s6 strings, n1..n7 ints); parsed back below.
-    const COMB = `WITH s AS (SELECT *, COALESCE(NULLIF(team_id,''), rooftop) AS rt_key,
+    const COMB = `WITH s AS NOT MATERIALIZED (SELECT *, COALESCE(NULLIF(team_id,''), rooftop) AS rt_key,
   CASE WHEN NULLIF(team_id,'') IS NOT NULL THEN COALESCE(NULLIF(apld_team_name,''), NULLIF(rooftop,'')) ELSE COALESCE(NULLIF(rooftop,''), NULLIF(apld_team_name,'')) END AS rt_name
   FROM rr ${W})
 SELECT 'ov' _k, NULL::text s1, NULL::text s2, NULL::text s3, NULL::text s4, NULL::text s5, NULL::text s6, SUM(cnt) n1, SUM(cnt) FILTER (WHERE issue_type IN ('OK','Pending')) n2, SUM(cnt) FILTER (WHERE issue_type NOT IN ('OK','Pending')) n3, COUNT(DISTINCT reviewer) n4, COUNT(DISTINCT rt_key) n5, COUNT(DISTINCT enterprise_name) n6, hll_cardinality(hll_union_agg(rtv_hll))::bigint n7 FROM s
@@ -1310,7 +1300,7 @@ UNION ALL SELECT 'rfiss', issue_type, NULL,NULL,NULL,NULL,NULL, COUNT(DISTINCT r
 UNION ALL SELECT 'cs', cs_poc_email, NULL,NULL,NULL,NULL, MAX(review_date)::text, COUNT(DISTINCT rt_key), hll_cardinality(hll_union_agg(rtv_hll))::bigint, SUM(cnt), SUM(cnt) FILTER (WHERE issue_type IN ('OK','Pending')), SUM(cnt) FILTER (WHERE issue_type NOT IN ('OK','Pending')), NULL,NULL FROM s GROUP BY cs_poc_email
 UNION ALL SELECT 'csit', cs_poc_email, issue_type, NULL,NULL,NULL,NULL, SUM(cnt), NULL,NULL,NULL,NULL,NULL,NULL FROM s WHERE issue_type NOT IN ('OK','Pending') GROUP BY cs_poc_email, issue_type
 UNION ALL SELECT * FROM (SELECT 'worst', team_id::text, MAX(enterprise_name), MAX(apld_team_name), MAX(ae_poc_email), MAX(ob_poc_email), MAX(cs_poc_email), SUM(cnt) FILTER (WHERE issue_type NOT IN ('OK','Pending')), NULL::bigint,NULL::bigint,NULL::bigint,NULL::bigint,NULL::bigint,NULL::bigint FROM s WHERE enterprise_name IS NOT NULL GROUP BY team_id ORDER BY 8 DESC LIMIT 1) z`;
-    const TREND = `WITH t AS (SELECT CASE WHEN customer_segment IN ('Ent','Mid','SMB') THEN customer_segment ELSE 'Others' END seg, review_date, COALESCE(NULLIF(team_id,''), rooftop) rt_key, enterprise_name ent_key, issue_type, cnt, rtv_hll FROM rr ${WND})
+    const TREND = `WITH t AS NOT MATERIALIZED (SELECT CASE WHEN customer_segment IN ('Ent','Mid','SMB') THEN customer_segment ELSE 'Others' END seg, review_date, COALESCE(NULLIF(team_id,''), rooftop) rt_key, enterprise_name ent_key, issue_type, cnt, rtv_hll FROM rr ${WND})
 SELECT 'day' g, review_date::text bucket, seg, SUM(cnt) cnt, SUM(cnt) FILTER (WHERE issue_type NOT IN ('OK','Pending')) iss, hll_cardinality(hll_union_agg(rtv_hll))::bigint vins, COUNT(DISTINCT rt_key) rts, COUNT(DISTINCT ent_key) ents, COUNT(DISTINCT rt_key) FILTER (WHERE issue_type NOT IN ('OK','Pending')) frts FROM t GROUP BY review_date, seg
 UNION ALL SELECT 'day', review_date::text, 'All', SUM(cnt), SUM(cnt) FILTER (WHERE issue_type NOT IN ('OK','Pending')), hll_cardinality(hll_union_agg(rtv_hll))::bigint, COUNT(DISTINCT rt_key), COUNT(DISTINCT ent_key), COUNT(DISTINCT rt_key) FILTER (WHERE issue_type NOT IN ('OK','Pending')) FROM t GROUP BY review_date
 UNION ALL SELECT 'week', to_char(date_trunc('week', review_date),'YYYY-MM-DD'), seg, SUM(cnt), SUM(cnt) FILTER (WHERE issue_type NOT IN ('OK','Pending')), hll_cardinality(hll_union_agg(rtv_hll))::bigint, COUNT(DISTINCT rt_key), COUNT(DISTINCT ent_key), COUNT(DISTINCT rt_key) FILTER (WHERE issue_type NOT IN ('OK','Pending')) FROM t GROUP BY date_trunc('week', review_date), seg
